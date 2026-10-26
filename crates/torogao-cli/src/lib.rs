@@ -9,6 +9,8 @@
 
 pub mod a2a;
 pub mod app;
+pub mod audiobake;
+pub mod audioproc;
 pub mod controllers;
 pub mod creator;
 pub mod criteria;
@@ -19,6 +21,7 @@ pub mod families;
 pub mod guards;
 pub mod handlers;
 pub mod inspect;
+pub mod lipsync;
 pub mod mcp;
 pub mod packs;
 pub mod paths;
@@ -26,11 +29,17 @@ pub mod preview;
 pub mod registry;
 pub mod registry_data;
 pub mod rigexport;
+pub mod scenes;
+pub mod sessionbuild;
 pub mod specials;
 pub mod templates;
+pub mod tutorials;
 pub mod util;
+pub mod viseme;
 pub mod walk;
+pub mod wav;
 pub mod writer;
+pub mod writerlane;
 
 use std::io::Write;
 
