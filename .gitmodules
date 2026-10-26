@@ -1,0 +1,15 @@
+[submodule "third-party/i2d-imgui/deps/SDL"]
+	path = third-party/i2d-imgui/deps/SDL
+	url = https://github.com/libsdl-org/SDL.git
+[submodule "third-party/i2d-imgui/deps/cimgui"]
+	path = third-party/i2d-imgui/deps/cimgui
+	url = https://github.com/Inochi2D/cimgui.git
+[submodule "third-party/i2d-imgui/deps/freetype"]
+	path = third-party/i2d-imgui/deps/freetype
+	url = https://github.com/freetype/freetype.git
+[submodule "third-party/i2d-imgui/deps/glbinding"]
+	path = third-party/i2d-imgui/deps/glbinding
+	url = https://github.com/cginternals/glbinding.git
+[submodule "third-party/i2d-imgui/deps/glfw"]
+	path = third-party/i2d-imgui/deps/glfw
+	url = https://github.com/glfw/glfw.git
