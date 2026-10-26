@@ -453,7 +453,7 @@ def main():
         verdict = subprocess.run([rigcheck, model],
                                  capture_output=True, text=True,
                                  timeout=300)
-        check(f"{fx['id']} export passes the lumen validator",
+        check(f"{fx['id']} export passes the model validator",
               verdict.returncode == 0
               and "VALID" in verdict.stdout,
               verdict.stdout[-200:])

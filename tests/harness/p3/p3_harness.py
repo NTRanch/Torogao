@@ -10,7 +10,7 @@ visibility, tracking sets, ambient drivers (60 s idle replay
 x3 byte-stability + per-driver on/off deltas), hit areas
 (round-trip + unknown-part refusal), the Character Creator
 gate (create -> validate -> coverage -> tracking -> export
-through the lumen validator -> physics preview), the writer
+through the model validator -> physics preview), the writer
 core (scaffold + the founding-counterexample gap report +
 rupture slot + verbatim refrain), voice/SFX data, and the
 Item 0 stepping regression (the corrected rich fixture,
@@ -209,7 +209,7 @@ def main():
     model = os.path.join(export_dir, "maren.model.json")
     proc = subprocess.run([rigcheck, model], capture_output=True,
                           text=True, timeout=120)
-    check("export passes the lumen validator", proc.returncode == 0,
+    check("export passes the model validator", proc.returncode == 0,
           proc.stdout[:200] + proc.stderr[:200])
 
     # -- Item 2: states in preview ----------------------------

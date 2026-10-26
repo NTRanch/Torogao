@@ -55,7 +55,7 @@
    "check": {
     "kind": "export-builds"
    },
-   "brief": "A character is not done until it exports. The check passes when the project builds the native lumen-rig-model with no refusal."
+   "brief": "A character is not done until it exports. The check passes when the project builds the native torogao rig model with no refusal."
   },
   {
    "id": "capstone-character",

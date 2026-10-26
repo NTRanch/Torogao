@@ -6,9 +6,9 @@ Emits into the repository's templates/ directory:
   hair-sway-2step.json, hair-sway-3step.json, hair-bounce.json,
   breast-x.json, breast-y.json, skirt-sway.json
                        the six physics-chain presets, data-
-                       faithful to the physics annex in
-                       ~/workspace/fathom-anim-re-20261025/batch2/
-                       PHYSICS-ANNEX.md (provenance per field).
+                       faithful to the physics annex
+                       (PHYSICS-ANNEX.md, reverse-engineering
+                       batch 2; provenance per field).
 
 Usage: make_templates.py <templates-dir>
 
