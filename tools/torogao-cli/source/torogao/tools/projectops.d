@@ -26,6 +26,7 @@ import torogao.cli.puppetwalk;
 import torogao.cli.rigexport;
 import torogao.tools.physicstools;
 import torogao.tools.registry;
+import torogao.tools.templatools;
 import std.functional : toDelegate;
 import std.json : JSONValue, JSONType;
 import std.file : exists, getSize, mkdirRecurse, read, write;
@@ -332,6 +333,7 @@ ToolRegistry buildCoreRegistry() {
     // Later phases register their tool families here; the
     // surfaces pick them up from the registry automatically.
     registerPhysicsTools(reg);
+    registerTemplateTools(reg);
 
     return reg;
 }

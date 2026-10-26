@@ -1,0 +1,117 @@
+{
+ "format": "torogao-template/1",
+ "kind": "physics-chain",
+ "name": "hair-bounce",
+ "title": "Hair bounce \u2014 up/down + fan",
+ "description": "Bounce component of the hair rig: two stages (the long-hair form), one output for up/down and one for fan-out/squeeze-in, driven by Body Y.",
+ "provenance": {
+  "class": "TUTORIAL",
+  "sources": [
+   "Physics annex section 2 (hair = sway + bounce, rigged separately; two parameters per deformer)",
+   "Physics annex sections 1 and 3 (bands)"
+  ]
+ },
+ "attachTo": "HairAnchor",
+ "inputs": [
+  {
+   "parameter": "ParamBodyAngleY",
+   "type": "Angle",
+   "influencePercent": 100,
+   "flip": false,
+   "normalization": {
+    "minimum": -10.0,
+    "center": 0.0,
+    "maximum": 10.0
+   },
+   "provenance": "TUTORIAL",
+   "note": "Body Y drives the bounce component"
+  }
+ ],
+ "stages": [
+  {
+   "segmentLength": 30.0,
+   "mobility": {
+    "chosen": 1.0,
+    "range": null,
+    "provenance": "chosen",
+    "note": "no bounce-specific exported range was captured; value chosen inside the exported sway-class band"
+   },
+   "delay": {
+    "chosen": 0.6,
+    "range": null,
+    "provenance": "chosen",
+    "note": "no bounce-specific exported range was captured; value chosen inside the exported sway-class band"
+   },
+   "acceleration": {
+    "chosen": 1.0,
+    "range": null,
+    "provenance": "chosen",
+    "note": "no bounce-specific exported range was captured; value chosen inside the exported sway-class band"
+   },
+   "easeOfSwinging": {
+    "chosen": 0.85,
+    "range": [
+     0.7,
+     0.99
+    ],
+    "provenance": "DOC",
+    "note": "inside the documented 0.7-0.99 rule-of-thumb band"
+   }
+  },
+  {
+   "segmentLength": 30.0,
+   "mobility": {
+    "chosen": 0.98,
+    "range": null,
+    "provenance": "chosen",
+    "note": "no bounce-specific exported range was captured; value chosen inside the exported sway-class band"
+   },
+   "delay": {
+    "chosen": 0.8,
+    "range": null,
+    "provenance": "chosen",
+    "note": "no bounce-specific exported range was captured; value chosen inside the exported sway-class band"
+   },
+   "acceleration": {
+    "chosen": 1.0,
+    "range": null,
+    "provenance": "chosen",
+    "note": "no bounce-specific exported range was captured; value chosen inside the exported sway-class band"
+   },
+   "easeOfSwinging": {
+    "chosen": 0.85,
+    "range": [
+     0.7,
+     0.99
+    ],
+    "provenance": "DOC",
+    "note": "inside the documented 0.7-0.99 rule-of-thumb band"
+   }
+  }
+ ],
+ "outputs": [
+  {
+   "parameter": "ParamHairBounceY",
+   "stage": 1,
+   "scale": {
+    "value": 45,
+    "provenance": "chosen",
+    "note": "no bounce output scale is attested in the annex"
+   },
+   "influencePercent": 100,
+   "flip": false
+  },
+  {
+   "parameter": "ParamHairFan",
+   "stage": 2,
+   "scale": {
+    "value": 45,
+    "provenance": "chosen",
+    "note": "no bounce output scale is attested in the annex"
+   },
+   "influencePercent": 100,
+   "flip": false
+  }
+ ],
+ "unrecovered": "The reference tutorial's concrete numeric settings are shown on screen (07:02-07:15) and were not recovered from its caption track; no number in this preset is attributed to the tutorial."
+}

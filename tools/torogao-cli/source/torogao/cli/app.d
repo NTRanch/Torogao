@@ -10,6 +10,9 @@
         torogao-cli export-rig <project.inx> --out <dir>
         torogao-cli physics-preview <project.inx> --track <track.json>
                     [--fps <n>] [--out curves.json]
+        torogao-cli list-templates     list rig templates + presets
+        torogao-cli instantiate-template <name> [--preset <p>]...
+                    --out <file.inx>   build a puppet from a template
         torogao-cli mcp [--stdio]      MCP server over stdio
         torogao-cli a2a [--bind <addr>] [--port <n>]
                                        A2A HTTP surface
@@ -38,6 +41,7 @@ import torogao.cli.inspect_;
 import torogao.cli.physicspreview;
 import torogao.cli.puppetwalk;
 import torogao.cli.rigexport;
+import torogao.cli.templates;
 import torogao.mcp.server;
 import torogao.tools.projectops;
 import torogao.tools.registry;
@@ -79,8 +83,69 @@ int main(string[] args) {
         }
         return runA2aServer(buildCoreRegistry(), bind, port);
     }
+    if (args.length >= 2 && args[1] == "list-templates") {
+        JSONValue doc;
+        JSONValue[] list;
+        foreach (t; listTemplates()) {
+            JSONValue e;
+            e["name"] = t.name;
+            e["kind"] = t.kind;
+            e["title"] = t.title;
+            e["description"] = t.description;
+            list ~= e;
+        }
+        doc["templates"] = list;
+        writeln(doc.toString());
+        return 0;
+    }
+    if (args.length >= 2 && args[1] == "instantiate-template") {
+        if (args.length < 3) {
+            stderr.writeln("usage: torogao-cli instantiate-template " ~
+                "<name> [--preset <p>]... --out <file.inx>");
+            return 3;
+        }
+        string name = args[2];
+        string[] presets;
+        string instOut;
+        for (size_t i = 3; i < args.length; i++) {
+            if (args[i] == "--preset" && i + 1 < args.length)
+                presets ~= args[++i];
+            else if (args[i] == "--out" && i + 1 < args.length)
+                instOut = args[++i];
+            else {
+                stderr.writeln("instantiate-template: unknown " ~
+                    "argument: ", args[i]);
+                return 3;
+            }
+        }
+        if (instOut.length == 0) {
+            stderr.writeln("instantiate-template requires --out <file>");
+            return 3;
+        }
+        string error;
+        JSONValue summary;
+        try summary = instantiateTemplate(name, presets, instOut, error);
+        catch (Exception ex) {
+            JSONValue doc;
+            doc["template"] = name;
+            doc["result"] = "error";
+            doc["error"] = ex.msg;
+            writeln(doc.toString());
+            return 3;
+        }
+        if (error.length > 0) {
+            JSONValue doc;
+            doc["template"] = name;
+            doc["result"] = "error";
+            doc["error"] = error;
+            writeln(doc.toString());
+            return 3;
+        }
+        writeln(summary.toString());
+        return 0;
+    }
     if (args.length < 3) {
-        stderr.writeln("usage: torogao-cli <inspect|validate|export-rig|physics-preview|mcp|a2a|registry-dump> <project.inx> [--out <path>]");
+        stderr.writeln("usage: torogao-cli <inspect|validate|export-rig|physics-preview|list-templates|instantiate-template|mcp|a2a|registry-dump> ...");
         return 3;
     }
     string command = args[1];

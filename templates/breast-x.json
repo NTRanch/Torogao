@@ -1,0 +1,145 @@
+{
+ "format": "torogao-template/1",
+ "kind": "physics-chain",
+ "name": "breast-x",
+ "title": "Breast \u2014 X component",
+ "description": "Lateral breast component: one chain, outputs staggered across stages for the left and right parameters, driven by Body X + Body Z.",
+ "provenance": {
+  "class": "TUTORIAL",
+  "sources": [
+   "Physics annex section 2 (Breast X group inputs Body X + Body Z; distinct pendulum stage per output)",
+   "Physics annex section 3 (exported bands)"
+  ]
+ },
+ "attachTo": "BreastAnchor",
+ "inputs": [
+  {
+   "parameter": "ParamBodyAngleX",
+   "type": "Angle",
+   "influencePercent": 60,
+   "flip": false,
+   "normalization": {
+    "minimum": -10.0,
+    "center": 0.0,
+    "maximum": 10.0
+   },
+   "provenance": "TUTORIAL",
+   "note": "the 60/40 split between the two attested inputs is chosen"
+  },
+  {
+   "parameter": "ParamBodyAngleZ",
+   "type": "Angle",
+   "influencePercent": 40,
+   "flip": false,
+   "normalization": {
+    "minimum": -10.0,
+    "center": 0.0,
+    "maximum": 10.0
+   },
+   "provenance": "TUTORIAL"
+  }
+ ],
+ "stages": [
+  {
+   "segmentLength": 25.0,
+   "mobility": {
+    "chosen": 0.9,
+    "range": [
+     0.9,
+     1.0
+    ],
+    "provenance": "EXPORT",
+    "note": "shipped-rig breast chains sit in the ~0.9 mobility class"
+   },
+   "delay": {
+    "chosen": 0.6,
+    "range": [
+     0.6,
+     1.0
+    ],
+    "provenance": "EXPORT"
+   },
+   "acceleration": {
+    "chosen": 1.0,
+    "range": [
+     0.6,
+     1.4
+    ],
+    "provenance": "EXPORT",
+    "note": "mid-band choice inside the exported range"
+   },
+   "easeOfSwinging": {
+    "chosen": 0.85,
+    "range": [
+     0.7,
+     0.99
+    ],
+    "provenance": "DOC",
+    "note": "inside the documented 0.7-0.99 rule-of-thumb band"
+   }
+  },
+  {
+   "segmentLength": 25.0,
+   "mobility": {
+    "chosen": 0.9,
+    "range": [
+     0.9,
+     1.0
+    ],
+    "provenance": "EXPORT",
+    "note": "shipped-rig breast chains sit in the ~0.9 mobility class"
+   },
+   "delay": {
+    "chosen": 0.8,
+    "range": [
+     0.6,
+     1.0
+    ],
+    "provenance": "EXPORT"
+   },
+   "acceleration": {
+    "chosen": 1.0,
+    "range": [
+     0.6,
+     1.4
+    ],
+    "provenance": "EXPORT",
+    "note": "mid-band choice inside the exported range"
+   },
+   "easeOfSwinging": {
+    "chosen": 0.85,
+    "range": [
+     0.7,
+     0.99
+    ],
+    "provenance": "DOC",
+    "note": "inside the documented 0.7-0.99 rule-of-thumb band"
+   }
+  }
+ ],
+ "outputs": [
+  {
+   "parameter": "ParamBreastL",
+   "stage": 1,
+   "scale": {
+    "value": 45,
+    "provenance": "chosen",
+    "note": "no breast output scale is attested in the annex"
+   },
+   "influencePercent": 100,
+   "flip": false
+  },
+  {
+   "parameter": "ParamBreastR",
+   "stage": 2,
+   "scale": {
+    "value": 45,
+    "provenance": "chosen",
+    "note": "no breast output scale is attested in the annex"
+   },
+   "influencePercent": 100,
+   "flip": false
+  }
+ ],
+ "unrecovered": "The reference tutorial's concrete numeric settings are shown on screen (07:02-07:15) and were not recovered from its caption track; no number in this preset is attributed to the tutorial."
+}
