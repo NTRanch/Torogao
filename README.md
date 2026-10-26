@@ -77,6 +77,17 @@ The validation checks live in `torogao.cli.criteria` as plain
 functions over a loaded puppet, so the editor can call the same
 checks later; nothing about them is CLI-specific.
 
+### Agent surfaces
+
+The same operations are exposed to agents through one tool
+registry (`torogao-cli mcp` serves it over stdio as an MCP
+server; `torogao-cli a2a` publishes an A2A Agent Card and task
+endpoints; the editor's own assist uses the MCP surface). See
+[docs/agents.md](docs/agents.md) for how to connect, the tool
+list, and the mutation posture (read/validate/export only —
+project-writing tools are registered disabled with their gate
+named).
+
 ### Hermetic native dependencies
 
 i2d-imgui's native dependency build (`deps/CMakeLists.txt`) pulls
