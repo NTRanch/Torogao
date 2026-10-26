@@ -33,6 +33,7 @@
               SDL2
               libGL
               freetype
+              dbus
               xorg.libX11
               xorg.libXext
               xorg.libXrandr
