@@ -426,20 +426,27 @@ public:
 
         size_t cMasks = maskCount;
 
-        if (masks.length > 0) {
-            inBeginMask(cMasks > 0);
+        // Torogao (carried patch on the v0.8.7 pin): the mask
+        // functions used below exist only under InDoesRender, so
+        // the upstream renderless configuration did not compile.
+        // Guard the block exactly as Part.drawOne guards its own
+        // mask path; renderless builds never draw.
+        version (InDoesRender) {
+            if (masks.length > 0) {
+                inBeginMask(cMasks > 0);
 
-            foreach(ref mask; masks) {
-                mask.maskSrc.renderMask(mask.mode == MaskingMode.DodgeMask);
+                foreach(ref mask; masks) {
+                    mask.maskSrc.renderMask(mask.mode == MaskingMode.DodgeMask);
+                }
+
+                inBeginMaskContent();
+
+                // We are the content
+                this.drawSelf();
+
+                inEndMask();
+                return;
             }
-
-            inBeginMaskContent();
-
-            // We are the content
-            this.drawSelf();
-
-            inEndMask();
-            return;
         }
 
         // No masks, draw normally
