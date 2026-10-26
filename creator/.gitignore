@@ -39,3 +39,5 @@ build-aux/windows/wix/packages
 build-aux/windows/wix/.vs
 build-aux/windows/wix/bin
 *.msi
+# Torogao: dependency selections are committed on purpose (pin discipline).
+!dub.selections.json
