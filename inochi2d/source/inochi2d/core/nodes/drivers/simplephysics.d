@@ -333,6 +333,23 @@ public:
     @Ignore
     vec2 anchor = vec2(0, 0);
 
+    /**
+        Deterministic fixed-step mode (carried patch, deviation
+        D15 in the Torogao phase reports): when enabled,
+        updateDriver accumulates the frame time and ticks the
+        system only in whole 0.01 s steps, carrying the
+        remainder to the next update instead of ticking a
+        fractional remainder. The physics state then depends
+        only on the sequence of fixed steps taken, never on
+        how the caller's frame times were sliced. Disabled
+        (the default) upstream behavior is unchanged.
+    */
+    @Ignore
+    bool fixedStep = false;
+
+    @Ignore
+    float fixedStepRemainder = 0;
+
     @Ignore
     vec2 output;
 
@@ -385,13 +402,23 @@ public:
 
         updateInputs();
 
-        // Minimum physics timestep: 0.01s
-        while (h > 0.01) {
-            system.tick(0.01);
-            h -= 0.01;
-        }
+        if (fixedStep) {
+            // Fixed-step path (carried patch D15): tick only
+            // whole 0.01 s steps; carry the remainder.
+            fixedStepRemainder += h;
+            while (fixedStepRemainder >= 0.01f) {
+                system.tick(0.01f);
+                fixedStepRemainder -= 0.01f;
+            }
+        } else {
+            // Minimum physics timestep: 0.01s
+            while (h > 0.01) {
+                system.tick(0.01);
+                h -= 0.01;
+            }
 
-        system.tick(h);
+            system.tick(h);
+        }
         updateOutputs();
         prevAnchorSet = false;
     }
@@ -492,6 +519,7 @@ public:
 
     override
     void reset() {
+        fixedStepRemainder = 0;
         updateInputs();
 
         switch (modelType) {
