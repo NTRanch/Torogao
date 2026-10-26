@@ -27,6 +27,7 @@ license texts and copyright notices are preserved intact:
 | `creator/` | The editor application (dub package `torogao`) |
 | `inochi2d/` | The core puppet library, pinned at v0.8.7 |
 | `third-party/i2d-imgui/` | i2d-imgui 0.8.1, vendored (see below) |
+| `tools/torogao-cli/` | Headless command-line tooling (see below) |
 
 Upstream history is preserved in this repository under
 `refs/upstream-creator/*` and `refs/upstream-lib/*`.
@@ -49,6 +50,28 @@ committed and pins every dependency to an exact version (library
 0.8.7, i2d-imgui 0.8.1); the `dub add-local` steps above bind those
 two versions to the vendored trees in this repository instead of
 the registry copies.
+
+## Headless tooling
+
+`tools/torogao-cli` builds `torogao-cli`, a display-free command
+line tool over the core library (it uses the library's renderless
+configuration; no window, GPU, or GL context is involved):
+
+```
+cd tools/torogao-cli && dub build
+```
+
+Subcommands (all output is JSON):
+
+| Command | Purpose | Exit codes |
+|---|---|---|
+| `inspect <project.inx>` | Census: nodes, parameters + bindings, drivers, animations, texture slots | 0 ok, 2 unloadable |
+| `validate <project.inx>` | Validation gates v1: typed findings with stable `TG-` codes (missing textures, unbound parameters, dangling bindings, empty parts, duplicate names) | 0 clean, 1 findings, 2 unloadable |
+| `export-rig <project.inx> --out <dir>` | Convert to a lumen-rig model (`<name>.model.json`) plus `<name>.export-report.json` enumerating every construct as mapped, approximated, or dropped with a reason — silent loss is impossible by construction: any binding no converter path consumed is reported dropped | 0 ok, 2 unloadable, 4 export failure |
+
+The validation checks live in `torogao.cli.criteria` as plain
+functions over a loaded puppet, so the editor can call the same
+checks later; nothing about them is CLI-specific.
 
 ### Hermetic native dependencies
 

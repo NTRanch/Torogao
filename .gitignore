@@ -2,3 +2,6 @@ creator/out/
 .dub/
 inochi2d/.dub/
 third-party/i2d-imgui/deps/build_*/
+
+# Torogao CLI build output
+tools/torogao-cli/out/
