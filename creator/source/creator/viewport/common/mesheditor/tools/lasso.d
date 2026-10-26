@@ -335,7 +335,8 @@ class LassoToolInfo : ToolInfoBase!LassoTool {
 
     override
     bool displayToolOptions(bool deformOnly, VertexToolMode toolMode, IncMeshEditorOne[Node] editors) { 
-        auto lassoTool = cast(LassoTool)(editors.length == 0 ? null: editors.values()[0].getTool());
+        Tool editorTool = editors.length == 0 ? null : editors.values()[0].getTool();
+        auto lassoTool = cast(LassoTool)editorTool;
         igBeginGroup();
             auto current_icon = getLassoIcon(lassoTool.lassoType);
             if (incButtonColored(current_icon, ImVec2(0, 0), ImVec4.init)) {

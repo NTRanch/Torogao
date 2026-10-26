@@ -483,7 +483,12 @@ class PointToolInfo : ToolInfoBase!PointTool {
         if (deformOnly) {
 
         } else {
-            auto pointTool = cast(PointTool)(editors.length == 0 ? null: editors.values()[0].getTool());
+            // Torogao: hoisted out of the cast — LDC 1.43 ICEs on a
+            // dynamic cast applied directly to a null-armed ternary
+            // ("should have been lowered by the frontend"). Semantics
+            // are unchanged.
+            Tool editorTool = editors.length == 0 ? null : editors.values()[0].getTool();
+            auto pointTool = cast(PointTool)editorTool;
             igBeginGroup();
                 if (incButtonColored("", ImVec2(0, 0), (pointTool !is null && !pointTool.isAutoConnect())? ImVec4(0.6, 0.6, 0.6, 1) : ImVec4.init)) {
                 foreach (e; editors) {

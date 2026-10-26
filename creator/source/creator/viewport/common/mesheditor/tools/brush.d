@@ -248,7 +248,8 @@ class BrushToolInfo : ToolInfoBase!BrushTool {
     bool displayToolOptions(bool deformOnly, VertexToolMode toolMode, IncMeshEditorOne[Node] editors) {
         igPushStyleVar(ImGuiStyleVar.ItemSpacing, ImVec2(0, 0));
         igPushStyleVar(ImGuiStyleVar.WindowPadding, ImVec2(4, 4));
-        auto brushTool = cast(BrushTool)(editors.length == 0 ? null: editors.values()[0].getTool());
+        Tool editorTool = editors.length == 0 ? null : editors.values()[0].getTool();
+        auto brushTool = cast(BrushTool)editorTool;
             igBeginGroup();
                 if (incButtonColored("", ImVec2(0, 0), (brushTool !is null && !brushTool.getFlow())? ImVec4.init : ImVec4(0.6, 0.6, 0.6, 1))) { // path definition
                     foreach (e; editors) {

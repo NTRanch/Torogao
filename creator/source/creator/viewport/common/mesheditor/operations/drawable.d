@@ -488,7 +488,10 @@ protected:
             return;
         deformation = drawable.deformation.dup;
         auto param = incArmedParameter();
-        auto binding = cast(DeformationParameterBinding)(param? param.getBinding(drawable, "deform"): null);
+        // Torogao: hoisted out of the cast (same LDC 1.43 ICE as in
+        // the mesh-editor tools); semantics unchanged.
+        ParameterBinding rawBinding = param ? param.getBinding(drawable, "deform") : null;
+        auto binding = cast(DeformationParameterBinding)rawBinding;
         if (binding is null) {
             deformation = drawable.deformation.dup;
             

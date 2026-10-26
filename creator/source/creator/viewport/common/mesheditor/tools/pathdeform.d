@@ -403,7 +403,8 @@ class PathDeformToolInfo : ToolInfoBase!PathDeformTool {
     bool displayToolOptions(bool deformOnly, VertexToolMode toolMode, IncMeshEditorOne[Node] editors) { 
         igPushStyleVar(ImGuiStyleVar.ItemSpacing, ImVec2(0, 0));
         igPushStyleVar(ImGuiStyleVar.WindowPadding, ImVec2(4, 4));
-        auto deformTool = cast(PathDeformTool)(editors.length == 0 ? null: editors.values()[0].getTool());
+        Tool editorTool = editors.length == 0 ? null : editors.values()[0].getTool();
+        auto deformTool = cast(PathDeformTool)editorTool;
         igBeginGroup();
             if (incButtonColored("", ImVec2(0, 0), (deformTool !is null && deformTool.mode == PathDeformTool.Mode.Define)? ImVec4.init : ImVec4(0.6, 0.6, 0.6, 1))) { // path definition
                 foreach (e; editors) {
