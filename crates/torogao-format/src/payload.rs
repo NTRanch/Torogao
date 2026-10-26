@@ -26,8 +26,15 @@ pub const TG_UNKNOWN_RECORD_KIND: &str = "TG-UNKNOWN-RECORD-KIND";
 pub enum NodeKind {
     /// A plain transform node.
     Node,
+    /// A temporary node (registered by the reference
+    /// runtime; a plain node in every observable respect).
+    Tmp,
     /// A drawable part.
     Part,
+    /// An animated part (a part subclass in the reference).
+    AnimatedPart,
+    /// A composite node.
+    Composite,
     /// A mesh-group (warp) node.
     MeshGroup,
     /// A simple-physics driver node.
@@ -45,7 +52,10 @@ impl NodeKind {
     pub fn type_name(&self) -> &'static str {
         match self {
             NodeKind::Node => "Node",
+            NodeKind::Tmp => "Tmp",
             NodeKind::Part => "Part",
+            NodeKind::AnimatedPart => "AnimatedPart",
+            NodeKind::Composite => "Composite",
             NodeKind::MeshGroup => "MeshGroup",
             NodeKind::SimplePhysics => "SimplePhysics",
             NodeKind::DynamicComposite => "DynamicComposite",
@@ -89,7 +99,10 @@ pub fn decode_node_record(raw: &Value) -> FormatResult<NodeRecord> {
     };
     let kind = match kind_text.as_str() {
         "Node" => NodeKind::Node,
+        "Tmp" => NodeKind::Tmp,
         "Part" => NodeKind::Part,
+        "AnimatedPart" => NodeKind::AnimatedPart,
+        "Composite" => NodeKind::Composite,
         "MeshGroup" => NodeKind::MeshGroup,
         "SimplePhysics" => NodeKind::SimplePhysics,
         "DynamicComposite" => NodeKind::DynamicComposite,

@@ -1,24 +1,35 @@
-//! Torogao's puppet engine.
-//!
-//! This crate will own the puppet model, parameter and deformer
-//! evaluation on a fixed-step determinism clock, the physics
-//! solver, and the renderer. Evaluation is deterministic: the same
-//! model plus the same input track always produces the same
-//! curves, byte for byte.
-//!
-//! Port phases: RP2 brings the model and evaluation; RP3 brings
-//! physics and rendering. Until then this crate is a documented
-//! skeleton with no public surface — callers must not grow APIs
-//! here ahead of the port phases that own them.
+//! Torogao's evaluation engine: a faithful port of the
+//! reference puppet runtime — payload loading with its
+//! strictness and its quirks, parameter/binding evaluation,
+//! automations, and the fixed-step simple-physics drivers
+//! whose series the physics preview records. All arithmetic
+//! is f32 (f64 only at the clock and output boundaries),
+//! with evaluation order preserved from the reference so
+//! series agree bit for bit where the arithmetic allows.
 
 #![forbid(unsafe_code)]
+
+pub mod animation;
+pub mod automation;
+pub mod math;
+pub mod node;
+pub mod param;
+pub mod physics;
+pub mod puppet;
+pub mod transform;
+
+pub use animation::Animation;
+pub use automation::Automation;
+pub use math::{Mat3, Mat4, Vec2, Vec3, Vec4};
+pub use node::{MeshData, Node, NodeArena, SimplePhysicsState};
+pub use param::{Binding, MergeMode, Parameter};
+pub use puppet::{Clock, Puppet, PuppetMeta, TextureSlotInfo};
+pub use transform::Transform;
 
 #[cfg(test)]
 mod tests {
     /// The skeleton's one verifiable fact: the workspace member
-    /// builds under its contracted name. The implementation that
-    /// replaces this wiring proof arrives with the port phase that
-    /// owns this crate.
+    /// builds under its contracted name.
     #[test]
     fn workspace_member_builds_under_its_contracted_name() {
         assert_eq!(env!("CARGO_PKG_NAME"), "torogao-engine");
