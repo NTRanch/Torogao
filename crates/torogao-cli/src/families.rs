@@ -6,18 +6,33 @@
 //! as a fabricated success.
 
 use crate::creator::create_character;
-use crate::curves::CurveSet;
+use crate::criteria::{findings_json, Finding};
+use crate::curves::{quote, CurveSet};
 use crate::drivers::parse_driver_config as parse_driver_set;
+use crate::effects::{compile_effects, puppet_param_names, validate_effects};
 use crate::extdoc::{
     expression_missing, ext_summary, rating_stamp, rating_verdict, tracking_coverage,
     validate_hit_areas_only, write_project_with_ext, ExtView, EXT_FORMAT, TG_EXT_MALFORMED,
 };
-use crate::guards::{guard_output, load_puppet_guarded, tool_force};
+use crate::fluids::{hit_areas_from_ext, simulate_fluid};
+use crate::glb::{check_expression_map, glb_census, load_glb, resolve_expression};
+use crate::guards::{guard_output, guard_output_files, load_project, load_puppet_guarded, tool_force};
 use crate::handlers::load_for_tool;
-use crate::packs::{load_pack, pack_names, pack_str, pack_tracking_set};
+use crate::packs::{load_pack, pack_expressions, pack_names, pack_str, pack_tracking_set};
+use crate::playroom::{
+    apply_prefset, apply_session_field, compose_playroom, list_prefsets, load_prefset,
+    load_session, load_wardrobe, new_session, prefset_dir, prefset_path, save_session,
+    PREFSET_FORMAT,
+};
 use crate::preview::{run_physics_preview, PreviewOptions};
 use crate::registry::{opt_string_arg, string_arg, ToolResult};
+use crate::scenes::{
+    load_scene_doc, scene_face_expression, scene_info, validate_scene, validate_scene_grounded,
+};
+use crate::tracking::{bake_take, validate_take};
 use crate::util::jget;
+use crate::video::{build_timeline, chapters_file, concat_list, tempo_report, validate_timeline};
+use crate::walk::Walk;
 use crate::writer::{
     build_scaffold, load_json_file, load_sfx_index, validate_voice, ScaffoldOutcome,
 };
@@ -1328,6 +1343,776 @@ fn tool_instantiate_template(args: &Value) -> ToolResult {
 }
 
 /// Dispatches a non-core tool by name.
+// ------------------------------------------------------------
+// P5 family tools (p5tools.d): the helpers below mirror the
+// D module's own argStr/argNum/fail conventions, which differ
+// from the reqString style of the earlier families.
+
+fn arg_str(args: &Value, key: &str) -> String {
+    match jget(args, key) {
+        Value::String(s) => s.clone(),
+        _ => String::new(),
+    }
+}
+
+fn arg_num(args: &Value, key: &str, fallback: f64) -> f64 {
+    jget(args, key).as_f64().unwrap_or(fallback)
+}
+
+fn p5_fail(message: &str) -> ToolResult {
+    ToolResult::fail("invalid_arguments", message)
+}
+
+fn findings_result(findings: &[Finding]) -> (Value, i64) {
+    let errors = findings.iter().filter(|f| f.severity == "error").count() as i64;
+    (findings_json(findings), errors)
+}
+
+struct P5Load {
+    ext: ExtView,
+    loaded: crate::guards::LoadedProject,
+    path: String,
+    walk: Walk,
+}
+
+fn load_project_arg_p5(args: &Value) -> Result<P5Load, ToolResult> {
+    let project_path = arg_str(args, "project");
+    if project_path.is_empty() {
+        return Err(p5_fail("project is required"));
+    }
+    if !std::path::Path::new(&project_path).exists() {
+        return Err(p5_fail(&format!("project file not found: {project_path}")));
+    }
+    let mut loaded = load_project(&project_path)
+        .map_err(|e| ToolResult::fail(e.code(), e.message()))?;
+    let walk = Walk::build(&mut loaded.puppet);
+    let ext = ExtView::of_project(&loaded);
+    Ok(P5Load {
+        ext,
+        loaded,
+        path: project_path,
+        walk,
+    })
+}
+
+fn load_scene_arg_p5(args: &Value) -> Result<Value, ToolResult> {
+    let name = arg_str(args, "scene");
+    if name.is_empty() {
+        return Err(p5_fail("scene is required"));
+    }
+    load_scene_doc(&name).map_err(|e| p5_fail(&e))
+}
+
+fn load_session_arg_p5(args: &Value) -> Result<(Value, String), ToolResult> {
+    let path = arg_str(args, "session");
+    if path.is_empty() {
+        return Err(p5_fail("session is required"));
+    }
+    let session = load_session(&path).map_err(|e| p5_fail(&e))?;
+    Ok((session, path))
+}
+
+fn dir_name_d(path: &str) -> String {
+    match path.rfind('/') {
+        Some(0) => "/".to_string(),
+        Some(i) => path[..i].to_string(),
+        None => ".".to_string(),
+    }
+}
+
+fn tool_scene_info(args: &Value) -> ToolResult {
+    let scene = match load_scene_arg_p5(args) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let mut doc = scene_info(&scene);
+    doc["result"] = json!("ok");
+    ToolResult::ok(doc)
+}
+
+fn tool_scene_validate(args: &Value) -> ToolResult {
+    let scene = match load_scene_arg_p5(args) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let mut findings = validate_scene(&scene);
+    let project_path = arg_str(args, "project");
+    if !project_path.is_empty() {
+        let pargs = json!({"project": project_path});
+        let mut load = match load_project_arg_p5(&pargs) {
+            Ok(l) => l,
+            Err(e) => return e,
+        };
+        let mut pack_name = arg_str(args, "pack");
+        if pack_name.is_empty() {
+            pack_name = pack_str(&scene, "pack");
+        }
+        let pack = match load_pack(&pack_name) {
+            Ok(p) => p,
+            Err(e) => return p5_fail(&e),
+        };
+        findings.extend(validate_scene_grounded(
+            &scene,
+            &load.loaded.puppet,
+            &load.walk,
+            &pack,
+        ));
+        let _ = &mut load;
+    }
+    let (rows, errors) = findings_result(&findings);
+    ToolResult::ok(json!({
+        "errors": errors,
+        "findings": rows,
+        "result": if errors == 0 { "valid" } else { "invalid" },
+        "scene": pack_str(&scene, "name"),
+    }))
+}
+
+fn tool_fluid_sim(args: &Value) -> ToolResult {
+    let scene = match load_scene_arg_p5(args) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let mut load = match load_project_arg_p5(args) {
+        Ok(l) => l,
+        Err(e) => return e,
+    };
+    let out_path = arg_str(args, "out");
+    if out_path.is_empty() {
+        return p5_fail("out is required");
+    }
+    if let Err(r) = guard_output(
+        &out_path,
+        &[load.path.as_str(), arg_str(args, "scene").as_str()],
+        tool_force(args),
+    ) {
+        return ToolResult::fail(r.code, &r.message);
+    }
+    let emitter_id = arg_str(args, "emitter");
+    let seconds = arg_num(args, "seconds", 4.0);
+    let emitters = jget(&scene, "fluids").clone();
+    let Some(emitters) = emitters.as_array() else {
+        return p5_fail("scene carries no fluid emitters");
+    };
+    let areas = hit_areas_from_ext(&load.ext.doc);
+    let face = scene_face_expression(&scene);
+    let mut runs: Vec<Value> = Vec::new();
+    for emitter in emitters {
+        if !emitter_id.is_empty() && pack_str(emitter, "id") != emitter_id {
+            continue;
+        }
+        runs.push(simulate_fluid(emitter, &areas, seconds, &face));
+    }
+    if runs.is_empty() {
+        return p5_fail(&format!("no emitter matched '{emitter_id}'"));
+    }
+    let doc = json!({
+        "format": "torogao-fluid-run/1",
+        "runs": runs,
+        "scene": pack_str(&scene, "name"),
+    });
+    let count = runs.len();
+    let _ = std::fs::write(&out_path, format!("{}\n", to_d_json(&doc)));
+    ToolResult::ok(json!({
+        "emitters": count as i64,
+        "out": out_path,
+        "result": "simulated",
+    }))
+}
+
+fn load_effects_arg_p5(args: &Value) -> Result<Value, ToolResult> {
+    let path = arg_str(args, "effects");
+    if path.is_empty() {
+        return Err(p5_fail("effects is required"));
+    }
+    if !std::path::Path::new(&path).exists() {
+        return Err(p5_fail(&format!("effects file not found: {path}")));
+    }
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| p5_fail(&format!("effects unreadable: {e}")))?;
+    serde_json::from_str(&text).map_err(|e| p5_fail(&format!("effects unreadable: {e}")))
+}
+
+fn tool_effects_validate(args: &Value) -> ToolResult {
+    let fx = match load_effects_arg_p5(args) {
+        Ok(f) => f,
+        Err(e) => return e,
+    };
+    let project_path = arg_str(args, "project");
+    let mut param_names: Option<Vec<String>> = None;
+    if !project_path.is_empty() {
+        let pargs = json!({"project": project_path});
+        let load = match load_project_arg_p5(&pargs) {
+            Ok(l) => l,
+            Err(e) => return e,
+        };
+        param_names = Some(puppet_param_names(&load.loaded.puppet));
+    }
+    let findings = validate_effects(&fx, param_names.as_deref());
+    let (rows, errors) = findings_result(&findings);
+    ToolResult::ok(json!({
+        "errors": errors,
+        "findings": rows,
+        "result": if errors == 0 { "valid" } else { "invalid" },
+    }))
+}
+
+fn tool_effects_compile(args: &Value) -> ToolResult {
+    let fx = match load_effects_arg_p5(args) {
+        Ok(f) => f,
+        Err(e) => return e,
+    };
+    let load = match load_project_arg_p5(args) {
+        Ok(l) => l,
+        Err(e) => return e,
+    };
+    let out_path = arg_str(args, "out");
+    if out_path.is_empty() {
+        return p5_fail("out is required");
+    }
+    if let Err(r) = guard_output(
+        &out_path,
+        &[arg_str(args, "effects").as_str(), load.path.as_str()],
+        tool_force(args),
+    ) {
+        return ToolResult::fail(r.code, &r.message);
+    }
+    match compile_effects(&fx, &load.loaded.puppet) {
+        Err(findings) => ToolResult::ok(json!({
+            "findings": findings_json(&findings),
+            "result": "invalid",
+        })),
+        Ok(manifest) => {
+            let count = jget(&manifest, "effectCount").clone();
+            let _ = std::fs::write(&out_path, format!("{}\n", to_d_json(&manifest)));
+            ToolResult::ok(json!({
+                "effectCount": count,
+                "out": out_path,
+                "result": "compiled",
+            }))
+        }
+    }
+}
+
+fn tool_playroom_open(args: &Value) -> ToolResult {
+    let project = arg_str(args, "character");
+    let pack = arg_str(args, "pack");
+    let session_path = arg_str(args, "session");
+    if project.is_empty() {
+        return p5_fail("character is required");
+    }
+    if pack.is_empty() {
+        return p5_fail("pack is required");
+    }
+    if session_path.is_empty() {
+        return p5_fail("session is required");
+    }
+    if !std::path::Path::new(&project).exists() {
+        return p5_fail(&format!("character project not found: {project}"));
+    }
+    if let Err(r) = guard_output(&session_path, &[project.as_str()], tool_force(args)) {
+        return ToolResult::fail(r.code, &r.message);
+    }
+    let mut session = new_session(
+        &project,
+        &pack,
+        &arg_str(args, "scene"),
+        &arg_str(args, "activity"),
+    );
+    let state = arg_str(args, "expressionState");
+    if !state.is_empty() {
+        session["expressionState"] = json!(state);
+    }
+    let _ = save_session(&session_path, &session);
+    ToolResult::ok(json!({
+        "character": project,
+        "result": "opened",
+        "session": session_path,
+    }))
+}
+
+fn tool_playroom_set(args: &Value) -> ToolResult {
+    let (mut session, session_path) = match load_session_arg_p5(args) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let field = arg_str(args, "field");
+    let value = arg_str(args, "value");
+    if let Some(problem) = apply_session_field(&mut session, &field, &value) {
+        return p5_fail(&problem);
+    }
+    let _ = save_session(&session_path, &session);
+    ToolResult::ok(json!({
+        "field": field,
+        "result": "updated",
+        "session": session_path,
+    }))
+}
+
+fn tool_playroom_compose(args: &Value) -> ToolResult {
+    let (session, session_path) = match load_session_arg_p5(args) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let project = pack_str(&session, "character");
+    let pargs = json!({"project": project});
+    let mut load = match load_project_arg_p5(&pargs) {
+        Ok(l) => l,
+        Err(e) => return e,
+    };
+    let mut steps = arg_num(args, "steps", 240.0) as i32;
+    if steps <= 0 || steps > 36000 {
+        steps = 240;
+    }
+    let mut snapshot = match compose_playroom(
+        &session,
+        &mut load.loaded.puppet,
+        &load.walk,
+        &load.ext,
+        steps,
+    ) {
+        Ok(s) => s,
+        Err(e) => return p5_fail(&e),
+    };
+    let out_path = arg_str(args, "out");
+    if !out_path.is_empty() {
+        if let Err(r) = guard_output(
+            &out_path,
+            &[project.as_str(), session_path.as_str()],
+            tool_force(args),
+        ) {
+            return ToolResult::fail(r.code, &r.message);
+        }
+        let _ = std::fs::write(&out_path, format!("{}\n", to_d_json(&snapshot)));
+        snapshot["out"] = json!(out_path);
+    }
+    snapshot["result"] = json!("composed");
+    ToolResult::ok(snapshot)
+}
+
+fn tool_playroom_create(args: &Value) -> ToolResult {
+    let identity_path = arg_str(args, "identity");
+    let pack_name = arg_str(args, "pack");
+    let out_path = arg_str(args, "out");
+    let session_path = arg_str(args, "session");
+    if identity_path.is_empty() {
+        return p5_fail("identity is required");
+    }
+    if pack_name.is_empty() {
+        return p5_fail("pack is required");
+    }
+    if out_path.is_empty() {
+        return p5_fail("out is required");
+    }
+    if session_path.is_empty() {
+        return p5_fail("session is required");
+    }
+    let pack = match load_pack(&pack_name) {
+        Ok(p) => p,
+        Err(e) => return p5_fail(&e),
+    };
+    let identity_text = std::fs::read_to_string(&identity_path)
+        .map_err(|e| format!("identity unreadable: {e}"));
+    let identity: Value = match identity_text
+        .and_then(|t| serde_json::from_str(&t).map_err(|e| format!("identity unreadable: {e}")))
+    {
+        Ok(v) => v,
+        Err(e) => return p5_fail(&e),
+    };
+    if let Err(r) = guard_output(&out_path, &[identity_path.as_str()], tool_force(args)) {
+        return ToolResult::fail(r.code, &r.message);
+    }
+    if let Err(r) = guard_output(
+        &session_path,
+        &[identity_path.as_str(), out_path.as_str()],
+        tool_force(args),
+    ) {
+        return ToolResult::fail(r.code, &r.message);
+    }
+    let mut presets: Vec<String> = Vec::new();
+    if let Some(list) = jget(args, "presets").as_array() {
+        for p in list {
+            if let Some(s) = p.as_str() {
+                presets.push(s.to_string());
+            }
+        }
+    }
+    match create_character(&identity, &pack, &presets, &out_path) {
+        Ok(summary) => {
+            let session = new_session(
+                &out_path,
+                &pack_name,
+                &arg_str(args, "scene"),
+                &arg_str(args, "activity"),
+            );
+            let _ = save_session(&session_path, &session);
+            ToolResult::ok(json!({
+                "character": summary,
+                "result": "created",
+                "session": session_path,
+            }))
+        }
+        Err((problems, err)) => {
+            if !problems.is_empty() {
+                let rows: Vec<Value> = problems.iter().map(|p| p.to_json()).collect();
+                return ToolResult::ok(json!({
+                    "problems": rows,
+                    "result": "invalid",
+                }));
+            }
+            p5_fail(&err)
+        }
+    }
+}
+
+fn tool_prefset_list(args: &Value) -> ToolResult {
+    let dir = prefset_dir(&arg_str(args, "dir"));
+    ToolResult::ok(json!({
+        "dir": dir.clone(),
+        "result": "ok",
+        "sets": list_prefsets(&dir),
+    }))
+}
+
+fn tool_prefset_save(args: &Value) -> ToolResult {
+    let name = arg_str(args, "name");
+    if name.is_empty() {
+        return p5_fail("name is required");
+    }
+    let dir = prefset_dir(&arg_str(args, "dir"));
+    if dir.is_empty() {
+        return p5_fail("no preference-set directory resolvable");
+    }
+    let mut set = jget(args, "set").clone();
+    let from_session = arg_str(args, "session");
+    if !set.is_object() && !from_session.is_empty() {
+        let sargs = json!({"session": from_session});
+        let (session, _) = match load_session_arg_p5(&sargs) {
+            Ok(s) => s,
+            Err(e) => return e,
+        };
+        set = json!({
+            "appearance": jget(&session, "appearance"),
+            "controllers": jget(&session, "controllers"),
+            "format": PREFSET_FORMAT,
+            "morphs": jget(&session, "morphs"),
+            "name": name,
+            "wardrobe": jget(&session, "wardrobe"),
+        });
+    }
+    if !set.is_object() {
+        return p5_fail("a set document or a session is required");
+    }
+    set["format"] = json!(PREFSET_FORMAT);
+    set["name"] = json!(name);
+    let path = prefset_path(&dir, &name);
+    if let Err(r) = guard_output(&path, &[from_session.as_str()], tool_force(args)) {
+        return ToolResult::fail(r.code, &r.message);
+    }
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(&path, format!("{}\n", to_d_json(&set)));
+    ToolResult::ok(json!({
+        "path": path,
+        "result": "saved",
+        "set": name,
+    }))
+}
+
+fn tool_prefset_apply(args: &Value) -> ToolResult {
+    let (mut session, session_path) = match load_session_arg_p5(args) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let name = arg_str(args, "set");
+    if name.is_empty() {
+        return p5_fail("set is required");
+    }
+    let dir = prefset_dir(&arg_str(args, "dir"));
+    let set = match load_prefset(&dir, &name) {
+        Ok(s) => s,
+        Err(e) => return p5_fail(&e),
+    };
+    let project = pack_str(&session, "character");
+    let pargs = json!({"project": project});
+    let load = match load_project_arg_p5(&pargs) {
+        Ok(l) => l,
+        Err(e) => return e,
+    };
+    let part_names: Vec<String> = load
+        .walk
+        .nodes
+        .iter()
+        .map(|w| load.loaded.puppet.nodes.nodes[w.node].name.clone())
+        .collect();
+    let wardrobe = load_wardrobe(&pack_str(&session, "pack")).unwrap_or(Value::Null);
+    if let Some(problem) = apply_prefset(&mut session, &set, &wardrobe, &part_names) {
+        return p5_fail(&problem);
+    }
+    let _ = save_session(&session_path, &session);
+    ToolResult::ok(json!({
+        "result": "applied",
+        "session": session_path,
+        "set": name,
+    }))
+}
+
+fn load_take_arg_p5(args: &Value) -> Result<(Value, Value, String), ToolResult> {
+    let take_path = arg_str(args, "take");
+    let pack_name = arg_str(args, "pack");
+    if take_path.is_empty() {
+        return Err(p5_fail("take is required"));
+    }
+    if pack_name.is_empty() {
+        return Err(p5_fail("pack is required"));
+    }
+    let text = std::fs::read_to_string(&take_path)
+        .map_err(|e| p5_fail(&format!("take unreadable: {e}")))?;
+    let take: Value = serde_json::from_str(&text)
+        .map_err(|e| p5_fail(&format!("take unreadable: {e}")))?;
+    let pack = load_pack(&pack_name).map_err(|e| p5_fail(&e))?;
+    Ok((take, pack, take_path))
+}
+
+fn tool_tracking_validate(args: &Value) -> ToolResult {
+    let (take, pack, _) = match load_take_arg_p5(args) {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    let findings = validate_take(&take, &pack);
+    let (rows, errors) = findings_result(&findings);
+    ToolResult::ok(json!({
+        "errors": errors,
+        "findings": rows,
+        "result": if errors == 0 { "valid" } else { "invalid" },
+    }))
+}
+
+fn tool_tracking_bake(args: &Value) -> ToolResult {
+    let out_path = arg_str(args, "out");
+    if out_path.is_empty() {
+        return p5_fail("out is required");
+    }
+    let (take, pack, take_path) = match load_take_arg_p5(args) {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    let findings = validate_take(&take, &pack);
+    for f in &findings {
+        if f.severity == "error" {
+            return ToolResult::fail(f.code, f.message.as_str());
+        }
+    }
+    if let Err(r) = guard_output(&out_path, &[take_path.as_str()], tool_force(args)) {
+        return ToolResult::fail(r.code, &r.message);
+    }
+    let mut fps = arg_num(args, "fps", 60.0) as i32;
+    let mut seconds = arg_num(args, "seconds", 4.0) as i32;
+    if fps <= 0 {
+        fps = 60;
+    }
+    if seconds <= 0 {
+        seconds = 4;
+    }
+    let mut curves = bake_take(&take, fps, fps * seconds);
+    curves.extra.push(("take".to_string(), quote(&take_path)));
+    let series = curves.series.len();
+    let steps = curves.steps();
+    let _ = std::fs::write(&out_path, format!("{}\n", curves.to_json()));
+    ToolResult::ok(json!({
+        "out": out_path,
+        "result": "baked",
+        "series": series as i64,
+        "steps": steps as i64,
+    }))
+}
+
+fn load_glb_arg_p5(args: &Value) -> Result<(String, crate::glb::GlbInfo), ToolResult> {
+    let path = arg_str(args, "glb");
+    if path.is_empty() {
+        return Err(p5_fail("glb is required"));
+    }
+    let info = load_glb(&path).map_err(|e| p5_fail(&e))?;
+    Ok((path, info))
+}
+
+fn load_map_arg_p5(args: &Value) -> Result<Value, ToolResult> {
+    let path = arg_str(args, "map");
+    if path.is_empty() {
+        return Err(p5_fail("map is required"));
+    }
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| p5_fail(&format!("expression map unreadable: {e}")))?;
+    serde_json::from_str(&text)
+        .map_err(|e| p5_fail(&format!("expression map unreadable: {e}")))
+}
+
+fn tool_glb_info(args: &Value) -> ToolResult {
+    let (path, info) = match load_glb_arg_p5(args) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let mut doc = glb_census(&path, &info);
+    doc["result"] = json!("ok");
+    ToolResult::ok(doc)
+}
+
+fn tool_glb_expression_check(args: &Value) -> ToolResult {
+    let (_, info) = match load_glb_arg_p5(args) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let map = match load_map_arg_p5(args) {
+        Ok(m) => m,
+        Err(e) => return e,
+    };
+    let pack_name = arg_str(args, "pack");
+    if pack_name.is_empty() {
+        return p5_fail("pack is required");
+    }
+    let pack = match load_pack(&pack_name) {
+        Ok(p) => p,
+        Err(e) => return p5_fail(&e),
+    };
+    let governed: Vec<String> = pack_expressions(&pack)
+        .iter()
+        .map(|e| pack_str(e, "name"))
+        .collect();
+    let problems = check_expression_map(&map, &info, &governed);
+    ToolResult::ok(json!({
+        "governed": governed.len() as i64,
+        "problems": problems,
+        "result": if problems.is_empty() { "complete" } else { "incomplete" },
+    }))
+}
+
+fn tool_glb_resolve_expression(args: &Value) -> ToolResult {
+    let map = match load_map_arg_p5(args) {
+        Ok(m) => m,
+        Err(e) => return e,
+    };
+    let name = arg_str(args, "name");
+    if name.is_empty() {
+        return p5_fail("name is required");
+    }
+    match resolve_expression(&map, &name) {
+        Ok(morphs) => ToolResult::ok(json!({
+            "expression": name,
+            "morphs": morphs,
+            "result": "resolved",
+        })),
+        Err(e) => p5_fail(&e),
+    }
+}
+
+fn load_timeline_arg_p5(args: &Value) -> Result<Value, ToolResult> {
+    let path = arg_str(args, "timeline");
+    if path.is_empty() {
+        return Err(p5_fail("timeline is required"));
+    }
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| p5_fail(&format!("timeline unreadable: {e}")))?;
+    serde_json::from_str(&text)
+        .map_err(|e| p5_fail(&format!("timeline unreadable: {e}")))
+}
+
+fn tool_video_validate(args: &Value) -> ToolResult {
+    let timeline = match load_timeline_arg_p5(args) {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    let mut base_dir = arg_str(args, "dir");
+    if base_dir.is_empty() {
+        base_dir = dir_name_d(&arg_str(args, "timeline"));
+    }
+    let findings = validate_timeline(&timeline, &base_dir);
+    let (rows, errors) = findings_result(&findings);
+    ToolResult::ok(json!({
+        "errors": errors,
+        "findings": rows,
+        "result": if errors == 0 { "valid" } else { "invalid" },
+    }))
+}
+
+fn tool_video_build(args: &Value) -> ToolResult {
+    let clips_path = arg_str(args, "clips");
+    let out_path = arg_str(args, "out");
+    if clips_path.is_empty() {
+        return p5_fail("clips is required");
+    }
+    if out_path.is_empty() {
+        return p5_fail("out is required");
+    }
+    let text = std::fs::read_to_string(&clips_path)
+        .map_err(|e| format!("clip list unreadable: {e}"));
+    let clip_list: Value = match text.and_then(|t| {
+        serde_json::from_str(&t).map_err(|e| format!("clip list unreadable: {e}"))
+    }) {
+        Ok(v) => v,
+        Err(e) => return p5_fail(&e),
+    };
+    if let Err(r) = guard_output(&out_path, &[clips_path.as_str()], tool_force(args)) {
+        return ToolResult::fail(r.code, &r.message);
+    }
+    let timeline = build_timeline(&clip_list);
+    let duration = jget(&timeline, "duration").clone();
+    let _ = std::fs::write(&out_path, format!("{}\n", to_d_json(&timeline)));
+    ToolResult::ok(json!({
+        "duration": duration,
+        "out": out_path,
+        "result": "built",
+    }))
+}
+
+fn tool_video_tempo(args: &Value) -> ToolResult {
+    let timeline = match load_timeline_arg_p5(args) {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    let mut doc = tempo_report(&timeline);
+    doc["result"] = json!("ok");
+    ToolResult::ok(doc)
+}
+
+fn tool_video_export(args: &Value) -> ToolResult {
+    let timeline = match load_timeline_arg_p5(args) {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    let out_dir = arg_str(args, "outDir");
+    if out_dir.is_empty() {
+        return p5_fail("outDir is required");
+    }
+    let findings = validate_timeline(&timeline, "");
+    for f in &findings {
+        if f.severity == "error" {
+            return ToolResult::fail(f.code, f.message.as_str());
+        }
+    }
+    let names = ["concat.txt", "edl.json", "chapters.txt"];
+    if let Err(r) = guard_output_files(
+        &out_dir,
+        &names,
+        &[arg_str(args, "timeline").as_str()],
+        tool_force(args),
+    ) {
+        return ToolResult::fail(r.code, &r.message);
+    }
+    let _ = std::fs::create_dir_all(&out_dir);
+    let _ = std::fs::write(format!("{out_dir}/concat.txt"), concat_list(&timeline));
+    let edl = json!({"format": "torogao-edl/1", "timeline": timeline});
+    let _ = std::fs::write(
+        format!("{out_dir}/edl.json"),
+        format!("{}\n", to_d_json(&edl)),
+    );
+    let _ = std::fs::write(format!("{out_dir}/chapters.txt"), chapters_file(&timeline));
+    ToolResult::ok(json!({
+        "artifacts": names,
+        "note": "edit-decision artifacts only; transcoding is out of scope for the editing core",
+        "outDir": out_dir,
+        "result": "exported",
+    }))
+}
+
 pub fn dispatch_family(name: &str, args: &Value) -> ToolResult {
     match name {
         "apply-state" => tool_apply_state(args),
@@ -1335,9 +2120,15 @@ pub fn dispatch_family(name: &str, args: &Value) -> ToolResult {
         "audio-render" => tool_audio_render(args),
         "audio-validate" => tool_audio_validate(args),
         "create-character" => tool_create_character(args),
+        "effects-compile" => tool_effects_compile(args),
+        "effects-validate" => tool_effects_validate(args),
         "events-author" => tool_events_author(args),
         "events-list" => tool_events_list(args),
         "expression-check" => tool_expression_check(args),
+        "fluid-sim" => tool_fluid_sim(args),
+        "glb-expression-check" => tool_glb_expression_check(args),
+        "glb-info" => tool_glb_info(args),
+        "glb-resolve-expression" => tool_glb_resolve_expression(args),
         "hitareas-author" => tool_hitareas_author(args),
         "hitareas-list" => tool_hitareas_list(args),
         "instantiate-template" => tool_instantiate_template(args),
@@ -1346,14 +2137,29 @@ pub fn dispatch_family(name: &str, args: &Value) -> ToolResult {
         "list-templates" => tool_list_templates(args),
         "pack-info" => tool_pack_info(args),
         "physics-preview" => tool_physics_preview(args),
+        "playroom-compose" => tool_playroom_compose(args),
+        "playroom-create" => tool_playroom_create(args),
+        "playroom-open" => tool_playroom_open(args),
+        "playroom-set" => tool_playroom_set(args),
+        "prefset-apply" => tool_prefset_apply(args),
+        "prefset-list" => tool_prefset_list(args),
+        "prefset-save" => tool_prefset_save(args),
         "rating-check" => tool_rating_check(args),
+        "scene-info" => tool_scene_info(args),
+        "scene-validate" => tool_scene_validate(args),
         "session-build" => tool_session_build(args),
         "session-validate" => tool_session_validate(args),
         "sfx-list" => tool_sfx_list(args),
+        "tracking-bake" => tool_tracking_bake(args),
         "tracking-check" => tool_tracking_check(args),
+        "tracking-validate" => tool_tracking_validate(args),
         "tutorial-check" => tool_tutorial_check(args),
         "tutorial-list" => tool_tutorial_list(args),
         "tutorial-status" => tool_tutorial_status(args),
+        "video-build" => tool_video_build(args),
+        "video-export" => tool_video_export(args),
+        "video-tempo" => tool_video_tempo(args),
+        "video-validate" => tool_video_validate(args),
         "viseme-author" => tool_viseme_author(args),
         "viseme-bake" => tool_viseme_bake(args),
         "viseme-check" => tool_viseme_check(args),

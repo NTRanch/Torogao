@@ -77,11 +77,1000 @@ pub fn run_special(
 /// the other specials, as in the reference's main).
 /// Returns None when the invocation is not a P5 command.
 pub fn run_p5_cli(
-    _args: &[String],
-    _out: &mut dyn Write,
-    _err: &mut dyn Write,
+    args: &[String],
+    out: &mut dyn Write,
+    err: &mut dyn Write,
 ) -> Option<i32> {
-    None
+    match args.first().map(String::as_str) {
+        Some(
+            "scene-info" | "scene-validate" | "fluid-sim" | "effects-validate"
+            | "effects-compile" | "playroom-open" | "playroom-set" | "playroom-compose"
+            | "playroom-create" | "prefset-list" | "prefset-save" | "prefset-apply"
+            | "tracking-validate" | "tracking-bake" | "gaze-take" | "glb-info"
+            | "glb-expression-check" | "glb-resolve-expression" | "video-validate"
+            | "video-build" | "video-tempo" | "video-export",
+        ) => Some(p5_dispatch(args, out, err)),
+        _ => None,
+    }
+}
+
+fn opt_value(args: &[String], name: &str) -> String {
+    for i in 0..args.len().saturating_sub(1) {
+        if args[i] == name {
+            return args[i + 1].clone();
+        }
+    }
+    String::new()
+}
+
+fn opt_values(args: &[String], name: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for i in 0..args.len().saturating_sub(1) {
+        if args[i] == name {
+            out.push(args[i + 1].clone());
+        }
+    }
+    out
+}
+
+fn opt_flag(args: &[String], name: &str) -> bool {
+    args.iter().any(|a| a == name)
+}
+
+fn print_refusal(out: &mut dyn Write, refusal: &crate::guards::OutRefusal) {
+    print_doc(
+        out,
+        &json!({
+            "code": refusal.code,
+            "error": refusal.message,
+            "result": "refused",
+        }),
+    );
+}
+
+fn p5_findings_doc(findings: &[crate::criteria::Finding]) -> Value {
+    let errors = findings.iter().filter(|f| f.severity == "error").count() as i64;
+    json!({
+        "errors": errors,
+        "findings": crate::criteria::findings_json(findings),
+        "result": if errors == 0 { "valid" } else { "invalid" },
+    })
+}
+
+struct P5Project {
+    ext: crate::extdoc::ExtView,
+    loaded: crate::guards::LoadedProject,
+    walk: Walk,
+}
+
+fn p5_load_project(path: &str, out: &mut dyn Write) -> Option<P5Project> {
+    match load_project(path) {
+        Ok(mut loaded) => {
+            let walk = Walk::build(&mut loaded.puppet);
+            let ext = crate::extdoc::ExtView::of_project(&loaded);
+            Some(P5Project { ext, loaded, walk })
+        }
+        Err(e) => {
+            print_doc(
+                out,
+                &json!({
+                    "code": TG_CONTAINER_MALFORMED,
+                    "error": e.message(),
+                    "file": path,
+                    "result": "unloadable",
+                }),
+            );
+            None
+        }
+    }
+}
+
+fn p5_dispatch(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    let cmd = args[0].as_str();
+    match cmd {
+        "scene-info" | "scene-validate" => p5_scene(args, out, err),
+        "fluid-sim" => p5_fluid_sim(args, out, err),
+        "effects-validate" | "effects-compile" => p5_effects(args, out, err),
+        "playroom-open" | "playroom-create" => p5_playroom_open_create(args, out, err),
+        "playroom-set" => p5_playroom_set(args, out, err),
+        "playroom-compose" => p5_playroom_compose(args, out, err),
+        "prefset-list" => p5_prefset_list(args, out),
+        "prefset-save" => p5_prefset_save(args, out, err),
+        "prefset-apply" => p5_prefset_apply(args, out, err),
+        "gaze-take" | "tracking-validate" | "tracking-bake" => {
+            p5_tracking(args, out, err)
+        }
+        "glb-info" | "glb-expression-check" | "glb-resolve-expression" => {
+            p5_glb(args, out, err)
+        }
+        "video-validate" | "video-build" | "video-tempo" | "video-export" => {
+            p5_video(args, out, err)
+        }
+        _ => 3,
+    }
+}
+
+fn p5_scene(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    let cmd = args[0].as_str();
+    if args.len() < 2 {
+        let _ = writeln!(err, "usage: torogao-cli {cmd} <scene>");
+        return 3;
+    }
+    let scene = match crate::scenes::load_scene_doc(&args[1]) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = writeln!(err, "{e}");
+            return 2;
+        }
+    };
+    if cmd == "scene-info" {
+        print_doc(out, &crate::scenes::scene_info(&scene));
+        return 0;
+    }
+    let mut findings = crate::scenes::validate_scene(&scene);
+    let project = opt_value(args, "--project");
+    if !project.is_empty() {
+        let Some(load) = p5_load_project(&project, out) else {
+            return 2;
+        };
+        let mut pack_name = opt_value(args, "--pack");
+        if pack_name.is_empty() {
+            pack_name = crate::packs::pack_str(&scene, "pack");
+        }
+        let pack = match load_pack(&pack_name) {
+            Ok(p) => p,
+            Err(e) => {
+                let _ = writeln!(err, "{e}");
+                return 2;
+            }
+        };
+        findings.extend(crate::scenes::validate_scene_grounded(
+            &scene,
+            &load.loaded.puppet,
+            &load.walk,
+            &pack,
+        ));
+    }
+    let doc = p5_findings_doc(&findings);
+    let valid = doc["result"] == "valid";
+    print_doc(out, &doc);
+    if valid {
+        0
+    } else {
+        1
+    }
+}
+
+fn p5_fluid_sim(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    if args.len() < 2 {
+        let _ = writeln!(
+            err,
+            "usage: torogao-cli fluid-sim <scene> --project <p> --out <f>"
+        );
+        return 3;
+    }
+    let scene = match crate::scenes::load_scene_doc(&args[1]) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = writeln!(err, "{e}");
+            return 2;
+        }
+    };
+    let project = opt_value(args, "--project");
+    let out_path = opt_value(args, "--out");
+    if project.is_empty() || out_path.is_empty() {
+        let _ = writeln!(err, "fluid-sim requires --project and --out");
+        return 3;
+    }
+    if let Err(r) = guard_output(
+        &out_path,
+        &[project.as_str(), args[1].as_str()],
+        opt_flag(args, "--force"),
+    ) {
+        print_refusal(out, &r);
+        return 1;
+    }
+    let Some(load) = p5_load_project(&project, out) else {
+        return 2;
+    };
+    let mut seconds = 4.0f64;
+    let seconds_text = opt_value(args, "--seconds");
+    if !seconds_text.is_empty() {
+        match seconds_text.parse::<f64>() {
+            Ok(v) => seconds = v,
+            Err(_) => {
+                let _ = writeln!(err, "--seconds needs a number");
+                return 3;
+            }
+        }
+    }
+    let emitter_id = opt_value(args, "--emitter");
+    let areas = crate::fluids::hit_areas_from_ext(&load.ext.doc);
+    let face = crate::scenes::scene_face_expression(&scene);
+    let mut runs: Vec<Value> = Vec::new();
+    if let Some(emitters) = jget(&scene, "fluids").as_array() {
+        for emitter in emitters {
+            if !emitter_id.is_empty()
+                && crate::packs::pack_str(emitter, "id") != emitter_id
+            {
+                continue;
+            }
+            runs.push(crate::fluids::simulate_fluid(emitter, &areas, seconds, &face));
+        }
+    }
+    if runs.is_empty() {
+        let _ = writeln!(err, "no fluid emitter matched");
+        return 1;
+    }
+    let doc = json!({
+        "format": "torogao-fluid-run/1",
+        "runs": runs,
+        "scene": crate::packs::pack_str(&scene, "name"),
+    });
+    let count = doc["runs"].as_array().map_or(0, |a| a.len());
+    let _ = std::fs::write(&out_path, format!("{}\n", to_d_json(&doc)));
+    print_doc(
+        out,
+        &json!({
+            "emitters": count as i64,
+            "out": out_path,
+            "result": "simulated",
+        }),
+    );
+    0
+}
+
+fn p5_effects(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    let cmd = args[0].as_str();
+    if args.len() < 2 {
+        let _ = writeln!(err, "usage: torogao-cli {cmd} <fx.json>");
+        return 3;
+    }
+    let fx = match read_json_file(&args[1]) {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = writeln!(err, "effects unreadable: {e}");
+            return 2;
+        }
+    };
+    if cmd == "effects-validate" {
+        let project = opt_value(args, "--project");
+        let mut param_names: Option<Vec<String>> = None;
+        if !project.is_empty() {
+            let Some(load) = p5_load_project(&project, out) else {
+                return 2;
+            };
+            param_names = Some(crate::effects::puppet_param_names(&load.loaded.puppet));
+        }
+        let doc = p5_findings_doc(&crate::effects::validate_effects(
+            &fx,
+            param_names.as_deref(),
+        ));
+        let valid = doc["result"] == "valid";
+        print_doc(out, &doc);
+        return if valid { 0 } else { 1 };
+    }
+    let project = opt_value(args, "--project");
+    let out_path = opt_value(args, "--out");
+    if project.is_empty() || out_path.is_empty() {
+        let _ = writeln!(err, "effects-compile requires --project and --out");
+        return 3;
+    }
+    if let Err(r) = guard_output(
+        &out_path,
+        &[args[1].as_str(), project.as_str()],
+        opt_flag(args, "--force"),
+    ) {
+        print_refusal(out, &r);
+        return 1;
+    }
+    let Some(load) = p5_load_project(&project, out) else {
+        return 2;
+    };
+    match crate::effects::compile_effects(&fx, &load.loaded.puppet) {
+        Err(findings) => {
+            print_doc(out, &p5_findings_doc(&findings));
+            1
+        }
+        Ok(manifest) => {
+            let count = jget(&manifest, "effectCount").clone();
+            let _ = std::fs::write(&out_path, format!("{}\n", to_d_json(&manifest)));
+            print_doc(
+                out,
+                &json!({
+                    "effectCount": count,
+                    "out": out_path,
+                    "result": "compiled",
+                }),
+            );
+            0
+        }
+    }
+}
+
+fn p5_playroom_open_create(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    let cmd = args[0].as_str();
+    let session_path = opt_value(args, "--session");
+    let pack_name = opt_value(args, "--pack");
+    if session_path.is_empty() || pack_name.is_empty() {
+        let _ = writeln!(err, "{cmd} requires --pack and --session");
+        return 3;
+    }
+    if cmd == "playroom-open" {
+        let project = opt_value(args, "--character");
+        if project.is_empty() || !std::path::Path::new(&project).exists() {
+            let _ = writeln!(
+                err,
+                "playroom-open requires an existing --character project"
+            );
+            return 3;
+        }
+        if let Err(r) = guard_output(
+            &session_path,
+            &[project.as_str()],
+            opt_flag(args, "--force"),
+        ) {
+            print_refusal(out, &r);
+            return 1;
+        }
+        let mut session = crate::playroom::new_session(
+            &project,
+            &pack_name,
+            &opt_value(args, "--scene"),
+            &opt_value(args, "--activity"),
+        );
+        let state = opt_value(args, "--state");
+        if !state.is_empty() {
+            session["expressionState"] = json!(state);
+        }
+        let _ = crate::playroom::save_session(&session_path, &session);
+        print_doc(
+            out,
+            &json!({"result": "opened", "session": session_path}),
+        );
+        return 0;
+    }
+    let identity_path = opt_value(args, "--identity");
+    let out_path = opt_value(args, "--out");
+    if identity_path.is_empty() || out_path.is_empty() {
+        let _ = writeln!(err, "playroom-create requires --identity and --out");
+        return 3;
+    }
+    let pack = match load_pack(&pack_name) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = writeln!(err, "{e}");
+            return 2;
+        }
+    };
+    let identity = match read_json_file(&identity_path) {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = writeln!(err, "identity unreadable: {e}");
+            return 2;
+        }
+    };
+    if let Err(r) = guard_output(
+        &out_path,
+        &[identity_path.as_str()],
+        opt_flag(args, "--force"),
+    ) {
+        print_refusal(out, &r);
+        return 1;
+    }
+    if let Err(r) = guard_output(
+        &session_path,
+        &[identity_path.as_str(), out_path.as_str()],
+        opt_flag(args, "--force"),
+    ) {
+        print_refusal(out, &r);
+        return 1;
+    }
+    let presets = opt_values(args, "--preset");
+    match create_character(&identity, &pack, &presets, &out_path) {
+        Ok(summary) => {
+            let session = crate::playroom::new_session(
+                &out_path,
+                &pack_name,
+                &opt_value(args, "--scene"),
+                &opt_value(args, "--activity"),
+            );
+            let _ = crate::playroom::save_session(&session_path, &session);
+            print_doc(
+                out,
+                &json!({
+                    "character": summary,
+                    "result": "created",
+                    "session": session_path,
+                }),
+            );
+            0
+        }
+        Err((problems, create_error)) => {
+            if !problems.is_empty() {
+                let rows: Vec<Value> = problems.iter().map(|p| p.to_json()).collect();
+                print_doc(
+                    out,
+                    &json!({"problems": rows, "result": "invalid"}),
+                );
+                1
+            } else {
+                let _ = writeln!(err, "{create_error}");
+                1
+            }
+        }
+    }
+}
+
+fn p5_playroom_set(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    if args.len() < 2 {
+        let _ = writeln!(
+            err,
+            "usage: torogao-cli playroom-set <session> --field <f> --value <v>"
+        );
+        return 3;
+    }
+    let mut session = match crate::playroom::load_session(&args[1]) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = writeln!(err, "{e}");
+            return 2;
+        }
+    };
+    let field = opt_value(args, "--field");
+    let value = opt_value(args, "--value");
+    if let Some(problem) =
+        crate::playroom::apply_session_field(&mut session, &field, &value)
+    {
+        let _ = writeln!(err, "{problem}");
+        return 1;
+    }
+    let _ = crate::playroom::write_session_direct(&args[1], &session);
+    print_doc(
+        out,
+        &json!({"result": "updated", "session": args[1]}),
+    );
+    0
+}
+
+fn p5_playroom_compose(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    if args.len() < 2 {
+        let _ = writeln!(
+            err,
+            "usage: torogao-cli playroom-compose <session> [--out <f>]"
+        );
+        return 3;
+    }
+    let session = match crate::playroom::load_session(&args[1]) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = writeln!(err, "{e}");
+            return 2;
+        }
+    };
+    let project = crate::packs::pack_str(&session, "character");
+    let Some(mut load) = p5_load_project(&project, out) else {
+        return 2;
+    };
+    let mut steps: i32 = 240;
+    let steps_text = opt_value(args, "--steps");
+    if !steps_text.is_empty() {
+        match steps_text.parse::<i32>() {
+            Ok(v) => steps = v,
+            Err(_) => {
+                let _ = writeln!(err, "--steps needs a number");
+                return 3;
+            }
+        }
+    }
+    let mut snapshot = match crate::playroom::compose_playroom(
+        &session,
+        &mut load.loaded.puppet,
+        &load.walk,
+        &load.ext,
+        steps,
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = writeln!(err, "{e}");
+            return 1;
+        }
+    };
+    let out_path = opt_value(args, "--out");
+    if !out_path.is_empty() {
+        if let Err(r) = guard_output(
+            &out_path,
+            &[project.as_str(), args[1].as_str()],
+            opt_flag(args, "--force"),
+        ) {
+            print_refusal(out, &r);
+            return 1;
+        }
+        let _ = std::fs::write(&out_path, format!("{}\n", to_d_json(&snapshot)));
+        snapshot["out"] = json!(out_path);
+    }
+    snapshot["result"] = json!("composed");
+    print_doc(out, &snapshot);
+    0
+}
+
+fn p5_prefset_list(args: &[String], out: &mut dyn Write) -> i32 {
+    let dir = crate::playroom::prefset_dir(&opt_value(args, "--dir"));
+    print_doc(
+        out,
+        &json!({
+            "dir": dir.clone(),
+            "result": "ok",
+            "sets": crate::playroom::list_prefsets(&dir),
+        }),
+    );
+    0
+}
+
+fn p5_prefset_save(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    let name = opt_value(args, "--name");
+    if name.is_empty() {
+        let _ = writeln!(err, "prefset-save requires --name");
+        return 3;
+    }
+    let dir = crate::playroom::prefset_dir(&opt_value(args, "--dir"));
+    if dir.is_empty() {
+        let _ = writeln!(err, "no preference-set directory resolvable");
+        return 2;
+    }
+    let set_file = opt_value(args, "--set");
+    let from_session = opt_value(args, "--session");
+    let mut set: Value;
+    if !set_file.is_empty() {
+        match read_json_file(&set_file) {
+            Ok(v) => set = v,
+            Err(e) => {
+                let _ = writeln!(err, "set unreadable: {e}");
+                return 2;
+            }
+        }
+    } else if !from_session.is_empty() {
+        let session = match crate::playroom::load_session(&from_session) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = writeln!(err, "{e}");
+                return 2;
+            }
+        };
+        set = json!({
+            "appearance": jget(&session, "appearance"),
+            "controllers": jget(&session, "controllers"),
+            "format": crate::playroom::PREFSET_FORMAT,
+            "morphs": jget(&session, "morphs"),
+            "name": name,
+            "wardrobe": jget(&session, "wardrobe"),
+        });
+    } else {
+        let _ = writeln!(err, "prefset-save requires --session or --set");
+        return 3;
+    }
+    set["format"] = json!(crate::playroom::PREFSET_FORMAT);
+    set["name"] = json!(name);
+    let path = crate::playroom::prefset_path(&dir, &name);
+    if let Err(r) = guard_output(
+        &path,
+        &[from_session.as_str(), set_file.as_str()],
+        opt_flag(args, "--force"),
+    ) {
+        print_refusal(out, &r);
+        return 1;
+    }
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(&path, format!("{}\n", to_d_json(&set)));
+    print_doc(
+        out,
+        &json!({"path": path, "result": "saved", "set": name}),
+    );
+    0
+}
+
+fn p5_prefset_apply(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    if args.len() < 2 {
+        let _ = writeln!(
+            err,
+            "usage: torogao-cli prefset-apply <session> --set <name>"
+        );
+        return 3;
+    }
+    let mut session = match crate::playroom::load_session(&args[1]) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = writeln!(err, "{e}");
+            return 2;
+        }
+    };
+    let name = opt_value(args, "--set");
+    let dir = crate::playroom::prefset_dir(&opt_value(args, "--dir"));
+    let set = match crate::playroom::load_prefset(&dir, &name) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = writeln!(err, "{e}");
+            return 2;
+        }
+    };
+    let project = crate::packs::pack_str(&session, "character");
+    let Some(load) = p5_load_project(&project, out) else {
+        return 2;
+    };
+    let part_names: Vec<String> = load
+        .walk
+        .nodes
+        .iter()
+        .map(|w| load.loaded.puppet.nodes.nodes[w.node].name.clone())
+        .collect();
+    let wardrobe =
+        crate::playroom::load_wardrobe(&crate::packs::pack_str(&session, "pack"))
+            .unwrap_or(Value::Null);
+    if let Some(problem) =
+        crate::playroom::apply_prefset(&mut session, &set, &wardrobe, &part_names)
+    {
+        print_doc(
+            out,
+            &json!({"error": problem, "result": "refused"}),
+        );
+        return 1;
+    }
+    let _ = crate::playroom::write_session_direct(&args[1], &session);
+    print_doc(out, &json!({"result": "applied", "set": name}));
+    0
+}
+
+fn p5_tracking(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    let cmd = args[0].as_str();
+    if cmd == "gaze-take" {
+        let targets_path = opt_value(args, "--targets");
+        let out_path = opt_value(args, "--out");
+        if targets_path.is_empty() || out_path.is_empty() {
+            let _ = writeln!(err, "gaze-take requires --targets and --out");
+            return 3;
+        }
+        if let Err(r) = guard_output(
+            &out_path,
+            &[targets_path.as_str()],
+            opt_flag(args, "--force"),
+        ) {
+            print_refusal(out, &r);
+            return 1;
+        }
+        let targets = match read_json_file(&targets_path) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = writeln!(err, "targets unreadable: {e}");
+                return 2;
+            }
+        };
+        let mut set_id = opt_value(args, "--set");
+        if set_id.is_empty() {
+            set_id = "face-standard".to_string();
+        }
+        let mut seed: u64 = 1;
+        let seed_text = opt_value(args, "--seed");
+        if !seed_text.is_empty() {
+            match seed_text.parse::<u64>() {
+                Ok(v) => seed = v,
+                Err(_) => {
+                    let _ = writeln!(err, "--seed needs a number");
+                    return 3;
+                }
+            }
+        }
+        let mut seconds = 4.0f64;
+        let seconds_text = opt_value(args, "--seconds");
+        if !seconds_text.is_empty() {
+            match seconds_text.parse::<f64>() {
+                Ok(v) => seconds = v,
+                Err(_) => {
+                    let _ = writeln!(err, "--seconds needs a number");
+                    return 3;
+                }
+            }
+        }
+        let take = crate::tracking::generate_gaze_take(&targets, &set_id, seed, seconds);
+        let _ = std::fs::write(&out_path, format!("{}\n", to_d_json(&take)));
+        print_doc(
+            out,
+            &json!({"out": out_path, "result": "generated"}),
+        );
+        return 0;
+    }
+    if args.len() < 2 {
+        let _ = writeln!(err, "usage: torogao-cli {cmd} <take> --pack <pack>");
+        return 3;
+    }
+    let take = match read_json_file(&args[1]) {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = writeln!(err, "take unreadable: {e}");
+            return 2;
+        }
+    };
+    let pack = match load_pack(&opt_value(args, "--pack")) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = writeln!(err, "{e}");
+            return 2;
+        }
+    };
+    let findings = crate::tracking::validate_take(&take, &pack);
+    if cmd == "tracking-validate" {
+        let mut doc = p5_findings_doc(&findings);
+        doc["take"] = json!(args[1]);
+        let valid = doc["result"] == "valid";
+        print_doc(out, &doc);
+        return if valid { 0 } else { 1 };
+    }
+    if findings.iter().any(|f| f.severity == "error") {
+        print_doc(out, &p5_findings_doc(&findings));
+        return 1;
+    }
+    let out_path = opt_value(args, "--out");
+    if out_path.is_empty() {
+        let _ = writeln!(err, "tracking-bake requires --out");
+        return 3;
+    }
+    if let Err(r) = guard_output(
+        &out_path,
+        &[args[1].as_str()],
+        opt_flag(args, "--force"),
+    ) {
+        print_refusal(out, &r);
+        return 1;
+    }
+    let mut fps: i32 = 60;
+    let fps_text = opt_value(args, "--fps");
+    if !fps_text.is_empty() {
+        match fps_text.parse::<i32>() {
+            Ok(v) => fps = v,
+            Err(_) => {
+                let _ = writeln!(err, "--fps needs a number");
+                return 3;
+            }
+        }
+    }
+    let mut seconds: i32 = 4;
+    let seconds_text = opt_value(args, "--seconds");
+    if !seconds_text.is_empty() {
+        match seconds_text.parse::<i32>() {
+            Ok(v) => seconds = v,
+            Err(_) => {
+                let _ = writeln!(err, "--seconds needs a number");
+                return 3;
+            }
+        }
+    }
+    let mut curves = crate::tracking::bake_take(&take, fps, fps * seconds);
+    curves
+        .extra
+        .push(("take".to_string(), crate::curves::quote(&args[1])));
+    let series = curves.series.len();
+    let _ = std::fs::write(&out_path, format!("{}\n", curves.to_json()));
+    print_doc(
+        out,
+        &json!({
+            "out": out_path,
+            "result": "baked",
+            "series": series as i64,
+        }),
+    );
+    0
+}
+
+fn p5_glb(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    let cmd = args[0].as_str();
+    if cmd == "glb-resolve-expression" {
+        if args.len() < 2 {
+            let _ = writeln!(
+                err,
+                "usage: torogao-cli glb-resolve-expression <map> --name <n>"
+            );
+            return 3;
+        }
+        let map = match read_json_file(&args[1]) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = writeln!(err, "map unreadable: {e}");
+                return 2;
+            }
+        };
+        return match crate::glb::resolve_expression(&map, &opt_value(args, "--name")) {
+            Ok(morphs) => {
+                print_doc(
+                    out,
+                    &json!({"morphs": morphs, "result": "resolved"}),
+                );
+                0
+            }
+            Err(e) => {
+                print_doc(
+                    out,
+                    &json!({"error": e, "result": "unresolved"}),
+                );
+                1
+            }
+        };
+    }
+    let mut glb_path = opt_value(args, "--glb");
+    if glb_path.is_empty() && args.len() >= 2 {
+        glb_path = args[1].clone();
+    }
+    let info = match crate::glb::load_glb(&glb_path) {
+        Ok(i) => i,
+        Err(e) => {
+            print_doc(
+                out,
+                &json!({"error": e, "result": "unreadable"}),
+            );
+            return 2;
+        }
+    };
+    if cmd == "glb-info" {
+        print_doc(out, &crate::glb::glb_census(&glb_path, &info));
+        return 0;
+    }
+    let map_path = if args.len() >= 2 && args[1] == glb_path {
+        opt_value(args, "--map")
+    } else if args.len() >= 2 {
+        args[1].clone()
+    } else {
+        String::new()
+    };
+    let map = match read_json_file(&map_path) {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = writeln!(err, "map unreadable: {e}");
+            return 2;
+        }
+    };
+    let pack = match load_pack(&opt_value(args, "--pack")) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = writeln!(err, "{e}");
+            return 2;
+        }
+    };
+    let governed: Vec<String> = crate::packs::pack_expressions(&pack)
+        .iter()
+        .map(|e| crate::packs::pack_str(e, "name"))
+        .collect();
+    let problems = crate::glb::check_expression_map(&map, &info, &governed);
+    let complete = problems.is_empty();
+    print_doc(
+        out,
+        &json!({
+            "governed": governed.len() as i64,
+            "problems": problems,
+            "result": if complete { "complete" } else { "incomplete" },
+        }),
+    );
+    if complete {
+        0
+    } else {
+        1
+    }
+}
+
+fn p5_video(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    let cmd = args[0].as_str();
+    if cmd == "video-build" {
+        if args.len() < 2 {
+            let _ = writeln!(
+                err,
+                "usage: torogao-cli video-build <clips.json> --out <timeline>"
+            );
+            return 3;
+        }
+        let clip_list = match read_json_file(&args[1]) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = writeln!(err, "clip list unreadable: {e}");
+                return 2;
+            }
+        };
+        let out_path = opt_value(args, "--out");
+        if out_path.is_empty() {
+            let _ = writeln!(err, "video-build requires --out");
+            return 3;
+        }
+        if let Err(r) = guard_output(
+            &out_path,
+            &[args[1].as_str()],
+            opt_flag(args, "--force"),
+        ) {
+            print_refusal(out, &r);
+            return 1;
+        }
+        let timeline = crate::video::build_timeline(&clip_list);
+        let duration = jget(&timeline, "duration").clone();
+        let _ = std::fs::write(&out_path, format!("{}\n", to_d_json(&timeline)));
+        print_doc(
+            out,
+            &json!({
+                "duration": duration,
+                "out": out_path,
+                "result": "built",
+            }),
+        );
+        return 0;
+    }
+    if args.len() < 2 {
+        let _ = writeln!(err, "usage: torogao-cli {cmd} <timeline>");
+        return 3;
+    }
+    let timeline = match read_json_file(&args[1]) {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = writeln!(err, "timeline unreadable: {e}");
+            return 2;
+        }
+    };
+    if cmd == "video-tempo" {
+        let mut doc = crate::video::tempo_report(&timeline);
+        doc["result"] = json!("ok");
+        print_doc(out, &doc);
+        return 0;
+    }
+    let mut base_dir = opt_value(args, "--dir");
+    if base_dir.is_empty() {
+        base_dir = match args[1].rfind('/') {
+            Some(0) => "/".to_string(),
+            Some(i) => args[1][..i].to_string(),
+            None => ".".to_string(),
+        };
+    }
+    let findings = crate::video::validate_timeline(&timeline, &base_dir);
+    if cmd == "video-validate" {
+        let doc = p5_findings_doc(&findings);
+        let valid = doc["result"] == "valid";
+        print_doc(out, &doc);
+        return if valid { 0 } else { 1 };
+    }
+    if findings.iter().any(|f| f.severity == "error") {
+        print_doc(out, &p5_findings_doc(&findings));
+        return 1;
+    }
+    let out_dir = opt_value(args, "--out");
+    if out_dir.is_empty() {
+        let _ = writeln!(err, "video-export requires --out <dir>");
+        return 3;
+    }
+    let names = ["concat.txt", "edl.json", "chapters.txt"];
+    if let Err(r) = crate::guards::guard_output_files(
+        &out_dir,
+        &names,
+        &[args[1].as_str()],
+        opt_flag(args, "--force"),
+    ) {
+        print_refusal(out, &r);
+        return 1;
+    }
+    let _ = std::fs::create_dir_all(&out_dir);
+    let _ = std::fs::write(
+        format!("{out_dir}/concat.txt"),
+        crate::video::concat_list(&timeline),
+    );
+    let edl = json!({"format": "torogao-edl/1", "timeline": timeline});
+    let _ = std::fs::write(
+        format!("{out_dir}/edl.json"),
+        format!("{}\n", to_d_json(&edl)),
+    );
+    let _ = std::fs::write(
+        format!("{out_dir}/chapters.txt"),
+        crate::video::chapters_file(&timeline),
+    );
+    print_doc(
+        out,
+        &json!({
+            "artifacts": names,
+            "outDir": out_dir,
+            "result": "exported",
+        }),
+    );
+    0
 }
 
 fn cmd_pack_info(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {

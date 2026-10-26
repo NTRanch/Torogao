@@ -61,12 +61,13 @@ fn splitmix64(state: &mut u64) -> u64 {
     z ^ (z >> 31)
 }
 
-struct Xoshiro256 {
+pub struct Xoshiro256 {
     s: [u64; 4],
 }
 
 impl Xoshiro256 {
-    fn from_seed(seed: u64) -> Self {
+    /// Builds a generator from a seed.
+    pub fn from_seed(seed: u64) -> Self {
         let mut state = seed;
         let mut s = [0u64; 4];
         for slot in &mut s {
@@ -87,7 +88,8 @@ impl Xoshiro256 {
         result
     }
 
-    fn uniform(&mut self) -> f64 {
+    /// Next uniform sample in [-1, 1).
+    pub fn uniform(&mut self) -> f64 {
         ((self.next() >> 11) as f64 / 9_007_199_254_740_992.0) * 2.0 - 1.0
     }
 }
