@@ -8,6 +8,8 @@
         torogao-cli inspect <project.inx> [--out file.json]
         torogao-cli validate <project.inx> [--out file.json]
         torogao-cli export-rig <project.inx> --out <dir>
+        torogao-cli physics-preview <project.inx> --track <track.json>
+                    [--fps <n>] [--out curves.json]
         torogao-cli mcp [--stdio]      MCP server over stdio
         torogao-cli a2a [--bind <addr>] [--port <n>]
                                        A2A HTTP surface
@@ -33,14 +35,18 @@ import torogao.a2a.server;
 import torogao.cli.criteria;
 import torogao.cli.inpfile;
 import torogao.cli.inspect_;
+import torogao.cli.physicspreview;
 import torogao.cli.puppetwalk;
 import torogao.cli.rigexport;
 import torogao.mcp.server;
 import torogao.tools.projectops;
 import torogao.tools.registry;
-import std.json : JSONValue, JSONType;
+import std.conv : to, ConvException;
+import std.digest.sha : sha256Of;
+import std.format : format;
+import std.json : JSONValue, JSONType, parseJSON;
 import std.stdio : writeln, stderr;
-import std.file : exists, mkdirRecurse, write;
+import std.file : exists, mkdirRecurse, readText, write;
 import std.path : baseName, buildPath, stripExtension;
 
 int main(string[] args) {
@@ -74,17 +80,30 @@ int main(string[] args) {
         return runA2aServer(buildCoreRegistry(), bind, port);
     }
     if (args.length < 3) {
-        stderr.writeln("usage: torogao-cli <inspect|validate|export-rig|mcp|a2a|registry-dump> <project.inx> [--out <path>]");
+        stderr.writeln("usage: torogao-cli <inspect|validate|export-rig|physics-preview|mcp|a2a|registry-dump> <project.inx> [--out <path>]");
         return 3;
     }
     string command = args[1];
     string projectPath = args[2];
     string outPath;
-    for (size_t i = 3; i + 1 < args.length + 1 && i < args.length; i++) {
-        if (args[i] == "--out" && i + 1 < args.length) outPath = args[++i];
+    string trackPath;
+    int fpsOverride = 0;
+    for (size_t i = 3; i < args.length; i++) {
+        if (args[i] == "--out" && i + 1 < args.length) {
+            outPath = args[++i];
+        } else if (args[i] == "--track" && i + 1 < args.length) {
+            trackPath = args[++i];
+        } else if (args[i] == "--fps" && i + 1 < args.length) {
+            try {
+                fpsOverride = to!int(args[++i]);
+            } catch (ConvException) {
+                stderr.writeln("--fps needs a number");
+                return 3;
+            }
+        }
     }
     if (command != "inspect" && command != "validate" &&
-        command != "export-rig") {
+        command != "export-rig" && command != "physics-preview") {
         stderr.writeln("unknown subcommand: ", command);
         return 3;
     }
@@ -94,6 +113,10 @@ int main(string[] args) {
     }
     if (command == "export-rig" && outPath.length == 0) {
         stderr.writeln("export-rig requires --out <dir>");
+        return 3;
+    }
+    if (command == "physics-preview" && trackPath.length == 0) {
+        stderr.writeln("physics-preview requires --track <track.json>");
         return 3;
     }
 
@@ -159,6 +182,41 @@ int main(string[] args) {
             report["entries"] = list;
             write(reportPath, report.toString() ~ "\n");
             writeln(report.toString());
+            return 0;
+        }
+        case "physics-preview": {
+            JSONValue track;
+            try {
+                track = parseJSON(readText(trackPath));
+            } catch (Exception ex) {
+                stderr.writeln("input track unreadable: ", ex.msg);
+                return 3;
+            }
+            string previewError;
+            auto curves = runPhysicsPreview(puppet, track, fpsOverride,
+                projectPath, previewError);
+            if (previewError !is null) {
+                JSONValue doc;
+                doc["file"] = projectPath;
+                doc["result"] = "error";
+                doc["error"] = previewError;
+                writeln(doc.toString());
+                return 3;
+            }
+            string text = curves.toJson();
+            if (outPath.length > 0) {
+                write(outPath, text ~ "\n");
+                JSONValue doc;
+                doc["file"] = projectPath;
+                doc["curves"] = outPath;
+                doc["steps"] = curves.steps();
+                doc["series"] = curves.series.length;
+                doc["sha256"] = format("%(%02x%)",
+                    sha256Of(cast(ubyte[]) (text ~ "\n")));
+                writeln(doc.toString());
+            } else {
+                writeln(text);
+            }
             return 0;
         }
         default:

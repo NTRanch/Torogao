@@ -24,6 +24,7 @@ import torogao.cli.inpfile;
 import torogao.cli.inspect_;
 import torogao.cli.puppetwalk;
 import torogao.cli.rigexport;
+import torogao.tools.physicstools;
 import torogao.tools.registry;
 import std.functional : toDelegate;
 import std.json : JSONValue, JSONType;
@@ -327,6 +328,10 @@ ToolRegistry buildCoreRegistry() {
         "into a project require the decide()-class write gate and " ~
         "an explicit operator enable; neither exists yet";
     reg.register(fixSpec, null);
+
+    // Later phases register their tool families here; the
+    // surfaces pick them up from the registry automatically.
+    registerPhysicsTools(reg);
 
     return reg;
 }
