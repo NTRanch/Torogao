@@ -17,7 +17,7 @@ features (templates, the character creator, tutorials, scenes)
 appear on all surfaces automatically because both `tools/list`
 and the Agent Card are **generated from the registry**.
 
-## Tools (v1)
+## Tools (v2)
 
 | Tool | Posture | What it does |
 |---|---|---|
@@ -26,6 +26,14 @@ and the Agent Card are **generated from the registry**.
 | `export-rig` | export | Converts a project to a lumen-rig model plus a conversion report (mapped / approximated / dropped, every entry reasoned). Writes only to the caller-named output directory; the project is never modified. |
 | `project-info` | read-only | Reads only the INP container (no puppet load): size, metadata, payload sections, texture section summary. Fast; works on projects the loader would reject. |
 | `apply-fixes` | **disabled** | Would rewrite a project to repair findings. Registered for discovery only — see *Mutation posture*. |
+| `physics-preview` | read-only | Deterministic fixed-step physics preview: steps a project under an input track and returns the parameter curves (`torogao-curves/1`). Replays are byte-identical. |
+| `list-templates` | read-only | Lists the rig templates and physics-chain presets available for instantiation. |
+| `instantiate-template` | export | Builds a new INP puppet from a template plus presets at a caller-named path. Never modifies an existing project. |
+| `audio-validate` | read-only | Checks a procedural-audio recipe; returns findings with stable `TG-AUDIO-` codes. |
+| `audio-render` | export | Renders a recipe to a 48 kHz WAV master plus manifest (seed, engine, measured loudness/true peak, license) in a caller-named directory. |
+| `audio-bake` | export | Bakes a WAV's amplitude envelope into a `torogao-curves/1` document at a caller-named path. |
+| `viseme-check` | read-only | Gates a project against the viseme contract (mouth-parameter coverage). |
+| `viseme-bake` | export | Bakes a viseme track into mouth-parameter curves at a caller-named path. |
 
 Arguments are JSON objects. Every project tool takes
 `{"project": "<path to an .inx/.inp file>"}`; `export-rig` also
