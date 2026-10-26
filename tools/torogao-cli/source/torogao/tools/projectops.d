@@ -28,6 +28,7 @@ import torogao.tools.audiotools;
 import torogao.tools.physicstools;
 import torogao.tools.registry;
 import torogao.tools.templatools;
+import torogao.tools.visemetools;
 import std.functional : toDelegate;
 import std.json : JSONValue, JSONType;
 import std.file : exists, getSize, mkdirRecurse, read, write;
@@ -336,6 +337,7 @@ ToolRegistry buildCoreRegistry() {
     registerPhysicsTools(reg);
     registerTemplateTools(reg);
     registerAudioTools(reg);
+    registerVisemeTools(reg);
 
     return reg;
 }

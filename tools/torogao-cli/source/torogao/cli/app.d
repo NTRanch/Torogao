@@ -17,6 +17,9 @@
         torogao-cli audio-validate <recipe.json>
         torogao-cli audio-bake <file.wav> --recipe <bake.json>
                     --out <curves.json>
+        torogao-cli viseme-check <project.inx> [--contract <file>]
+        torogao-cli viseme-bake <track.json> [--contract <file>]
+                    --out <curves.json>
         torogao-cli mcp [--stdio]      MCP server over stdio
         torogao-cli a2a [--bind <addr>] [--port <n>]
                                        A2A HTTP surface
@@ -49,6 +52,7 @@ import torogao.cli.physicspreview;
 import torogao.cli.puppetwalk;
 import torogao.cli.rigexport;
 import torogao.cli.templates;
+import torogao.cli.viseme;
 import torogao.curves;
 import torogao.mcp.server;
 import torogao.tools.projectops;
@@ -255,6 +259,97 @@ int main(string[] args) {
         write(bakeOut, curves.toJson() ~ "\n");
         JSONValue doc;
         doc["file"] = args[2];
+        doc["curves"] = bakeOut;
+        doc["steps"] = curves.steps();
+        doc["series"] = curves.series.length;
+        writeln(doc.toString());
+        return 0;
+    }
+    if (args.length >= 2 && args[1] == "viseme-check") {
+        if (args.length < 3) {
+            stderr.writeln("usage: torogao-cli viseme-check " ~
+                "<project.inx> [--contract <file>]");
+            return 3;
+        }
+        string contractPath;
+        for (size_t i = 3; i < args.length; i++)
+            if (args[i] == "--contract" && i + 1 < args.length)
+                contractPath = args[++i];
+        string cErr;
+        auto contract_ = loadVisemeContract(contractPath, cErr);
+        if (cErr.length > 0) {
+            stderr.writeln(cErr);
+            return 3;
+        }
+        if (!exists(args[2])) {
+            stderr.writeln("project file not found: ", args[2]);
+            return 2;
+        }
+        torogaoInitHeadless();
+        Puppet puppet;
+        try puppet = inLoadPuppet(args[2]);
+        catch (Exception ex) {
+            JSONValue doc;
+            doc["file"] = args[2];
+            doc["result"] = "unloadable";
+            doc["error"] = ex.msg;
+            writeln(doc.toString());
+            return 2;
+        }
+        auto findings = checkVisemes(puppet, contract_);
+        JSONValue doc;
+        doc["file"] = args[2];
+        doc["contract"] = contract_.setName;
+        doc["covered"] = coveredParameters(puppet, contract_);
+        doc["result"] = findings.length > 0 ? "findings" : "clean";
+        JSONValue[] list;
+        foreach (f; findings) list ~= f.toJson();
+        doc["findings"] = list;
+        writeln(doc.toString());
+        return findings.length > 0 ? 1 : 0;
+    }
+    if (args.length >= 2 && args[1] == "viseme-bake") {
+        if (args.length < 3) {
+            stderr.writeln("usage: torogao-cli viseme-bake " ~
+                "<track.json> [--contract <file>] --out <curves.json>");
+            return 3;
+        }
+        string contractPath, bakeOut;
+        for (size_t i = 3; i < args.length; i++) {
+            if (args[i] == "--contract" && i + 1 < args.length)
+                contractPath = args[++i];
+            else if (args[i] == "--out" && i + 1 < args.length)
+                bakeOut = args[++i];
+        }
+        if (bakeOut.length == 0) {
+            stderr.writeln("viseme-bake requires --out <curves.json>");
+            return 3;
+        }
+        string cErr;
+        auto contract_ = loadVisemeContract(contractPath, cErr);
+        if (cErr.length > 0) {
+            stderr.writeln(cErr);
+            return 3;
+        }
+        JSONValue track;
+        try track = parseJSON(readText(args[2]));
+        catch (Exception ex) {
+            stderr.writeln("track unreadable: ", ex.msg);
+            return 3;
+        }
+        CurveSet curves;
+        string bakeError;
+        if (!bakeVisemes(track, contract_, curves, bakeError)) {
+            JSONValue doc;
+            doc["file"] = args[2];
+            doc["result"] = "error";
+            doc["error"] = bakeError;
+            writeln(doc.toString());
+            return 3;
+        }
+        write(bakeOut, curves.toJson() ~ "\n");
+        JSONValue doc;
+        doc["track"] = args[2];
         doc["curves"] = bakeOut;
         doc["steps"] = curves.steps();
         doc["series"] = curves.series.length;
