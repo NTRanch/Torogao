@@ -299,6 +299,32 @@ void incOpenWindow() {
         SDL_SysWMinfo info;
         SDL_GetWindowWMInfo(window, &info);
         isWayland = info.subsystem == SDL_SYSWM_TYPE.SDL_SYSWM_WAYLAND;
+
+        // Torogao: SDL_GetWindowWMInfo does not reliably report
+        // the Wayland subsystem through the SDL2 compatibility
+        // layer; the current video driver name is the ground
+        // truth SDL itself acts on, so consult it as well.
+        if (!isWayland) {
+            import std.string : fromStringz;
+            auto driver = SDL_GetCurrentVideoDriver();
+            if (driver !is null && driver.fromStringz == "wayland")
+                isWayland = true;
+        }
+
+        if (isWayland) {
+            // Torogao: bindbc-opengl chooses between its EGL and
+            // GLX proc-address paths by reading XDG_SESSION_TYPE,
+            // which describes the login session, not this process.
+            // When the launch environment doesn't reflect the
+            // session (SSH launches, wrapper scripts, service
+            // managers), it takes the GLX path against an EGL
+            // context and loadOpenGL() reports no context even
+            // though SDL created one. SDL has just established
+            // the real subsystem from the window itself; align
+            // the loader's heuristic with it before loadOpenGL().
+            import core.sys.posix.stdlib : setenv;
+            setenv("XDG_SESSION_TYPE", "wayland", 1);
+        }
     }
 
     GLSupport support;
