@@ -5,3 +5,7 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 description = "INP1 and vendor-extension format records: parsing and byte-stable serialization for Torogao."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

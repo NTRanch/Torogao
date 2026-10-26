@@ -1,7 +1,24 @@
 [package]
-name = "torogao-cli"
+name = "torogao"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 description = "The Torogao command-line tools: the registry, MCP and A2A servers, scenes, writer, tutorials, toolbox, and conversion."
+
+[dependencies]
+serde_json = { workspace = true }
+torogao-engine = { path = "../torogao-engine" }
+torogao-format = { path = "../torogao-format" }
+
+[lib]
+name = "torogao_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "torogao"
+path = "src/main.rs"
+
+[[bin]]
+name = "rig-check"
+path = "src/bin/rig-check.rs"
