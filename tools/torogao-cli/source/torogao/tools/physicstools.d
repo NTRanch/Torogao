@@ -15,7 +15,9 @@ module torogao.tools.physicstools;
 import inochi2d.torogao.bridge : torogaoInitHeadless;
 import inochi2d.core : Puppet;
 import inochi2d.fmt : inLoadPuppet;
+import torogao.cli.drivers;
 import torogao.cli.physicspreview;
+import torogao.cli.states;
 import torogao.tools.registry;
 import std.functional : toDelegate;
 import std.json : JSONValue, JSONType, parseJSON;
@@ -48,6 +50,22 @@ private JSONValue schemaPreview() {
     fps["description"] =
         "Optional step-rate override; one of 15, 30, 60, 120.";
     props["fps"] = fps;
+    JSONValue state;
+    state["type"] = "string";
+    state["description"] =
+        "Optional stored expression state to apply as an input layer.";
+    props["state"] = state;
+    JSONValue variant;
+    variant["type"] = "string";
+    variant["description"] =
+        "Optional stored stage variant id to apply as an input layer.";
+    props["variant"] = variant;
+    JSONValue drivers;
+    drivers["type"] = "object";
+    drivers["description"] =
+        "Optional ambient driver set {drivers: [names], seed: n}, " ~
+        "layered under authored inputs.";
+    props["drivers"] = drivers;
     s["properties"] = props;
     s["required"] = [JSONValue("project"), JSONValue("track")];
     s["additionalProperties"] = false;
@@ -107,9 +125,22 @@ private ToolResult toolPhysicsPreview(JSONValue args) {
         return ToolResult.fail("project_unloadable", ex.msg);
     }
 
+    PreviewOptions options;
+    options.ext = extOf(puppet).doc;
+    if (auto sv = "state" in args)
+        if (sv.type == JSONType.string) options.stateName = sv.str;
+    if (auto vv = "variant" in args)
+        if (vv.type == JSONType.string) options.variantId = vv.str;
+    if (auto dv = "drivers" in args) {
+        string driverError;
+        if (!parseDriverConfig(*dv, options.drivers, driverError))
+            return ToolResult.fail("invalid_arguments", driverError);
+        options.hasDrivers = true;
+    }
+
     string previewError;
     auto curves = runPhysicsPreview(puppet, track, fpsOverride,
-        projectPath, previewError);
+        projectPath, options, previewError);
     if (previewError !is null)
         return ToolResult.fail("preview_failed", previewError);
     return ToolResult.ok(curves.toJsonValue());

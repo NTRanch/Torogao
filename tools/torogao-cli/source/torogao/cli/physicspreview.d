@@ -44,6 +44,8 @@ import inochi2d : Puppet, Parameter, deltaTime, inSetTimingFunc,
     inUpdate, lastTime;
 import inochi2d.core.nodes.drivers.simplephysics : SimplePhysics;
 import inochi2d.math : vec2;
+import torogao.cli.drivers;
+import torogao.cli.states;
 import torogao.curves;
 import std.json : JSONValue, JSONType;
 import std.format : format;
@@ -80,12 +82,42 @@ private bool jsonNum(JSONValue v, out double value) {
 }
 
 /**
+    Optional preview composition layers (P3): an expression
+    state and/or a stage variant stored in the project's
+    vendor-extension section, applied as constant input
+    tracks, and the ambient driver set (Addition O), layered
+    UNDER authored inputs and recipes. Precedence: input
+    track > state/variant recipe > ambient drivers >
+    parameter defaults. A state and a variant driving the
+    same parameter is an error (two authored layers may not
+    silently compose); a driver never overrides an authored
+    value — it fills only parameters nothing else drives.
+*/
+struct PreviewOptions {
+    JSONValue ext;        /// project extension doc (may be null)
+    string stateName;     /// state to apply ("" = none)
+    string variantId;     /// variant to apply ("" = none)
+    bool hasDrivers;      /// compose the ambient driver set
+    DriverConfig drivers; /// the driver set (seed is data)
+}
+
+/// The original P2 entry point: a bare track, no layers.
+CurveSet runPhysicsPreview(Puppet puppet, JSONValue track,
+                           int fpsOverride, string projectLabel,
+                           out string error) {
+    PreviewOptions none;
+    return runPhysicsPreview(puppet, track, fpsOverride, projectLabel,
+        none, error);
+}
+
+/**
     Runs the preview. On success `error` is empty and the
     curve set holds one series per parameter axis (axis 1
     only for vec2 parameters), `steps` values each.
 */
 CurveSet runPhysicsPreview(Puppet puppet, JSONValue track,
                            int fpsOverride, string projectLabel,
+                           PreviewOptions options,
                            out string error) {
     CurveSet result;
     error = null;
@@ -174,6 +206,124 @@ CurveSet runPhysicsPreview(Puppet puppet, JSONValue track,
         }
     }
 
+    // -- P3 composition layers --------------------------------
+    // Authored parameters so far (the track). Recipes and
+    // drivers compose under the documented precedence.
+    bool[string] authored;
+    foreach (input; inputs) authored[input.param.name] = true;
+
+    Parameter findParam(string name) {
+        foreach (p; puppet.parameters)
+            if (p.name == name) return p;
+        return null;
+    }
+
+    bool appendConstant(string name, double value, string layer) {
+        auto param = findParam(name);
+        if (param is null) {
+            error = layer ~ " drives unknown parameter '" ~ name ~ "'";
+            return false;
+        }
+        if ((param in puppet.getParameterDrivers()) !is null) {
+            error = layer ~ " input '" ~ name
+                ~ "' is driven by a driver and cannot be a preview input";
+            return false;
+        }
+        Input input;
+        input.param = param;
+        foreach (i; 0 .. steps)
+            input.values ~= vec2(cast(float) value,
+                cast(float) param.defaults.y);
+        inputs ~= input;
+        authored[name] = true;
+        return true;
+    }
+
+    if (options.stateName.length > 0 || options.variantId.length > 0) {
+        if (options.ext.type != JSONType.object) {
+            error = "the project carries no torogao extension data; "
+                ~ "it has no states or variants to apply";
+            return result;
+        }
+        auto ranges = paramRanges(puppet);
+        double[string] recipeValues;
+        string[string] recipeLayer;
+        void mergeRecipe(JSONValue recipe, string layer) {
+            if (error !is null) return;
+            string[] problems;
+            auto resolved = resolveRecipe(options.ext, recipe, ranges,
+                problems);
+            if (problems.length > 0) {
+                error = layer ~ " recipe is invalid: " ~ problems[0];
+                return;
+            }
+            foreach (name, value; resolved) {
+                if ((name in recipeValues) !is null) {
+                    error = "state and variant both drive parameter '"
+                        ~ name ~ "'; two authored layers may not "
+                        ~ "silently compose";
+                    return;
+                }
+                recipeValues[name] = value;
+                recipeLayer[name] = layer;
+            }
+        }
+        if (options.stateName.length > 0) {
+            auto state = findState(options.ext, options.stateName);
+            if (state.type != JSONType.object) {
+                error = "state '" ~ options.stateName
+                    ~ "' is not stored in the project";
+                return result;
+            }
+            mergeRecipe(state["recipe"], "state '" ~ options.stateName ~ "'");
+            if (error !is null) return result;
+        }
+        if (options.variantId.length > 0) {
+            auto variant = findVariant(options.ext, options.variantId);
+            if (variant.type != JSONType.object) {
+                error = "variant '" ~ options.variantId
+                    ~ "' is not stored in the project";
+                return result;
+            }
+            mergeRecipe(variant["recipe"],
+                "variant '" ~ options.variantId ~ "'");
+            if (error !is null) return result;
+        }
+        foreach (name, value; recipeValues) {
+            if ((name in authored) !is null) {
+                error = "the input track and " ~ recipeLayer[name]
+                    ~ " both drive parameter '" ~ name ~ "'";
+                return result;
+            }
+            if (!appendConstant(name, value, recipeLayer[name]))
+                return result;
+        }
+    }
+
+    string[] driverNamesUsed;
+    if (options.hasDrivers) {
+        auto driven = driverInputs(puppet, options.drivers, steps, fps);
+        foreach (name, values; driven) {
+            if ((name in authored) !is null) continue; // authored wins
+            auto param = findParam(name);
+            if (param is null) continue;
+            if ((param in puppet.getParameterDrivers()) !is null) {
+                error = "ambient driver input '" ~ name
+                    ~ "' is driven by a physics driver and cannot be "
+                    ~ "a preview input";
+                return result;
+            }
+            Input input;
+            input.param = param;
+            foreach (v; values)
+                input.values ~= vec2(cast(float) v,
+                    cast(float) param.defaults.y);
+            inputs ~= input;
+            authored[name] = true;
+            driverNamesUsed ~= name;
+        }
+    }
+
     // Series layout: every parameter, in puppet order.
     CurveSeries[] series;
     foreach (p; puppet.parameters) {
@@ -229,5 +379,24 @@ CurveSet runPhysicsPreview(Puppet puppet, JSONValue track,
     string[2] kvFps = ["fps", format("%d", fps)];
     result.extra ~= kvProject;
     result.extra ~= kvFps;
+    if (options.stateName.length > 0) {
+        string[2] kv = ["state", quote(options.stateName)];
+        result.extra ~= kv;
+    }
+    if (options.variantId.length > 0) {
+        string[2] kv = ["variant", quote(options.variantId)];
+        result.extra ~= kv;
+    }
+    if (options.hasDrivers) {
+        import std.algorithm : sort;
+        import std.array : join;
+        sort(driverNamesUsed);
+        string[2] kvDrivers = ["drivers",
+            quote(activeDriverNames(options.drivers).join(","))];
+        string[2] kvSeed = ["driver-seed",
+            format("%d", options.drivers.seed)];
+        result.extra ~= kvDrivers;
+        result.extra ~= kvSeed;
+    }
     return result;
 }
