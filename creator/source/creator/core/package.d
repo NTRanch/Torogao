@@ -285,7 +285,12 @@ void incOpenWindow() {
     version(InBranding) {
         debug string WIN_TITLE = "Torogao "~_("(Debug Mode)");
         else string WIN_TITLE = "Torogao "~INC_VERSION;
-    } else string WIN_TITLE = "Torogao "~_("(Unsupported)");
+    } else string WIN_TITLE = "Torogao";
+    // Torogao: the default configuration builds without
+    // InBranding, which upstream labels "(Unsupported)" in the
+    // window title. This fork is the supported build of itself,
+    // so the title is exactly the product name (project loads
+    // append " - <name>" via incSetWindowTitle).
     
     window = tryCreateWindow(WIN_TITLE, flags);
     
