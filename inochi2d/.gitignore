@@ -1,0 +1,31 @@
+.dub
+docs.json
+__dummy.html
+docs/
+/libinochi2d
+libinochi2d.so
+libinochi2d.dylib
+inochi2d.dll
+libinochi2d.a
+inochi2d.lib
+libinochi2d-test-*
+*.exe
+*.o
+*.obj
+*.lst
+*.png
+
+# Ignore selections to avoid useless stuff in repo
+dub.selections.json
+
+# Basic Renderer Example
+examples/basicrender/basicrender
+basicrender.so
+basicrender.dylib
+basicrender.dll
+basicrender.a
+basicrender.lib
+basicrender-test-*
+!logo.png
+
+out/

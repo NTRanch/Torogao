@@ -1,0 +1,53 @@
+# This workflow uses actions that are not certified by GitHub.
+# They are provided by a third-party and are governed by
+# separate terms of service, privacy policy, and support
+# documentation.
+name: Pull Request Test
+
+on:
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+
+    runs-on: ubuntu-20.04
+
+    steps:
+    - uses: actions/checkout@v4.1.7
+    - uses: dlang-community/setup-dlang@4c99aa991ce7d19dd3064de0a4f2f6b2f152e2d7
+      with:
+        compiler: ldc-latest
+  
+    - name: "Get build dependencies"
+      run: |
+        sudo apt install libsdl2-dev libfreetype6-dev
+      
+    - name: "Clone dependencies & set versions"
+      run: |
+        git clone https://github.com/Inochi2D/i2d-imgui.git --recurse-submodules
+        git clone https://github.com/Inochi2D/inochi2d.git
+        dub add-local i2d-imgui/ "0.8.0"
+        dub add-local inochi2d/ "0.8.5"
+
+    - name: 'Build'
+      run: |
+        # Build metadata (like version information and icons)
+        dub build --config=meta
+        
+        # Build the project, with its main file included, without unittests
+        dub build --compiler=ldc2 --build=release --config=linux-full
+    
+    - name: 'Test'
+      run: |
+        dub test --compiler=ldc2 --config=linux-full
+
+    - name: "Upload Artifacts"  
+      if: success()
+      uses: actions/upload-artifact@v3
+      with:
+        name: inochi-creator
+        path: out/inochi-creator

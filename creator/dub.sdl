@@ -1,0 +1,138 @@
+name "inochi-creator"
+description "Inochi2D rigging application"
+authors "Inochi2D Project"
+copyright "Copyright © 2020, Inochi2D Project"
+license "BSD 2-clause"
+dependency "psd-d" version="~>0.6.1"
+dependency "inmath" version="~>1.3.0"
+dependency "kra-d" version="~>0.5.6"
+dependency "tinyfiledialogs" version="~>0.10.1"
+dependency "facetrack-d" version="~>0.8.0"
+dependency "bindbc-sdl" version="~>1.1.2"
+dependency "dcv:core" version="~>0.3.0"
+dependency "i18n-d" version="~>1.0.2"
+dependency "i2d-imgui" version="~>0.8.0"
+dependency "inochi2d" version="~>0.8.7"
+dependency "mir-linux-kernel" version="~>1.0.1"
+targetPath "out/"
+workingDirectory "out/"
+dflags "-mscrtlib=msvcrt" platform="windows-ldc"
+dflags "-link-defaultlib-shared=false" platform="linux-ldc"
+lflags "-rpath=$$ORIGIN" platform="linux"
+versions "GL_32" "USE_SDL2" "SDL_2020" "UseUIScaling"
+stringImportPaths "res/" "./"
+
+
+// Barebones build
+configuration "barebones" {
+	platforms "linux"
+	dependency "dportals" version="~>0.1.0"
+	targetType "executable"
+	subConfiguration "i2d-imgui" "static_dynamicCRT"
+	copyFiles "res/NotoSansCJK-Regular-LICENSE" "res/MaterialIcons-LICENSE" "res/OpenDyslexic-LICENSE" "LICENSE"
+}
+
+// Linux build
+configuration "linux-demo" {
+
+	platforms "linux"
+	dependency "dportals" version="~>0.1.0"
+	targetType "executable"
+	subConfiguration "i2d-imgui" "static_dynamicCRT"
+	versions "InBranding" "InDemo"
+}
+
+// macOS build
+configuration "osx-demo" {
+	platforms "osx"
+	targetType "executable"
+	targetPath "out/Inochi Creator.app/Contents/MacOS"
+	subConfiguration "i2d-imgui" "dynamic_dynamicCRT"
+	dflags "-force-dwarf-frame-section=false"
+	lflags "-rpath" "@executable_path/../Frameworks" "-rpath" "@executable_path/."
+	versions "InBranding" "InDemo"
+}
+
+// Windows build
+configuration "win32-demo" {
+	platforms "windows"
+	targetType "executable"
+	subConfiguration "i2d-imgui" "static_staticCRT"
+	lflags "/SUBSYSTEM:windows" "/ENTRY:mainCRTStartup" platform="windows-dmd"
+	sourceFiles "build-aux\\windows\\inochi-creator.res"
+	versions "InBranding" "InDemo"
+}
+
+// Linux build
+configuration "linux-full" {
+
+	platforms "linux"
+	dependency "dportals" version="~>0.1.0"
+	targetType "executable"
+	subConfiguration "i2d-imgui" "static_dynamicCRT"
+	versions "InBranding"
+}
+
+// macOS build
+configuration "osx-full" {
+	platforms "osx"
+	targetType "executable"
+	targetPath "out/Inochi Creator.app/Contents/MacOS"
+	subConfiguration "i2d-imgui" "dynamic_dynamicCRT"
+	dflags "-force-dwarf-frame-section=false"
+	lflags "-rpath" "@executable_path/../Frameworks" "-rpath" "@executable_path/."
+	versions "InBranding"
+}
+
+// Windows build
+configuration "win32-full" {
+	platforms "windows"
+	targetType "executable"
+	subConfiguration "i2d-imgui" "static_staticCRT"
+	lflags "/SUBSYSTEM:windows" "/ENTRY:mainCRTStartup" platform="windows-dmd"
+	sourceFiles "build-aux\\windows\\inochi-creator.res"
+	versions "InBranding"
+}
+
+// Linux nightly build
+configuration "linux-nightly" {
+	platforms "linux"
+	dependency "dportals" version="~>0.1.0"
+	targetType "executable"
+	subConfiguration "i2d-imgui" "static_dynamicCRT"
+	versions "InBranding" "InNightly"
+}
+
+// macOS nightly build
+configuration "osx-nightly" {
+	platforms "osx"
+	targetType "executable"
+	targetPath "out/Inochi Creator.app/Contents/MacOS"
+	subConfiguration "i2d-imgui" "dynamic_dynamicCRT"
+	dflags "-force-dwarf-frame-section=false"
+	lflags "-rpath" "@executable_path/../Frameworks" "-rpath" "@executable_path/."
+	versions "InBranding" "InNightly"
+}
+
+// Windows nightly build
+configuration "win32-nightly" {
+	platforms "windows"
+	targetType "executable"
+	subConfiguration "i2d-imgui" "static_staticCRT"
+	lflags "/SUBSYSTEM:windows" "/ENTRY:mainCRTStartup" platform="windows-dmd"
+	sourceFiles "build-aux\\windows\\inochi-creator.res"
+	versions "InBranding" "InNightly"
+}
+
+// Version info generation
+configuration "update-version" {
+	targetType "none"
+	preGenerateCommands "dub run -y gitver -- --prefix INC --file source/creator/ver.d --mod creator.ver --appname \"Inochi Creator\" --itchfile version.txt"
+}
+
+
+// Metadata generation
+configuration "meta" {
+	targetType "none"
+	preGenerateCommands "rc.exe /v build-aux\\windows\\inochi-creator.rc" platform="windows"
+}
