@@ -1,0 +1,24 @@
+{
+  "format": "torogao-audio-recipe/1",
+  "name": "room-bed",
+  "seed": 7,
+  "durationSeconds": 6.0,
+  "targetLufs": -16.0,
+  "truePeakDb": -1.0,
+  "stems": [
+    {
+      "type": "noise",
+      "cutoffHz": 400.0,
+      "gain": 0.6,
+      "envelope": {
+        "attackSeconds": 0.5,
+        "releaseSeconds": 1.0
+      }
+    },
+    {
+      "type": "sine",
+      "freqHz": 55.0,
+      "gain": 0.2
+    }
+  ]
+}

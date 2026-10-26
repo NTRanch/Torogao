@@ -17,7 +17,7 @@ use crate::extdoc::ExtView;
 use crate::handlers::{ToolLoad, join_path, stamp_doc};
 use crate::registry::ToolResult;
 use crate::util::{f64_of_f32, fmt_g};
-use crate::walk::{Walk, grid_dims, is_drawable, is_part, kind_name, slugify, suffixed_name};
+use crate::walk::{grid_dims, is_part, slugify, suffixed_name, Walk};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use torogao_engine::param::BindingValues;

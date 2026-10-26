@@ -10,8 +10,10 @@
 pub mod a2a;
 pub mod app;
 pub mod controllers;
+pub mod creator;
 pub mod criteria;
 pub mod curves;
+pub mod drivers;
 pub mod extdoc;
 pub mod families;
 pub mod guards;
@@ -25,8 +27,10 @@ pub mod registry;
 pub mod registry_data;
 pub mod rigexport;
 pub mod specials;
+pub mod templates;
 pub mod util;
 pub mod walk;
+pub mod writer;
 
 use std::io::Write;
 

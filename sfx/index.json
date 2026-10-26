@@ -1,0 +1,18 @@
+{
+  "format": "torogao-sfx-index/1",
+  "note": "Named sound-effect entries for scene cue points. Every entry is a deterministic procedural-audio recipe in the P2 recipe format (torogao-audio-recipe/1); rendering it through audio-render produces the manifested master.",
+  "entries": [
+    {
+      "id": "cue-chime",
+      "name": "Cue chime",
+      "kind": "cue",
+      "recipe": "cue-chime.recipe.json"
+    },
+    {
+      "id": "room-bed",
+      "name": "Room tone bed",
+      "kind": "bed",
+      "recipe": "room-bed.recipe.json"
+    }
+  ]
+}

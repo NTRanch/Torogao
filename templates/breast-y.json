@@ -1,0 +1,132 @@
+{
+ "format": "torogao-template/1",
+ "kind": "physics-chain",
+ "name": "breast-y",
+ "title": "Breast \u2014 Y component",
+ "description": "Vertical breast component: up/down and together/apart outputs on staggered stages, driven by Body Y alone.",
+ "provenance": {
+  "class": "TUTORIAL",
+  "sources": [
+   "Physics annex section 2 (Breast Y group input Body Y alone; two parameters per deformer)",
+   "Physics annex section 3 (exported bands)"
+  ]
+ },
+ "attachTo": "BreastAnchor",
+ "inputs": [
+  {
+   "parameter": "ParamBodyAngleY",
+   "type": "Angle",
+   "influencePercent": 100,
+   "flip": false,
+   "normalization": {
+    "minimum": -10.0,
+    "center": 0.0,
+    "maximum": 10.0
+   },
+   "provenance": "TUTORIAL"
+  }
+ ],
+ "stages": [
+  {
+   "segmentLength": 25.0,
+   "mobility": {
+    "chosen": 0.9,
+    "range": [
+     0.9,
+     1.0
+    ],
+    "provenance": "EXPORT",
+    "note": "shipped-rig breast chains sit in the ~0.9 mobility class"
+   },
+   "delay": {
+    "chosen": 0.6,
+    "range": [
+     0.6,
+     1.0
+    ],
+    "provenance": "EXPORT"
+   },
+   "acceleration": {
+    "chosen": 1.0,
+    "range": [
+     0.6,
+     1.4
+    ],
+    "provenance": "EXPORT",
+    "note": "mid-band choice inside the exported range"
+   },
+   "easeOfSwinging": {
+    "chosen": 0.85,
+    "range": [
+     0.7,
+     0.99
+    ],
+    "provenance": "DOC",
+    "note": "inside the documented 0.7-0.99 rule-of-thumb band"
+   }
+  },
+  {
+   "segmentLength": 25.0,
+   "mobility": {
+    "chosen": 0.9,
+    "range": [
+     0.9,
+     1.0
+    ],
+    "provenance": "EXPORT",
+    "note": "shipped-rig breast chains sit in the ~0.9 mobility class"
+   },
+   "delay": {
+    "chosen": 0.8,
+    "range": [
+     0.6,
+     1.0
+    ],
+    "provenance": "EXPORT"
+   },
+   "acceleration": {
+    "chosen": 1.0,
+    "range": [
+     0.6,
+     1.4
+    ],
+    "provenance": "EXPORT",
+    "note": "mid-band choice inside the exported range"
+   },
+   "easeOfSwinging": {
+    "chosen": 0.85,
+    "range": [
+     0.7,
+     0.99
+    ],
+    "provenance": "DOC",
+    "note": "inside the documented 0.7-0.99 rule-of-thumb band"
+   }
+  }
+ ],
+ "outputs": [
+  {
+   "parameter": "ParamBreastY",
+   "stage": 1,
+   "scale": {
+    "value": 45,
+    "provenance": "chosen",
+    "note": "no breast output scale is attested in the annex"
+   },
+   "influencePercent": 100,
+   "flip": false
+  },
+  {
+   "parameter": "ParamBreastApart",
+   "stage": 2,
+   "scale": {
+    "value": 45,
+    "provenance": "chosen",
+    "note": "no breast output scale is attested in the annex"
+   },
+   "influencePercent": 100,
+   "flip": false
+  }
+ ],
+ "unrecovered": "The reference tutorial's concrete numeric settings are shown on screen (07:02-07:15) and were not recovered from its caption track; no number in this preset is attributed to the tutorial."
+}

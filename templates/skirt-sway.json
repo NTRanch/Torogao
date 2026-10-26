@@ -1,0 +1,195 @@
+{
+ "format": "torogao-template/1",
+ "kind": "physics-chain",
+ "name": "skirt-sway",
+ "title": "Skirt sway \u2014 3-stage chain",
+ "description": "Sway chain for a skirt or hem, hung from the hips anchor. The physics group itself is the documented canonical example; the chain values follow the exported sway class.",
+ "provenance": {
+  "class": "DOC",
+  "sources": [
+   "Official physics documentation ('swinging skirt' is the canonical physics-group example)",
+   "Physics annex section 3 (sway-class exported ranges)"
+  ],
+  "notes": "No skirt-specific exported ranges were captured; mobility/delay/acceleration follow the sway class and are marked chosen where interpolated."
+ },
+ "attachTo": "SkirtAnchor",
+ "inputs": [
+  {
+   "parameter": "ParamBodyAngleX",
+   "type": "Angle",
+   "influencePercent": 60,
+   "flip": false,
+   "normalization": {
+    "minimum": -10.0,
+    "center": 0.0,
+    "maximum": 10.0
+   },
+   "provenance": "DOC",
+   "note": "torso-input preset shape; the 60/40 split is chosen"
+  },
+  {
+   "parameter": "ParamBodyAngleZ",
+   "type": "Angle",
+   "influencePercent": 40,
+   "flip": false,
+   "normalization": {
+    "minimum": -10.0,
+    "center": 0.0,
+    "maximum": 10.0
+   },
+   "provenance": "DOC"
+  }
+ ],
+ "stages": [
+  {
+   "segmentLength": 30.0,
+   "mobility": {
+    "chosen": 1.0,
+    "range": [
+     0.9,
+     1.0
+    ],
+    "provenance": "EXPORT",
+    "note": "root mobility 1.0 is attested in shipped sample rigs"
+   },
+   "delay": {
+    "chosen": 0.6,
+    "range": [
+     0.6,
+     1.0
+    ],
+    "provenance": "EXPORT"
+   },
+   "acceleration": {
+    "chosen": 1.0,
+    "range": [
+     0.6,
+     1.4
+    ],
+    "provenance": "EXPORT",
+    "note": "mid-band choice inside the exported range"
+   },
+   "easeOfSwinging": {
+    "chosen": 0.85,
+    "range": [
+     0.7,
+     0.99
+    ],
+    "provenance": "DOC",
+    "note": "inside the documented 0.7-0.99 rule-of-thumb band"
+   }
+  },
+  {
+   "segmentLength": 30.0,
+   "mobility": {
+    "chosen": 0.99,
+    "range": [
+     0.9,
+     1.0
+    ],
+    "provenance": "chosen",
+    "note": "interpolated between the attested root (1.0) and tip (0.98) values"
+   },
+   "delay": {
+    "chosen": 0.8,
+    "range": [
+     0.6,
+     1.0
+    ],
+    "provenance": "EXPORT"
+   },
+   "acceleration": {
+    "chosen": 1.0,
+    "range": [
+     0.6,
+     1.4
+    ],
+    "provenance": "EXPORT",
+    "note": "mid-band choice inside the exported range"
+   },
+   "easeOfSwinging": {
+    "chosen": 0.85,
+    "range": [
+     0.7,
+     0.99
+    ],
+    "provenance": "DOC",
+    "note": "inside the documented 0.7-0.99 rule-of-thumb band"
+   }
+  },
+  {
+   "segmentLength": 30.0,
+   "mobility": {
+    "chosen": 0.98,
+    "range": [
+     0.9,
+     1.0
+    ],
+    "provenance": "EXPORT",
+    "note": "tip mobility 0.98 is attested in shipped sample rigs"
+   },
+   "delay": {
+    "chosen": 1.0,
+    "range": [
+     0.6,
+     1.0
+    ],
+    "provenance": "EXPORT"
+   },
+   "acceleration": {
+    "chosen": 1.0,
+    "range": [
+     0.6,
+     1.4
+    ],
+    "provenance": "EXPORT",
+    "note": "mid-band choice inside the exported range"
+   },
+   "easeOfSwinging": {
+    "chosen": 0.85,
+    "range": [
+     0.7,
+     0.99
+    ],
+    "provenance": "DOC",
+    "note": "inside the documented 0.7-0.99 rule-of-thumb band"
+   }
+  }
+ ],
+ "outputs": [
+  {
+   "parameter": "ParamSkirtSway1",
+   "stage": 1,
+   "scale": {
+    "value": 5,
+    "provenance": "EXPORT",
+    "note": "sway-class graduated start"
+   },
+   "influencePercent": 100,
+   "flip": false
+  },
+  {
+   "parameter": "ParamSkirtSway2",
+   "stage": 2,
+   "scale": {
+    "value": 42,
+    "provenance": "chosen",
+    "note": "graduated midpoint"
+   },
+   "influencePercent": 100,
+   "flip": false
+  },
+  {
+   "parameter": "ParamSkirtSway3",
+   "stage": 3,
+   "scale": {
+    "value": 90,
+    "provenance": "EXPORT",
+    "note": "sway-class graduated end"
+   },
+   "influencePercent": 100,
+   "flip": false
+  }
+ ],
+ "unrecovered": "The reference tutorial's concrete numeric settings are shown on screen (07:02-07:15) and were not recovered from its caption track; no number in this preset is attributed to the tutorial."
+}

@@ -1,0 +1,196 @@
+{
+ "format": "torogao-template/1",
+ "kind": "physics-chain",
+ "name": "hair-sway-3step",
+ "title": "Hair sway \u2014 3-step pendulum",
+ "description": "Three-stage sway chain for longer hair, after the editor's shipped 'Hair 3-step pendulum' physical-model preset; bend points get denser toward the tip.",
+ "provenance": {
+  "class": "SETUP",
+  "sources": [
+   "Official 'How to Set Up Physics' (shipped preset names + multi-stage procedure)",
+   "Physics annex sections 1 and 3 (exported ranges)"
+  ]
+ },
+ "attachTo": "HairAnchor",
+ "inputs": [
+  {
+   "parameter": "ParamAngleX",
+   "type": "Angle",
+   "influencePercent": 60,
+   "flip": false,
+   "normalization": {
+    "minimum": -10.0,
+    "center": 0.0,
+    "maximum": 10.0
+   },
+   "provenance": "DOC",
+   "note": "head-input preset shape; the 60/40 split is chosen"
+  },
+  {
+   "parameter": "ParamAngleZ",
+   "type": "Angle",
+   "influencePercent": 40,
+   "flip": false,
+   "normalization": {
+    "minimum": -10.0,
+    "center": 0.0,
+    "maximum": 10.0
+   },
+   "provenance": "DOC"
+  }
+ ],
+ "stages": [
+  {
+   "segmentLength": 35.0,
+   "mobility": {
+    "chosen": 1.0,
+    "range": [
+     0.9,
+     1.0
+    ],
+    "provenance": "EXPORT",
+    "note": "root mobility 1.0 is attested in shipped sample rigs"
+   },
+   "delay": {
+    "chosen": 0.6,
+    "range": [
+     0.6,
+     1.0
+    ],
+    "provenance": "EXPORT"
+   },
+   "acceleration": {
+    "chosen": 1.0,
+    "range": [
+     0.6,
+     1.4
+    ],
+    "provenance": "EXPORT",
+    "note": "mid-band choice inside the exported range"
+   },
+   "easeOfSwinging": {
+    "chosen": 0.85,
+    "range": [
+     0.7,
+     0.99
+    ],
+    "provenance": "DOC",
+    "note": "inside the documented 0.7-0.99 rule-of-thumb band"
+   }
+  },
+  {
+   "segmentLength": 35.0,
+   "mobility": {
+    "chosen": 0.99,
+    "range": [
+     0.9,
+     1.0
+    ],
+    "provenance": "chosen",
+    "note": "interpolated between the attested root (1.0) and tip (0.98) values"
+   },
+   "delay": {
+    "chosen": 0.8,
+    "range": [
+     0.6,
+     1.0
+    ],
+    "provenance": "EXPORT",
+    "note": "rising toward the tip"
+   },
+   "acceleration": {
+    "chosen": 1.0,
+    "range": [
+     0.6,
+     1.4
+    ],
+    "provenance": "EXPORT",
+    "note": "mid-band choice inside the exported range"
+   },
+   "easeOfSwinging": {
+    "chosen": 0.85,
+    "range": [
+     0.7,
+     0.99
+    ],
+    "provenance": "DOC",
+    "note": "inside the documented 0.7-0.99 rule-of-thumb band"
+   }
+  },
+  {
+   "segmentLength": 35.0,
+   "mobility": {
+    "chosen": 0.98,
+    "range": [
+     0.9,
+     1.0
+    ],
+    "provenance": "EXPORT",
+    "note": "tip mobility 0.98 is attested in shipped sample rigs"
+   },
+   "delay": {
+    "chosen": 1.0,
+    "range": [
+     0.6,
+     1.0
+    ],
+    "provenance": "EXPORT",
+    "note": "tip of the attested band"
+   },
+   "acceleration": {
+    "chosen": 1.0,
+    "range": [
+     0.6,
+     1.4
+    ],
+    "provenance": "EXPORT",
+    "note": "mid-band choice inside the exported range"
+   },
+   "easeOfSwinging": {
+    "chosen": 0.85,
+    "range": [
+     0.7,
+     0.99
+    ],
+    "provenance": "DOC",
+    "note": "inside the documented 0.7-0.99 rule-of-thumb band"
+   }
+  }
+ ],
+ "outputs": [
+  {
+   "parameter": "ParamHairSway1",
+   "stage": 1,
+   "scale": {
+    "value": 5,
+    "provenance": "EXPORT",
+    "note": "graduated scale start, attested"
+   },
+   "influencePercent": 100,
+   "flip": false
+  },
+  {
+   "parameter": "ParamHairSway2",
+   "stage": 2,
+   "scale": {
+    "value": 42,
+    "provenance": "chosen",
+    "note": "graduated midpoint between the attested 5 and 90"
+   },
+   "influencePercent": 100,
+   "flip": false
+  },
+  {
+   "parameter": "ParamHairSway3",
+   "stage": 3,
+   "scale": {
+    "value": 90,
+    "provenance": "EXPORT",
+    "note": "graduated scale end, attested"
+   },
+   "influencePercent": 100,
+   "flip": false
+  }
+ ],
+ "unrecovered": "The reference tutorial's concrete numeric settings are shown on screen (07:02-07:15) and were not recovered from its caption track; no number in this preset is attributed to the tutorial."
+}

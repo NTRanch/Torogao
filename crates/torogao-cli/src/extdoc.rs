@@ -30,6 +30,8 @@ pub const TG_EVENT_SHAPE: &str = "TG-EVENT-SHAPE";
 pub const TG_EVENT_UNKNOWN_MOTION: &str = "TG-EVENT-UNKNOWN-MOTION";
 /// TG-EXT-DUPLICATE.
 pub const TG_EXT_DUPLICATE: &str = "TG-EXT-DUPLICATE";
+/// TG-EXPR-MISSING.
+pub const TG_EXPR_MISSING: &str = "TG-EXPR-MISSING";
 /// TG-EXT-MALFORMED.
 pub const TG_EXT_MALFORMED: &str = "TG-EXT-MALFORMED";
 /// TG-EXT-TYPE.
@@ -50,6 +52,10 @@ pub const TG_RATING_UNKNOWN: &str = "TG-RATING-UNKNOWN";
 pub const TG_STATE_DUPLICATE: &str = "TG-STATE-DUPLICATE";
 /// TG-STATE-UNKNOWN-PARAM.
 pub const TG_STATE_UNKNOWN_PARAM: &str = "TG-STATE-UNKNOWN-PARAM";
+/// TG-TRACK-MISSING.
+pub const TG_TRACK_MISSING: &str = "TG-TRACK-MISSING";
+/// TG-TRACK-RANGE.
+pub const TG_TRACK_RANGE: &str = "TG-TRACK-RANGE";
 /// TG-VARIANT-UNKNOWN-PARAM.
 pub const TG_VARIANT_UNKNOWN_PARAM: &str = "TG-VARIANT-UNKNOWN-PARAM";
 /// TG-VARIANT-UNKNOWN-PART.
@@ -915,3 +921,22 @@ pub fn validate_container_file(path: &str) -> Vec<Finding> {
     findings
 }
 
+
+/// Writes a NEW project file: the source container's
+/// bytes with its Torogao EXT section replaced by `ext`
+/// (extdata.d's writeProjectWithExt). The source is
+/// never modified.
+pub fn write_project_with_ext(
+    in_path: &str,
+    out_path: &str,
+    ext: &Value,
+) -> Result<(), String> {
+    let bytes = std::fs::read(in_path)
+        .map_err(|e| format!("project unreadable: {e}"))?;
+    let source = torogao_format::container::read_inp(&bytes)
+        .map_err(|e| e.message().to_string())?;
+    let out = torogao_format::container::write_with_ext(&source, ext);
+    std::fs::write(out_path, out)
+        .map_err(|e| format!("could not write project: {e}"))?;
+    Ok(())
+}

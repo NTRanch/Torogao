@@ -306,11 +306,20 @@ fn build_node(
         NodeKind::SimplePhysics => {
             let mut state = SimplePhysicsState::default();
             state.param_ref = jnum(raw, "param", 0.0) as u32;
-            state.spring = jstr(raw, "model_type") == "spring_pendulum";
+            // Both spellings occur in the wild: payload
+            // fixtures carry the serde values ("pendulum"),
+            // while the template writer emits the enum
+            // member names ("Pendulum"). The reference's
+            // enum deserialization accepts both; so does
+            // this loader.
+            state.spring = matches!(
+                jstr(raw, "model_type"),
+                "SpringPendulum" | "spring_pendulum"
+            );
             state.map_mode = match jstr(raw, "map_mode") {
-                "xy" => 1,
-                "length_angle" => 2,
-                "yx" => 3,
+                "XY" | "xy" => 1,
+                "LengthAngle" | "length_angle" => 2,
+                "YX" | "yx" => 3,
                 _ => 0,
             };
             state.gravity = jnum(raw, "gravity", 1.0) as f32;
