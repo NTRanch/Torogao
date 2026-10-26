@@ -1,5 +1,6 @@
-name "inochi-creator"
-description "Inochi2D rigging application"
+name "torogao"
+description "Torogao - realtime 2D puppet rigging application (fork of Inochi Creator)"
+authors "Nice Thoughts Ranch"
 authors "Inochi2D Project"
 copyright "Copyright © 2020, Inochi2D Project"
 license "BSD 2-clause"
@@ -22,6 +23,19 @@ lflags "-rpath=$$ORIGIN" platform="linux"
 versions "GL_32" "USE_SDL2" "SDL_2020" "UseUIScaling"
 stringImportPaths "res/" "./"
 
+
+// Torogao default build: derived from the upstream "barebones"
+// configuration (no InBranding/InDemo versions, so no nagscreen and
+// no demo branding). This is the first configuration in the file,
+// which makes it dub's default.
+configuration "torogao" {
+	platforms "linux"
+	dependency "dportals" version="~>0.1.0"
+	targetType "executable"
+	targetName "torogao"
+	subConfiguration "i2d-imgui" "static_dynamicCRT"
+	copyFiles "res/NotoSansCJK-Regular-LICENSE" "res/MaterialIcons-LICENSE" "res/OpenDyslexic-LICENSE" "LICENSE"
+}
 
 // Barebones build
 configuration "barebones" {
@@ -127,7 +141,7 @@ configuration "win32-nightly" {
 // Version info generation
 configuration "update-version" {
 	targetType "none"
-	preGenerateCommands "dub run -y gitver -- --prefix INC --file source/creator/ver.d --mod creator.ver --appname \"Inochi Creator\" --itchfile version.txt"
+	preGenerateCommands "dub run -y gitver -- --prefix INC --file source/creator/ver.d --mod creator.ver --appname \"Torogao\" --itchfile version.txt"
 }
 
 

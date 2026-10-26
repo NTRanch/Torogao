@@ -1,0 +1,4 @@
+creator/out/
+.dub/
+inochi2d/.dub/
+third-party/i2d-imgui/deps/build_*/

@@ -283,9 +283,9 @@ void incOpenWindow() {
     SDL_SetHint(SDL_HINT_IME_SHOW_UI, "1");
 
     version(InBranding) {
-        debug string WIN_TITLE = "Inochi Creator "~_("(Debug Mode)");
-        else string WIN_TITLE = "Inochi Creator "~INC_VERSION;
-    } else string WIN_TITLE = "Inochi Creator "~_("(Unsupported)");
+        debug string WIN_TITLE = "Torogao "~_("(Debug Mode)");
+        else string WIN_TITLE = "Torogao "~INC_VERSION;
+    } else string WIN_TITLE = "Torogao "~_("(Unsupported)");
     
     window = tryCreateWindow(WIN_TITLE, flags);
     
@@ -867,6 +867,6 @@ void incHandleShortcuts() {
 }
 
 void incSetWindowTitle(string subtitle) {
-    if (subtitle.length > 0) SDL_SetWindowTitle(window, ("Inochi Creator - "~subtitle).toStringz);
-    else SDL_SetWindowTitle(window, "Inochi Creator");
+    if (subtitle.length > 0) SDL_SetWindowTitle(window, ("Torogao - "~subtitle).toStringz);
+    else SDL_SetWindowTitle(window, "Torogao");
 }

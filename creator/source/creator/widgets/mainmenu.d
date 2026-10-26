@@ -515,7 +515,7 @@ void incMainMenu() {
                 if (igBeginMenu(__("Help"), true)) {
 
                     if(igMenuItem(__("Online Documentation"), "", false, true)) {
-                        incOpenLink("https://github.com/Inochi2D/inochi-creator/wiki");
+                        incOpenLink("https://github.com/NTRanch/torogao");
                     }
                     
                     if(igMenuItem(__("Inochi2D Documentation"), "", false, true)) {

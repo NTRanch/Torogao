@@ -12,14 +12,14 @@ private {
 }
 
 /**
-    The name of the folder inochi creator config gets thrown in to.
+    The name of the folder Torogao config gets thrown in to.
 */
-enum APP_FOLDER_NAME = "inochi-creator";
+enum APP_FOLDER_NAME = "torogao";
 
 /**
     Name of environment variable to force a configuration path
 */
-enum ENV_CONFIG_PATH = "INOCHI_CONFIG_PATH";
+enum ENV_CONFIG_PATH = "TOROGAO_CONFIG_PATH";
 
 /**
     Returns the app configuration directory for the platform
@@ -49,27 +49,27 @@ string incGetAppConfigPath() {
     }
 
     // On Windows %AppData% is used.
-    // Example: C:/Users/USERNAME/AppData/Roaming/.inochi-creatorS
+    // Example: C:/Users/USERNAME/AppData/Roaming/.torogaoS
     version(Windows) {
         appDataDir = environment.get("AppData");
     }
 
     // On Linux the app data dir is in $XDG_CONFIG_DIR, $HOME/.config or $HOME
-    // Example: /home/USERNAME/.inochi-creator
+    // Example: /home/USERNAME/.torogao
     else version(linux) {
         appDataDir = environment.get("XDG_CONFIG_HOME");
         if (!appDataDir) appDataDir = buildPath(environment.get("HOME"), ".config");
     }
 
     // On macOS things are thrown in to $HOME/Library/Application Support
-    // Example: /home/USERNAME/Library/Application Support/.inochi-creator
+    // Example: /home/USERNAME/Library/Application Support/.torogao
     else version(OSX) {
         appDataDir = environment.get("HOME");
         if (appDataDir) appDataDir = buildPath(appDataDir, "Library", "Application Support");
     }
 
     // On other POSIX platforms just assume $HOME exists.
-    // Example: /home/USERNAME/.inochi-creator
+    // Example: /home/USERNAME/.torogao
     else version(posix) {
         appDataDir = environment.get("HOME");
     }
@@ -84,7 +84,7 @@ string incGetAppConfigPath() {
     version(linux) {
 
         // On linux we're using standard XDG dirs, prior we
-        // used .inochi-creator there, but that's not correct
+        // used .torogao there, but that's not correct
         // This code will ensure we still use old config if it's there.
         // Otherwise we create config for the *correct* path
         string fdir = buildPath(appDataDir, "."~APP_FOLDER_NAME);
@@ -94,7 +94,7 @@ string incGetAppConfigPath() {
     } else version(OSX) {
 
         // On OSX we're using standard directories, prior we
-        // used .inochi-creator there, but that's not correct
+        // used .torogao there, but that's not correct
         // This code will ensure we still use old config if it's there.
         // Otherwise we create config for the *correct* path
         string fdir = buildPath(appDataDir, "."~APP_FOLDER_NAME);

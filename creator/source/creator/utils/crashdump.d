@@ -90,16 +90,16 @@ string writeCrashDump(T...)(string filename, Throwable throwable, T state) {
 void crashdump(T...)(Throwable throwable, T state) {
     // Write crash dump to disk
     try {
-        writeCrashDump("inochi-creator-crashdump", throwable, state);
+        writeCrashDump("torogao-crashdump", throwable, state);
     } catch (Exception ex) {
         writeln("Failed to write crash dump" ~ ex.msg);
     }
 
     // Use appropriate system method to notify user where crash dump is.
-    version(OSX) writeln(_("\n\n\n===   Inochi Creator has crashed   ===\nPlease send us the inochi-creator-crashdump.txt file in ~/Library/Logs\nAttach the file as a git issue @ https://github.com/Inochi2D/inochi-creator/issues"));
-    else version(linux) writeln(_("\n\n\n===   Inochi Creator has crashed   ===\nPlease send us the inochi-creator-crashdump.txt file in your log directory, XDG_STATE_HOME. For Flatpak, this is in ~/.var/app/com.inochi2d.inochi-creator.\nAttach the file as a git issue @ https://github.com/Inochi2D/inochi-creator/issues"));
+    version(OSX) writeln(_("\n\n\n===   Torogao has crashed   ===\nPlease send us the torogao-crashdump.txt file in ~/Library/Logs\nAttach the file as a git issue @ https://github.com/NTRanch/torogao/issues"));
+    else version(linux) writeln(_("\n\n\n===   Torogao has crashed   ===\nPlease send us the torogao-crashdump.txt file in your log directory, XDG_STATE_HOME.\nAttach the file as a git issue @ https://github.com/NTRanch/torogao/issues"));
     else version(Windows) ShowMessageBox(
-        _("The application has unexpectedly crashed\nPlease send the developers the inochi-creator-crashdump.txt which has been put on your desktop\nVia https://github.com/Inochi2D/inochi-creator/issues"),
-        _("Inochi Creator Crashdump")
+        _("The application has unexpectedly crashed\nPlease send the developers the torogao-crashdump.txt which has been put on your desktop\nVia https://github.com/NTRanch/torogao/issues"),
+        _("Torogao Crashdump")
     );
 }

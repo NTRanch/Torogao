@@ -79,7 +79,7 @@ protected:
             igSameLine(0, 8);
             if (igBeginChild("##LogoTextArea", ImVec2(0, -24))) {
 
-                incText("Inochi Creator");
+                incText("Torogao");
                 incText(INC_VERSION);
                 igSeparator();
                 igTextColored(ImVec4(0.5, 0.5, 0.5, 1), "I2D v. %s", (IN_VERSION~"\0").ptr);
@@ -113,7 +113,7 @@ protected:
                 (space.x/2)-8;
 
             if (igButton("GitHub", ImVec2(8+spacing, 0))) {
-                incOpenLink("https://github.com/Inochi2D/inochi-creator");
+                incOpenLink("https://github.com/NTRanch/torogao");
             }
 
             igSameLine(0, 8);

@@ -18,7 +18,7 @@ import i18n;
 
 bool incFileOpen() {
     const TFD_Filter[] filters = [
-        { ["*.inx"], "Inochi Creator Project (*.inx)" }
+        { ["*.inx"], "Torogao Project (*.inx)" }
     ];
 
     string file = incShowOpenDialog(filters, _("Open..."));
@@ -40,7 +40,7 @@ bool incFileSave() {
         return true;
     } else {
         const TFD_Filter[] filters = [
-            { ["*.inx"], "Inochi Creator Project (*.inx)" }
+            { ["*.inx"], "Torogao Project (*.inx)" }
         ];
 
         string file = incShowSaveDialog(filters, "", _("Save..."));
@@ -55,7 +55,7 @@ bool incFileSave() {
 void incFileSaveAs() {
     incPopWelcomeWindow();
     const TFD_Filter[] filters = [
-        { ["*.inx"], "Inochi Creator Project (*.inx)" }
+        { ["*.inx"], "Torogao Project (*.inx)" }
     ];
 
     string fname = incProjectPath().length > 0 ? incProjectPath : "";

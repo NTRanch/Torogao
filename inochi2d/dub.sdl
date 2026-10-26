@@ -10,7 +10,11 @@ dependency "fghj" version="~>1.0.2"
 dependency "numem" version="~>0.20.1"
 versions "GL_32" "GL_ARB_gl_spirv" "GL_KHR_blend_equation_advanced" "GL_ARB_texture_filter_anisotropic"
 stringImportPaths "shaders/"
-preBuildCommands "dub run gitver -- --prefix IN --file source/inochi2d/ver.d --mod inochi2d.ver --appname Inochi2D"
+// Torogao: upstream generated source/inochi2d/ver.d on every build via a
+// gitver pre-build step, which fetches and builds the gitver tool each
+// time (a build-time network dependency). ver.d is checked in, so the
+// step is redundant for a pinned build; it now lives in the
+// "update-version" configuration below and is run at release time only.
 
 
 configuration "full" {
@@ -20,4 +24,11 @@ configuration "full" {
 
 configuration "renderless" {
     versions "InRenderless"
+}
+
+// Torogao: release-time version generation (see note above). Not part
+// of any build; run explicitly when cutting a release.
+configuration "update-version" {
+    targetType "none"
+    preGenerateCommands "dub run -y gitver -- --prefix IN --file source/inochi2d/ver.d --mod inochi2d.ver --appname Inochi2D"
 }
