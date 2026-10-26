@@ -7,7 +7,7 @@ use torogao_engine::{Puppet, Vec2, Vec4};
 use torogao_format::NodeKind;
 
 /// One walked node.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WNode {
     /// Arena index of the engine node.
     pub node: usize,
@@ -96,6 +96,12 @@ fn suffixed(prefix: &str, name: &str, uuid: u32, slug_len: usize) -> String {
     format!("{}{}_{}", prefix, slugify(name, slug_len), uuid)
 }
 
+/// The suffixed id form (`<prefix><slug>_<uuid>`), shared
+/// with the exporter.
+pub fn suffixed_name(prefix: &str, name: &str, uuid: u32, slug_len: usize) -> String {
+    suffixed(prefix, name, uuid, slug_len)
+}
+
 /// Determines whether a mesh is a regular grid, and its
 /// cell dimensions, from the vertex lattice itself
 /// (row-major, x fastest).
@@ -124,7 +130,7 @@ pub fn grid_dims(vertices: &[Vec2]) -> Option<(usize, usize)> {
 }
 
 /// The built walk: nodes in pre-order, root first.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Walk {
     /// Walk nodes in pre-order.
     pub nodes: Vec<WNode>,
