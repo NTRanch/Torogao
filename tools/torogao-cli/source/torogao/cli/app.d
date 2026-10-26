@@ -48,9 +48,15 @@ import torogao.cli.inspect_;
 import torogao.audio.bake;
 import torogao.audio.proc;
 import torogao.audio.wav;
+import torogao.cli.creator;
+import torogao.cli.drivers;
+import torogao.cli.extdata;
+import torogao.cli.packs;
+import torogao.cli.writer;
 import torogao.cli.physicspreview;
 import torogao.cli.puppetwalk;
 import torogao.cli.rigexport;
+import torogao.cli.states;
 import torogao.cli.templates;
 import torogao.cli.viseme;
 import torogao.curves;
@@ -356,6 +362,247 @@ int main(string[] args) {
         writeln(doc.toString());
         return 0;
     }
+    if (args.length >= 2 && args[1] == "pack-info") {
+        if (args.length < 3) {
+            stderr.writeln("usage: torogao-cli pack-info <pack>");
+            return 3;
+        }
+        string packError;
+        auto pack = loadPack(args[2], packError);
+        if (packError.length > 0) {
+            stderr.writeln(packError);
+            return 3;
+        }
+        JSONValue doc;
+        doc["pack"] = pack;
+        doc["packs"] = packNames();
+        writeln(doc.toString());
+        return 0;
+    }
+    if (args.length >= 2 && args[1] == "sfx-list") {
+        string sfxError;
+        auto index = loadSfxIndex(sfxError);
+        if (sfxError.length > 0) {
+            stderr.writeln(sfxError);
+            return 3;
+        }
+        writeln(index.toString());
+        return 0;
+    }
+    if (args.length >= 2 && args[1] == "voice-check") {
+        if (args.length < 3) {
+            stderr.writeln("usage: torogao-cli voice-check <record.json>");
+            return 3;
+        }
+        string loadError;
+        auto record = loadJsonFile(args[2], loadError);
+        if (loadError.length > 0) {
+            stderr.writeln(loadError);
+            return 3;
+        }
+        auto findings = validateVoice(record);
+        JSONValue doc;
+        doc["file"] = args[2];
+        doc["result"] = findings.length == 0 ? "clean" : "findings";
+        JSONValue[] list;
+        foreach (f; findings) list ~= f.toJson();
+        doc["findings"] = list;
+        writeln(doc.toString());
+        return findings.length == 0 ? 0 : 1;
+    }
+    if (args.length >= 2 && args[1] == "create-character") {
+        string identityPath, ccPack, ccOut;
+        string[] ccPresets;
+        for (size_t i = 2; i < args.length; i++) {
+            if (args[i] == "--identity" && i + 1 < args.length)
+                identityPath = args[++i];
+            else if (args[i] == "--pack" && i + 1 < args.length)
+                ccPack = args[++i];
+            else if (args[i] == "--preset" && i + 1 < args.length)
+                ccPresets ~= args[++i];
+            else if (args[i] == "--out" && i + 1 < args.length)
+                ccOut = args[++i];
+            else {
+                stderr.writeln("create-character: unknown argument: ",
+                    args[i]);
+                return 3;
+            }
+        }
+        if (identityPath.length == 0 || ccPack.length == 0
+                || ccOut.length == 0) {
+            stderr.writeln("usage: torogao-cli create-character "
+                ~ "--identity <record.json> --pack <name> "
+                ~ "[--preset <p>]... --out <file.inx>");
+            return 3;
+        }
+        string packError;
+        auto pack = loadPack(ccPack, packError);
+        if (packError.length > 0) {
+            stderr.writeln(packError);
+            return 3;
+        }
+        string loadError;
+        auto identity = loadJsonFile(identityPath, loadError);
+        if (loadError.length > 0) {
+            stderr.writeln(loadError);
+            return 3;
+        }
+        CreatorProblem[] problems;
+        string createError;
+        auto summary = createCharacter(identity, pack, ccPresets, ccOut,
+            problems, createError);
+        JSONValue doc;
+        if (problems.length > 0) {
+            doc["result"] = "refused";
+            JSONValue[] list;
+            foreach (p; problems) list ~= p.toJson();
+            doc["problems"] = list;
+            writeln(doc.toString());
+            return 1;
+        }
+        if (createError.length > 0) {
+            doc["result"] = "error";
+            doc["error"] = createError;
+            writeln(doc.toString());
+            return 3;
+        }
+        writeln(summary.toString());
+        return 0;
+    }
+    if (args.length >= 2 && args[1] == "writer-scaffold") {
+        string charPath, wPack, wKink, wOut;
+        int wStage = -1;
+        string[] wSfx;
+        for (size_t i = 2; i < args.length; i++) {
+            if (args[i] == "--character" && i + 1 < args.length)
+                charPath = args[++i];
+            else if (args[i] == "--pack" && i + 1 < args.length)
+                wPack = args[++i];
+            else if (args[i] == "--kink" && i + 1 < args.length)
+                wKink = args[++i];
+            else if (args[i] == "--sfx" && i + 1 < args.length)
+                wSfx ~= args[++i];
+            else if (args[i] == "--out" && i + 1 < args.length)
+                wOut = args[++i];
+            else if (args[i] == "--stage" && i + 1 < args.length) {
+                try wStage = to!int(args[++i]);
+                catch (ConvException) {
+                    stderr.writeln("--stage needs a number");
+                    return 3;
+                }
+            } else {
+                stderr.writeln("writer-scaffold: unknown argument: ",
+                    args[i]);
+                return 3;
+            }
+        }
+        if (charPath.length == 0 || wPack.length == 0
+                || wKink.length == 0 || wStage < 0) {
+            stderr.writeln("usage: torogao-cli writer-scaffold "
+                ~ "--character <record.json> --pack <name> --kink <k> "
+                ~ "--stage <n> [--sfx <id>]... [--out <file.json>]");
+            return 3;
+        }
+        string packError;
+        auto pack = loadPack(wPack, packError);
+        if (packError.length > 0) {
+            stderr.writeln(packError);
+            return 3;
+        }
+        string loadError;
+        auto character = loadJsonFile(charPath, loadError);
+        if (loadError.length > 0) {
+            stderr.writeln(loadError);
+            return 3;
+        }
+        JSONValue scaffold, gap;
+        buildScaffold(character, pack, wKink, wStage, wSfx, scaffold, gap);
+        JSONValue doc = gap.type == JSONType.object ? gap : scaffold;
+        if (wOut.length > 0) write(wOut, doc.toString() ~ "\n");
+        writeln(doc.toString());
+        return gap.type == JSONType.object ? 1 : 0;
+    }
+    if (args.length >= 2 && args[1] == "hitareas-author") {
+        if (args.length < 3) {
+            stderr.writeln("usage: torogao-cli hitareas-author "
+                ~ "<project.inx> --spec <areas.json> --out <new.inx>");
+            return 3;
+        }
+        string specPath, haOut;
+        for (size_t i = 3; i < args.length; i++) {
+            if (args[i] == "--spec" && i + 1 < args.length)
+                specPath = args[++i];
+            else if (args[i] == "--out" && i + 1 < args.length)
+                haOut = args[++i];
+            else {
+                stderr.writeln("hitareas-author: unknown argument: ",
+                    args[i]);
+                return 3;
+            }
+        }
+        if (specPath.length == 0 || haOut.length == 0) {
+            stderr.writeln("hitareas-author requires --spec and --out");
+            return 3;
+        }
+        if (!exists(args[2])) {
+            stderr.writeln("project file not found: ", args[2]);
+            return 2;
+        }
+        string loadError;
+        auto spec = loadJsonFile(specPath, loadError);
+        if (loadError.length > 0) {
+            stderr.writeln(loadError);
+            return 3;
+        }
+        torogaoInitHeadless();
+        Puppet haPuppet;
+        try haPuppet = inLoadPuppet(args[2]);
+        catch (Exception ex) {
+            stderr.writeln("project unloadable: ", ex.msg);
+            return 2;
+        }
+        auto haWalk = new PuppetWalk(haPuppet);
+        auto view = extOf(haPuppet);
+        JSONValue ext = view.present ? view.doc : JSONValue.init;
+        if (ext.type != JSONType.object) {
+            ext["format"] = torogaoExtFormat;
+        }
+        JSONValue consumer = jget(ext, "consumer");
+        if (consumer.type != JSONType.object) consumer = JSONValue.init;
+        auto areas = jget(spec, "hitAreas");
+        if (areas.type != JSONType.array) areas = spec;
+        if (areas.type != JSONType.array) {
+            stderr.writeln("hit-area spec must be an array or an object "
+                ~ "with a hitAreas array");
+            return 3;
+        }
+        consumer["hitAreas"] = areas;
+        ext["consumer"] = consumer;
+        // Validate before writing: an unknown part or a bad
+        // shape refuses the write with the typed findings.
+        JSONValue tmpExt = ext;
+        auto probe = validateHitAreasOnly(tmpExt, haPuppet, haWalk);
+        if (probe.length > 0) {
+            JSONValue doc;
+            doc["result"] = "refused";
+            JSONValue[] list;
+            foreach (f; probe) list ~= f.toJson();
+            doc["findings"] = list;
+            writeln(doc.toString());
+            return 1;
+        }
+        string writeError;
+        if (!writeProjectWithExt(args[2], haOut, ext, writeError)) {
+            stderr.writeln(writeError);
+            return 3;
+        }
+        JSONValue doc;
+        doc["result"] = "authored";
+        doc["out"] = haOut;
+        doc["hitAreas"] = areas.array.length;
+        writeln(doc.toString());
+        return 0;
+    }
     if (args.length < 3) {
         stderr.writeln("usage: torogao-cli <inspect|validate|export-rig|physics-preview|list-templates|instantiate-template|mcp|a2a|registry-dump> ...");
         return 3;
@@ -364,12 +611,27 @@ int main(string[] args) {
     string projectPath = args[2];
     string outPath;
     string trackPath;
+    string stateName;
+    string variantId;
+    string driversPath;
+    string packName;
+    string setId;
     int fpsOverride = 0;
     for (size_t i = 3; i < args.length; i++) {
         if (args[i] == "--out" && i + 1 < args.length) {
             outPath = args[++i];
         } else if (args[i] == "--track" && i + 1 < args.length) {
             trackPath = args[++i];
+        } else if (args[i] == "--state" && i + 1 < args.length) {
+            stateName = args[++i];
+        } else if (args[i] == "--variant" && i + 1 < args.length) {
+            variantId = args[++i];
+        } else if (args[i] == "--drivers" && i + 1 < args.length) {
+            driversPath = args[++i];
+        } else if (args[i] == "--pack" && i + 1 < args.length) {
+            packName = args[++i];
+        } else if (args[i] == "--set" && i + 1 < args.length) {
+            setId = args[++i];
         } else if (args[i] == "--fps" && i + 1 < args.length) {
             try {
                 fpsOverride = to!int(args[++i]);
@@ -380,7 +642,10 @@ int main(string[] args) {
         }
     }
     if (command != "inspect" && command != "validate" &&
-        command != "export-rig" && command != "physics-preview") {
+        command != "export-rig" && command != "physics-preview" &&
+        command != "list-states" && command != "rating-check" &&
+        command != "expression-check" && command != "tracking-check" &&
+        command != "hitareas-list") {
         stderr.writeln("unknown subcommand: ", command);
         return 3;
     }
@@ -420,11 +685,18 @@ int main(string[] args) {
             JSONValue doc;
             doc["file"] = projectPath;
             doc["census"] = census(puppet, walk);
+            auto extView = extOf(puppet);
+            auto summary = extSummary(extView.doc);
+            summary["glueRecords"] = countGlueKeys(payload)
+                + (extView.present
+                    ? countGlueKeys(jget(extView.doc, "foreign")) : 0);
+            doc["extension"] = summary;
             emit(doc, outPath);
             return 0;
         }
         case "validate": {
-            auto findings = validatePuppet(puppet, walk, payload, slotCount);
+            auto findings = validatePuppet(puppet, walk, payload, slotCount)
+                ~ validateExt(puppet, walk, payload);
             JSONValue doc;
             doc["file"] = projectPath;
             doc["result"] = findings.length == 0 ? "clean" : "findings";
@@ -435,6 +707,18 @@ int main(string[] args) {
             return findings.length == 0 ? 0 : 1;
         }
         case "export-rig": {
+            auto extView = extOf(puppet);
+            string stampReason;
+            if (extView.present
+                    && ratingBlocksExport(extView.doc, stampReason)) {
+                JSONValue doc;
+                doc["file"] = projectPath;
+                doc["result"] = "refused";
+                doc["code"] = "TG-RATING-LANE-MISMATCH";
+                doc["error"] = stampReason;
+                writeln(doc.toString());
+                return 4;
+            }
             auto exporter = new RigExporter(puppet, walk, slotCount);
             ExportResult result;
             try {
@@ -447,10 +731,20 @@ int main(string[] args) {
             string base = projectPath.baseName.stripExtension;
             string modelPath = buildPath(outPath, base ~ ".model.json");
             string reportPath = buildPath(outPath, base ~ ".export-report.json");
+            string stampPath = buildPath(outPath, base ~ ".stamp.json");
             write(modelPath, result.model.toString() ~ "\n");
+            auto stamp = ratingStamp(extView.doc);
+            JSONValue stampDoc;
+            stampDoc["format"] = "torogao-rating-stamp/1";
+            stampDoc["file"] = projectPath;
+            stampDoc["model"] = modelPath;
+            stampDoc["stamp"] = stamp;
+            write(stampPath, stampDoc.toString() ~ "\n");
             JSONValue report;
             report["file"] = projectPath;
             report["model"] = modelPath;
+            report["ratingStamp"] = stamp;
+            report["stampFile"] = stampPath;
             report["mapped"] = result.count("mapped");
             report["approximated"] = result.count("approximated");
             report["dropped"] = result.count("dropped");
@@ -461,6 +755,96 @@ int main(string[] args) {
             writeln(report.toString());
             return 0;
         }
+        case "list-states": {
+            auto extView = extOf(puppet);
+            JSONValue doc;
+            doc["file"] = projectPath;
+            doc["extension"] = extSummary(extView.doc);
+            emit(doc, outPath);
+            return 0;
+        }
+        case "rating-check": {
+            auto extView = extOf(puppet);
+            JSONValue doc;
+            doc["file"] = projectPath;
+            doc["stamp"] = ratingStamp(extView.doc);
+            string reason;
+            bool blocked = extView.present
+                && ratingBlocksExport(extView.doc, reason);
+            doc["result"] = blocked ? "mismatch" : "ok";
+            if (blocked) {
+                doc["code"] = "TG-RATING-LANE-MISMATCH";
+                doc["error"] = reason;
+            }
+            emit(doc, outPath);
+            return blocked ? 1 : 0;
+        }
+        case "expression-check": {
+            if (packName.length == 0) {
+                stderr.writeln("expression-check requires --pack <name>");
+                return 3;
+            }
+            string packError;
+            auto pack = loadPack(packName, packError);
+            if (packError.length > 0) {
+                stderr.writeln(packError);
+                return 3;
+            }
+            auto extView = extOf(puppet);
+            auto missing = expressionMissing(extView.doc, pack);
+            JSONValue doc;
+            doc["file"] = projectPath;
+            doc["pack"] = packName;
+            doc["missing"] = missing;
+            doc["result"] = missing.length == 0 ? "covered" : "findings";
+            if (missing.length > 0) doc["code"] = TG_EXPR_MISSING;
+            emit(doc, outPath);
+            return missing.length == 0 ? 0 : 1;
+        }
+        case "tracking-check": {
+            if (packName.length == 0 || setId.length == 0) {
+                stderr.writeln("tracking-check requires --pack <name> "
+                    ~ "--set <id>");
+                return 3;
+            }
+            string packError;
+            auto pack = loadPack(packName, packError);
+            if (packError.length > 0) {
+                stderr.writeln(packError);
+                return 3;
+            }
+            auto set = packTrackingSet(pack, setId);
+            if (set.type != JSONType.object) {
+                stderr.writeln("pack '" ~ packName ~ "' has no tracking "
+                    ~ "set '" ~ setId ~ "'");
+                return 3;
+            }
+            string[] missing, rangeBad;
+            trackingCoverage(puppet, set, missing, rangeBad);
+            JSONValue doc;
+            doc["file"] = projectPath;
+            doc["pack"] = packName;
+            doc["set"] = setId;
+            doc["completeness"] = packStr(set, "completeness");
+            doc["missing"] = missing;
+            doc["rangeViolations"] = rangeBad;
+            bool ok = missing.length == 0 && rangeBad.length == 0;
+            doc["result"] = ok ? "covered" : "findings";
+            if (missing.length > 0) doc["code"] = TG_TRACK_MISSING;
+            else if (rangeBad.length > 0) doc["code"] = TG_TRACK_RANGE;
+            emit(doc, outPath);
+            return ok ? 0 : 1;
+        }
+        case "hitareas-list": {
+            auto extView = extOf(puppet);
+            JSONValue doc;
+            doc["file"] = projectPath;
+            doc["hitAreas"] = extView.present
+                ? jget(jget(extView.doc, "consumer"), "hitAreas")
+                : JSONValue(null);
+            emit(doc, outPath);
+            return 0;
+        }
         case "physics-preview": {
             JSONValue track;
             try {
@@ -469,9 +853,28 @@ int main(string[] args) {
                 stderr.writeln("input track unreadable: ", ex.msg);
                 return 3;
             }
+            PreviewOptions options;
+            options.ext = extOf(puppet).doc;
+            options.stateName = stateName;
+            options.variantId = variantId;
+            if (driversPath.length > 0) {
+                JSONValue driverDoc;
+                try driverDoc = parseJSON(readText(driversPath));
+                catch (Exception ex) {
+                    stderr.writeln("driver set unreadable: ", ex.msg);
+                    return 3;
+                }
+                string driverError;
+                if (!parseDriverConfig(driverDoc, options.drivers,
+                        driverError)) {
+                    stderr.writeln(driverError);
+                    return 3;
+                }
+                options.hasDrivers = true;
+            }
             string previewError;
             auto curves = runPhysicsPreview(puppet, track, fpsOverride,
-                projectPath, previewError);
+                projectPath, options, previewError);
             if (previewError !is null) {
                 JSONValue doc;
                 doc["file"] = projectPath;

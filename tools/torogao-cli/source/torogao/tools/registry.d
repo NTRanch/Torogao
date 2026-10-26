@@ -28,7 +28,7 @@ import std.algorithm : sort;
 import std.exception : enforce;
 
 /// Version of the agent tool surface (registry + MCP + A2A).
-enum torogaoToolsVersion = "2.0.0";
+enum torogaoToolsVersion = "3.0.0";
 
 /**
     How a tool is allowed to touch the world.

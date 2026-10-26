@@ -24,7 +24,9 @@ import torogao.cli.inpfile;
 import torogao.cli.inspect_;
 import torogao.cli.puppetwalk;
 import torogao.cli.rigexport;
+import torogao.cli.states;
 import torogao.tools.audiotools;
+import torogao.tools.p3tools;
 import torogao.tools.physicstools;
 import torogao.tools.registry;
 import torogao.tools.templatools;
@@ -121,6 +123,12 @@ private ToolResult toolInspect(JSONValue args) {
     JSONValue doc;
     doc["file"] = projectPath;
     doc["census"] = census(puppet, walk);
+    auto extView = extOf(puppet);
+    auto summary = extSummary(extView.doc);
+    summary["glueRecords"] = countGlueKeys(payload)
+        + (extView.present
+            ? countGlueKeys(jget(extView.doc, "foreign")) : 0);
+    doc["extension"] = summary;
     return ToolResult.ok(doc);
 }
 
@@ -130,7 +138,8 @@ private ToolResult toolValidate(JSONValue args) {
     if (!loadForTool(args, projectPath, puppet, walk, payload,
                      slotCount, error))
         return error;
-    auto findings = validatePuppet(puppet, walk, payload, slotCount);
+    auto findings = validatePuppet(puppet, walk, payload, slotCount)
+        ~ validateExt(puppet, walk, payload);
     JSONValue doc;
     doc["file"] = projectPath;
     doc["result"] = findings.length == 0 ? "clean" : "findings";
@@ -149,6 +158,11 @@ private ToolResult toolExportRig(JSONValue args) {
     string outDir;
     if (!stringArg(args, "out", outDir, error)) return error;
 
+    auto extView = extOf(puppet);
+    string stampReason;
+    if (extView.present && ratingBlocksExport(extView.doc, stampReason))
+        return ToolResult.fail("TG-RATING-LANE-MISMATCH", stampReason);
+
     auto exporter = new RigExporter(puppet, walk, slotCount);
     ExportResult result;
     try {
@@ -161,10 +175,20 @@ private ToolResult toolExportRig(JSONValue args) {
         string base = projectPath.baseName.stripExtension;
         string modelPath = buildPath(outDir, base ~ ".model.json");
         string reportPath = buildPath(outDir, base ~ ".export-report.json");
+        string stampPath = buildPath(outDir, base ~ ".stamp.json");
         write(modelPath, result.model.toString() ~ "\n");
+        auto stamp = ratingStamp(extView.doc);
+        JSONValue stampDoc;
+        stampDoc["format"] = "torogao-rating-stamp/1";
+        stampDoc["file"] = projectPath;
+        stampDoc["model"] = modelPath;
+        stampDoc["stamp"] = stamp;
+        write(stampPath, stampDoc.toString() ~ "\n");
         JSONValue report;
         report["file"] = projectPath;
         report["model"] = modelPath;
+        report["ratingStamp"] = stamp;
+        report["stampFile"] = stampPath;
         report["mapped"] = result.count("mapped");
         report["approximated"] = result.count("approximated");
         report["dropped"] = result.count("dropped");
@@ -338,6 +362,7 @@ ToolRegistry buildCoreRegistry() {
     registerTemplateTools(reg);
     registerAudioTools(reg);
     registerVisemeTools(reg);
+    registerP3Tools(reg);
 
     return reg;
 }
