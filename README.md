@@ -34,7 +34,11 @@ Upstream history is preserved in this repository under
 
 ## Building
 
-Requirements: LDC >= 1.40 and dub.
+With Nix (canonical): `nix develop`, then the dub build below
+works inside the shell. `flake.lock` is committed; `shell.nix`
+is a compatibility shim for non-flake entry points.
+
+Without Nix: LDC >= 1.40 and dub.
 
 ```
 git submodule update --init --recursive
