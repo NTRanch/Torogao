@@ -1,0 +1,73 @@
+{
+ "format": "torogao-m-ground-truth/1",
+ "fixture": "m-rig-03",
+ "recordedFrom": "torogao-cli inspect census of the generated rig, 2026-10-26",
+ "faceShape": "wide",
+ "presets": [
+  "hair-bounce",
+  "breast-x"
+ ],
+ "parameters": [
+  "ParamAngleX",
+  "ParamAngleY",
+  "ParamAngleZ",
+  "ParamBodyAngleX",
+  "ParamBodyAngleY",
+  "ParamBodyAngleZ",
+  "ParamBreastL",
+  "ParamBreastR",
+  "ParamBreath",
+  "ParamBrowLY",
+  "ParamBrowRY",
+  "ParamEyeLOpen",
+  "ParamEyeLSmile",
+  "ParamEyeROpen",
+  "ParamEyeRSmile",
+  "ParamHairBounceY",
+  "ParamHairFan",
+  "ParamMouthForm",
+  "ParamMouthOpenY",
+  "ParamMouthX"
+ ],
+ "parts": [
+  "Body",
+  "breast-xSeg1",
+  "breast-xSeg2",
+  "Head",
+  "EyeL",
+  "EyeR",
+  "BrowL",
+  "BrowR",
+  "Mouth",
+  "hair-bounceSeg1",
+  "hair-bounceSeg2"
+ ],
+ "physicsOutputs": [
+  "ParamBreastL",
+  "ParamBreastR",
+  "ParamHairBounceY",
+  "ParamHairFan"
+ ],
+ "drivers": [
+  {
+   "output": "ParamBreastL",
+   "model": "Pendulum",
+   "node": "breast-xPhys1"
+  },
+  {
+   "output": "ParamBreastR",
+   "model": "Pendulum",
+   "node": "breast-xPhys2"
+  },
+  {
+   "output": "ParamHairBounceY",
+   "model": "Pendulum",
+   "node": "hair-bouncePhys1"
+  },
+  {
+   "output": "ParamHairFan",
+   "model": "Pendulum",
+   "node": "hair-bouncePhys2"
+  }
+ ]
+}

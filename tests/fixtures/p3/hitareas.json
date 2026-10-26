@@ -1,0 +1,1 @@
+{"hitAreas":[{"binding":{"part":"Head"},"name":"face-tap","shape":{"kind":"circle","r":45,"x":0,"y":-10}},{"binding":{"part":"HairAnchor"},"name":"hair-touch","shape":{"h":50,"kind":"rect","w":80,"x":-40,"y":-60}}]}

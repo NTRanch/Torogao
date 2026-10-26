@@ -1,0 +1,64 @@
+{
+ "format": "torogao-m-ground-truth/1",
+ "fixture": "m-rig-02",
+ "recordedFrom": "torogao-cli inspect census of the generated rig, 2026-10-26",
+ "faceShape": "long",
+ "presets": [
+  "hair-sway-3step"
+ ],
+ "parameters": [
+  "ParamAngleX",
+  "ParamAngleY",
+  "ParamAngleZ",
+  "ParamBodyAngleX",
+  "ParamBodyAngleY",
+  "ParamBodyAngleZ",
+  "ParamBreath",
+  "ParamBrowLY",
+  "ParamBrowRY",
+  "ParamEyeLOpen",
+  "ParamEyeLSmile",
+  "ParamEyeROpen",
+  "ParamEyeRSmile",
+  "ParamHairSway1",
+  "ParamHairSway2",
+  "ParamHairSway3",
+  "ParamMouthForm",
+  "ParamMouthOpenY",
+  "ParamMouthX"
+ ],
+ "parts": [
+  "Body",
+  "Head",
+  "EyeL",
+  "EyeR",
+  "BrowL",
+  "BrowR",
+  "Mouth",
+  "hair-sway-3stepSeg1",
+  "hair-sway-3stepSeg2",
+  "hair-sway-3stepSeg3"
+ ],
+ "physicsOutputs": [
+  "ParamHairSway1",
+  "ParamHairSway2",
+  "ParamHairSway3"
+ ],
+ "drivers": [
+  {
+   "output": "ParamHairSway1",
+   "model": "Pendulum",
+   "node": "hair-sway-3stepPhys1"
+  },
+  {
+   "output": "ParamHairSway2",
+   "model": "Pendulum",
+   "node": "hair-sway-3stepPhys2"
+  },
+  {
+   "output": "ParamHairSway3",
+   "model": "Pendulum",
+   "node": "hair-sway-3stepPhys3"
+  }
+ ]
+}

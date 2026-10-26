@@ -1,0 +1,35 @@
+{
+ "format": "torogao-character/1",
+ "name": "Elif",
+ "pack": "all-ages",
+ "consent": {
+  "schema": "torogao-consent/1",
+  "adult": true,
+  "wantsSelectedScenes": true
+ },
+ "anchors": {
+  "eyes": "dark brown",
+  "hair": "dark braid",
+  "role": "rowing coach",
+  "faceShape": "square",
+  "invariant": "the square face shape, the dark brown eyes and the dark braid do not change across any stage"
+ },
+ "kinkVector": [
+  "teamwork"
+ ],
+ "refrain": "Elif keeps her own counsel.",
+ "ruptureLine": "The counsel Elif keeps is hers to give up.",
+ "stageExpressions": {
+  "0": "neutral"
+ },
+ "voice": {
+  "anchorId": "elif-anchor",
+  "anchorVersion": 1,
+  "provenance": "estate-synthetic",
+  "deliveryRules": "fixture voice record; delivery rules are data, not direction"
+ },
+ "voiceRules": {
+  "register": "fixture",
+  "notes": "M-study fixture identity; prose rules intentionally minimal"
+ }
+}

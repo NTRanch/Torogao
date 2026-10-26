@@ -1,0 +1,13 @@
+{
+  "format": "torogao-audio-recipe/1",
+  "name": "cue-tone",
+  "seed": 1,
+  "durationSeconds": 3.0,
+  "targetLufs": -16.0,
+  "truePeakDb": -1.0,
+  "stems": [
+    {"type": "tone", "freqHz": 880.0, "gain": 0.7,
+     "startSeconds": 0.5, "durationSeconds": 1.5,
+     "envelope": {"attackSeconds": 0.01, "releaseSeconds": 0.3}}
+  ]
+}

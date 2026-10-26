@@ -1,0 +1,879 @@
+{
+  "format": "torogao-pack/1",
+  "name": "all-ages",
+  "version": "1.0.0",
+  "lane": "all-ages",
+  "title": "All-ages lane pack",
+  "ratingRules": {
+    "values": [
+      "unrated",
+      "all-ages",
+      "adult"
+    ],
+    "laneRatings": {
+      "adult": [
+        "adult",
+        "all-ages",
+        "unrated"
+      ],
+      "all-ages": [
+        "all-ages",
+        "unrated"
+      ]
+    },
+    "stamp": {
+      "required": true,
+      "fields": [
+        "pack",
+        "lane",
+        "rating",
+        "basis"
+      ],
+      "note": "Every export carries the stamp of its source data in the export report and a stamp sidecar file. An internally inconsistent stamp (a rating the lane forbids) refuses the export."
+    }
+  },
+  "consentModel": {
+    "schema": "torogao-consent/1",
+    "statement": "The character is a consenting adult who wants to experience the scenes and kinks selected for her.",
+    "requiredFields": {
+      "adult": true,
+      "wantsSelectedScenes": true
+    }
+  },
+  "expressions": [
+    {
+      "name": "neutral",
+      "semantics": "Resting face; the baseline every other state returns to.",
+      "defaultRecipe": {}
+    },
+    {
+      "name": "smile",
+      "semantics": "A warm, pleased smile; eyes soften, mouth corners rise.",
+      "defaultRecipe": {
+        "ParamEyeLSmile": 0.8,
+        "ParamEyeRSmile": 0.8,
+        "ParamMouthForm": 0.8,
+        "ParamMouthOpenY": 0.15,
+        "ParamBrowLY": 0.2,
+        "ParamBrowRY": 0.2
+      }
+    },
+    {
+      "name": "joy",
+      "semantics": "Open delight; full eye-smile, mouth open, head tilts.",
+      "defaultRecipe": {
+        "ParamEyeLSmile": 1.0,
+        "ParamEyeRSmile": 1.0,
+        "ParamMouthForm": 1.0,
+        "ParamMouthOpenY": 0.45,
+        "ParamBrowLY": 0.4,
+        "ParamBrowRY": 0.4,
+        "ParamAngleZ": 5
+      }
+    },
+    {
+      "name": "playful",
+      "semantics": "Teasing asymmetry; one eye smiles harder, head cants.",
+      "defaultRecipe": {
+        "ParamEyeLSmile": 0.9,
+        "ParamEyeRSmile": 0.3,
+        "ParamMouthForm": 0.7,
+        "ParamMouthOpenY": 0.3,
+        "ParamAngleZ": -6,
+        "ParamAngleX": 8
+      }
+    },
+    {
+      "name": "surprise",
+      "semantics": "Startled; eyes and brows up, mouth open in an O.",
+      "defaultRecipe": {
+        "ParamEyeLOpen": 1.0,
+        "ParamEyeROpen": 1.0,
+        "ParamBrowLY": 1.0,
+        "ParamBrowRY": 1.0,
+        "ParamMouthOpenY": 0.6,
+        "ParamMouthForm": -0.3
+      }
+    },
+    {
+      "name": "sad",
+      "semantics": "Downcast; brows slope, mouth corners fall, eyes dim.",
+      "defaultRecipe": {
+        "ParamBrowLY": -0.7,
+        "ParamBrowRY": -0.7,
+        "ParamMouthForm": -0.8,
+        "ParamEyeLOpen": 0.6,
+        "ParamEyeROpen": 0.6
+      }
+    },
+    {
+      "name": "angry",
+      "semantics": "Cross; brows down hard, mouth pressed flat.",
+      "defaultRecipe": {
+        "ParamBrowLY": -1.0,
+        "ParamBrowRY": -1.0,
+        "ParamMouthForm": -0.5,
+        "ParamEyeLOpen": 0.8,
+        "ParamEyeROpen": 0.8
+      }
+    },
+    {
+      "name": "calm",
+      "semantics": "Settled; lids low and even, a small settled smile.",
+      "defaultRecipe": {
+        "ParamEyeLOpen": 0.55,
+        "ParamEyeROpen": 0.55,
+        "ParamMouthForm": 0.25,
+        "ParamBreath": 0.4
+      }
+    }
+  ],
+  "trackingSets": [
+    {
+      "id": "face-standard",
+      "title": "Standard face + torso tracking set",
+      "completeness": "complete",
+      "source": "The estate base humanoid template's parameter list (templates/base-humanoid.json): the tracker-ecosystem standard IDs the template itself implements, with the ranges the template declares.",
+      "autoAssociation": [
+        {
+          "rule": "exact-id",
+          "note": "A tracker output whose ID equals a set ID binds to that parameter with no remapping."
+        },
+        {
+          "rule": "range-clamp",
+          "note": "Tracker values are clamped to the set ID's declared range on bind."
+        }
+      ],
+      "ids": [
+        {
+          "id": "ParamAngleX",
+          "group": "face",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "ParamAngleY",
+          "group": "face",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "ParamAngleZ",
+          "group": "face",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "ParamEyeLOpen",
+          "group": "face",
+          "min": 0,
+          "max": 1
+        },
+        {
+          "id": "ParamEyeROpen",
+          "group": "face",
+          "min": 0,
+          "max": 1
+        },
+        {
+          "id": "ParamEyeLSmile",
+          "group": "face",
+          "min": 0,
+          "max": 1
+        },
+        {
+          "id": "ParamEyeRSmile",
+          "group": "face",
+          "min": 0,
+          "max": 1
+        },
+        {
+          "id": "ParamBrowLY",
+          "group": "face",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "ParamBrowRY",
+          "group": "face",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "ParamMouthOpenY",
+          "group": "face",
+          "min": 0,
+          "max": 1
+        },
+        {
+          "id": "ParamMouthForm",
+          "group": "face",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "ParamMouthX",
+          "group": "face",
+          "min": 0,
+          "max": 1
+        },
+        {
+          "id": "ParamBodyAngleX",
+          "group": "torso",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "ParamBodyAngleY",
+          "group": "torso",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "ParamBodyAngleZ",
+          "group": "torso",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "ParamBreath",
+          "group": "torso",
+          "min": 0,
+          "max": 1
+        }
+      ]
+    },
+    {
+      "id": "full-body",
+      "title": "Full-body tracking set (mocopi class)",
+      "completeness": "complete",
+      "source": "The published mocopi auto-association list (official nizima LIVE manual), completed 2026-10-26 — see sourceNote.",
+      "sourceNote": "COMPLETED 2026-10-26 from the official source: 'Specifications of mocopi-compatible Parameters', nizima LIVE Manual (Live2D), https://docs.nizimalive.com/en/manual/mocopi-parameter-list/ — fetched 2026-10-26; verbatim transcription of the auto-associated ID columns with ranges, sha256 acee6387172d8227ec721bf8addf6a756af3a297b0bbfdbbe7048b87ed148624 (transcription record held with the phase evidence). The face + torso IDs grounded in the estate template remain; the table's body, arms, hands, legs and feet groups are filled verbatim, and ParamAngleZRelative joins the face group. Three spellings are the SOURCE's own and are transcribed verbatim, never silently corrected: UpperLegRIghtAngleY, LowerLegRIghtAngleX, FootLeftPosisionY. The source's face PositionX/Y/Z rows carry NO auto-associated ID and are excluded — there is no ID to claim.",
+      "autoAssociation": [
+        {
+          "rule": "exact-id",
+          "note": "A tracker output whose ID equals a set ID binds to that parameter with no remapping."
+        },
+        {
+          "rule": "range-clamp",
+          "note": "Tracker values are clamped to the set ID's declared range on bind."
+        }
+      ],
+      "groupsPendingSource": [],
+      "ids": [
+        {
+          "id": "ParamAngleX",
+          "group": "face",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "ParamAngleY",
+          "group": "face",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "ParamAngleZ",
+          "group": "face",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "ParamEyeLOpen",
+          "group": "face",
+          "min": 0,
+          "max": 1
+        },
+        {
+          "id": "ParamEyeROpen",
+          "group": "face",
+          "min": 0,
+          "max": 1
+        },
+        {
+          "id": "ParamEyeLSmile",
+          "group": "face",
+          "min": 0,
+          "max": 1
+        },
+        {
+          "id": "ParamEyeRSmile",
+          "group": "face",
+          "min": 0,
+          "max": 1
+        },
+        {
+          "id": "ParamBrowLY",
+          "group": "face",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "ParamBrowRY",
+          "group": "face",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "ParamMouthOpenY",
+          "group": "face",
+          "min": 0,
+          "max": 1
+        },
+        {
+          "id": "ParamMouthForm",
+          "group": "face",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "ParamMouthX",
+          "group": "face",
+          "min": 0,
+          "max": 1
+        },
+        {
+          "id": "ParamBodyAngleX",
+          "group": "torso",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "ParamBodyAngleY",
+          "group": "torso",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "ParamBodyAngleZ",
+          "group": "torso",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "ParamBreath",
+          "group": "torso",
+          "min": 0,
+          "max": 1
+        },
+        {
+          "id": "ParamAngleZRelative",
+          "group": "face",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "HipAngleZ",
+          "group": "body",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "TorsoAngleX",
+          "group": "body",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "TorsoAngleY",
+          "group": "body",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "TorsoAngleZ",
+          "group": "body",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "BodyPositionX",
+          "group": "body",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "BodyPositionY",
+          "group": "body",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "BodyPositionZ",
+          "group": "body",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "UpperArmLeftAngleY",
+          "group": "arms",
+          "min": -90,
+          "max": 90
+        },
+        {
+          "id": "UpperArmLeftAngleZ",
+          "group": "arms",
+          "min": -180,
+          "max": 180
+        },
+        {
+          "id": "UpperArmLeftAngleZRelative",
+          "group": "arms",
+          "min": -180,
+          "max": 180
+        },
+        {
+          "id": "LowerArmLeftAngleX",
+          "group": "arms",
+          "min": -180,
+          "max": 180
+        },
+        {
+          "id": "LowerArmLeftAngleY",
+          "group": "arms",
+          "min": -90,
+          "max": 90
+        },
+        {
+          "id": "LowerArmLeftAngleZ",
+          "group": "arms",
+          "min": -180,
+          "max": 180
+        },
+        {
+          "id": "LowerArmLeftAngleZRelative",
+          "group": "arms",
+          "min": -180,
+          "max": 180
+        },
+        {
+          "id": "ElbowLeftAngle",
+          "group": "arms",
+          "min": 0,
+          "max": 180
+        },
+        {
+          "id": "ElbowLeftPositionX",
+          "group": "arms",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "ElbowLeftPositionY",
+          "group": "arms",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "ElbowLeftPositionZ",
+          "group": "arms",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "UpperArmRightAngleY",
+          "group": "arms",
+          "min": -90,
+          "max": 90
+        },
+        {
+          "id": "UpperArmRightAngleZ",
+          "group": "arms",
+          "min": -180,
+          "max": 180
+        },
+        {
+          "id": "UpperArmRightAngleZRelative",
+          "group": "arms",
+          "min": -180,
+          "max": 180
+        },
+        {
+          "id": "LowerArmRightAngleX",
+          "group": "arms",
+          "min": -180,
+          "max": 180
+        },
+        {
+          "id": "LowerArmRightAngleY",
+          "group": "arms",
+          "min": -90,
+          "max": 90
+        },
+        {
+          "id": "LowerArmRightAngleZ",
+          "group": "arms",
+          "min": -180,
+          "max": 180
+        },
+        {
+          "id": "LowerArmRightAngleZRelative",
+          "group": "arms",
+          "min": -180,
+          "max": 180
+        },
+        {
+          "id": "ElbowRightAngle",
+          "group": "arms",
+          "min": 0,
+          "max": 180
+        },
+        {
+          "id": "ElbowRightPositionX",
+          "group": "arms",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "ElbowRightPositionY",
+          "group": "arms",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "ElbowRightPositionZ",
+          "group": "arms",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "HandLeftFound",
+          "group": "hands",
+          "min": 0,
+          "max": 1
+        },
+        {
+          "id": "HandLeftAngleX",
+          "group": "hands",
+          "min": -180,
+          "max": 180
+        },
+        {
+          "id": "HandLeftAngleY",
+          "group": "hands",
+          "min": -90,
+          "max": 90
+        },
+        {
+          "id": "HandLeftAngleZ",
+          "group": "hands",
+          "min": -180,
+          "max": 180
+        },
+        {
+          "id": "HandLeftPositionX",
+          "group": "hands",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "HandLeftPositionY",
+          "group": "hands",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "HandLeftPositionZ",
+          "group": "hands",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "HandRightFound",
+          "group": "hands",
+          "min": 0,
+          "max": 1
+        },
+        {
+          "id": "HandRightAngleX",
+          "group": "hands",
+          "min": -180,
+          "max": 180
+        },
+        {
+          "id": "HandRightAngleY",
+          "group": "hands",
+          "min": -90,
+          "max": 90
+        },
+        {
+          "id": "HandRightAngleZ",
+          "group": "hands",
+          "min": -180,
+          "max": 180
+        },
+        {
+          "id": "HandRightPositionX",
+          "group": "hands",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "HandRightPositionY",
+          "group": "hands",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "HandRightPositionZ",
+          "group": "hands",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "UpperLegLeftAngleY",
+          "group": "legs",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "UpperLegLeftAngleZ",
+          "group": "legs",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "LowerLegLeftAngleX",
+          "group": "legs",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "LowerLegLeftAngleY",
+          "group": "legs",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "LowerLegLeftAngleZ",
+          "group": "legs",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "LowerLegLeftAngleZRelative",
+          "group": "legs",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "KneeLeftAngle",
+          "group": "legs",
+          "min": 0,
+          "max": 180
+        },
+        {
+          "id": "KneeLeftPositionX",
+          "group": "legs",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "KneeLeftPositionY",
+          "group": "legs",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "KneeLeftPositionZ",
+          "group": "legs",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "UpperLegRIghtAngleY",
+          "group": "legs",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "UpperLegRightAngleZ",
+          "group": "legs",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "LowerLegRIghtAngleX",
+          "group": "legs",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "LowerLegRightAngleY",
+          "group": "legs",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "LowerLegRightAngleZ",
+          "group": "legs",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "LowerLegRightAngleZRelative",
+          "group": "legs",
+          "min": -30,
+          "max": 30
+        },
+        {
+          "id": "KneeRightAngle",
+          "group": "legs",
+          "min": 0,
+          "max": 180
+        },
+        {
+          "id": "KneeRightPositionX",
+          "group": "legs",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "KneeRightPositionY",
+          "group": "legs",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "KneeRightPositionZ",
+          "group": "legs",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "FootLeftPositionX",
+          "group": "feet",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "FootLeftPosisionY",
+          "group": "feet",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "FootLeftPositionZ",
+          "group": "feet",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "FootRightPositionX",
+          "group": "feet",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "FootRightPositionY",
+          "group": "feet",
+          "min": -1,
+          "max": 1
+        },
+        {
+          "id": "FootRightPositionZ",
+          "group": "feet",
+          "min": -1,
+          "max": 1
+        }
+      ]
+    }
+  ],
+  "arcLadder": [
+    {
+      "stage": 0,
+      "label": "baseline",
+      "agency": "hers",
+      "scaffold": "Establish who she is before anything changes: anchors, refrain, the want stated in her own register."
+    },
+    {
+      "stage": 1,
+      "label": "first ask",
+      "agency": "hers",
+      "scaffold": "The first stage of the arc is requested by her, in her words; nothing is done to her that she has not asked for."
+    },
+    {
+      "stage": 2,
+      "label": "deepening",
+      "agency": "hers",
+      "scaffold": "Each stage adds exactly one loss or gain on top of the stages before it; the ladder is cumulative, never a reset."
+    },
+    {
+      "stage": 3,
+      "label": "the flip",
+      "agency": "flips",
+      "scaffold": "The agency flip sits here, at the arc's structural midpoint: what she asked for begins, by her own account, to ask things of her."
+    },
+    {
+      "stage": 4,
+      "label": "the old frame retires",
+      "agency": "the arc's",
+      "scaffold": "The authored rupture line lands at this slot, verbatim, in her voice; the old frame is named as it goes."
+    },
+    {
+      "stage": 5,
+      "label": "the new normal",
+      "agency": "the arc's, by her request",
+      "scaffold": "The endpoint is a settled state she inhabits fully, not an emptied one; the refrain returns, character-exact, to close."
+    }
+  ],
+  "flipStage": 3,
+  "ruptureStage": 4,
+  "kinkVocabulary": [
+    "friendship",
+    "teamwork",
+    "performance",
+    "practice",
+    "rivalry"
+  ],
+  "wordCountBounds": {
+    "dialogue": {
+      "minWords": 15,
+      "maxWords": 200
+    },
+    "prose": {
+      "minWords": 120,
+      "maxWords": 800
+    },
+    "script": {
+      "minWords": 30,
+      "maxWords": 450
+    }
+  },
+  "defaultControllers": [
+    {
+      "id": "cheer",
+      "label": "Cheer",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "bindings": [
+        {
+          "parameter": "ParamEyeLSmile",
+          "gain": 1,
+          "offset": 0
+        },
+        {
+          "parameter": "ParamEyeRSmile",
+          "gain": 1,
+          "offset": 0
+        }
+      ]
+    },
+    {
+      "id": "energy",
+      "label": "Energy",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "bindings": [
+        {
+          "parameter": "ParamBreath",
+          "gain": 0.5,
+          "offset": 0.3
+        }
+      ]
+    }
+  ]
+}

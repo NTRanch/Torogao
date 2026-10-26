@@ -1,0 +1,37 @@
+{
+ "format": "torogao-session/1",
+ "name": "induction-bad-level",
+ "seed": 7,
+ "carrier": {
+  "baseHz": 200.0,
+  "gain": 0.4
+ },
+ "bed": {
+  "cutoffHz": 800.0,
+  "gain": 0.15
+ },
+ "phases": [
+  {
+   "name": "settle",
+   "seconds": 2.0,
+   "beatHz": 10.0
+  },
+  {
+   "name": "deepen",
+   "seconds": 2.0,
+   "beatHz": 6.0
+  },
+  {
+   "name": "return",
+   "seconds": 2.0,
+   "beatHz": 10.0
+  }
+ ],
+ "crossfadeSeconds": 0.5,
+ "subliminal": {
+  "freqHz": 1200.0,
+  "levelDb": 3.0
+ },
+ "targetLufs": -16.0,
+ "truePeakDb": -1.0
+}

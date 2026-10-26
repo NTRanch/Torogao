@@ -1,0 +1,38 @@
+{
+ "format": "torogao-viseme-authoring/1",
+ "fps": 60,
+ "blendSeconds": 0.06,
+ "note": "A one-word greeting shape, authored as data: the sample authoring spec for the viseme author surface. Events carry explicit ends; the author derives durationSeconds from the last end.",
+ "events": [
+  {
+   "viseme": "sil",
+   "start": 0.0,
+   "end": 0.15
+  },
+  {
+   "viseme": "aa",
+   "start": 0.15,
+   "end": 0.38
+  },
+  {
+   "viseme": "E",
+   "start": 0.38,
+   "end": 0.58
+  },
+  {
+   "viseme": "aa",
+   "start": 0.58,
+   "end": 0.82
+  },
+  {
+   "viseme": "ou",
+   "start": 0.82,
+   "end": 1.05
+  },
+  {
+   "viseme": "sil",
+   "start": 1.05,
+   "end": 1.2
+  }
+ ]
+}

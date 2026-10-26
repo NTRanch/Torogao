@@ -1,0 +1,123 @@
+{
+ "format": "torogao-m-ground-truth/1",
+ "fixture": "m-rig-07",
+ "recordedFrom": "torogao-cli inspect census of the generated rig, 2026-10-26",
+ "faceShape": "long",
+ "presets": [
+  "hair-sway-3step",
+  "breast-x",
+  "breast-y",
+  "skirt-sway"
+ ],
+ "parameters": [
+  "ParamAngleX",
+  "ParamAngleY",
+  "ParamAngleZ",
+  "ParamBodyAngleX",
+  "ParamBodyAngleY",
+  "ParamBodyAngleZ",
+  "ParamBreastApart",
+  "ParamBreastL",
+  "ParamBreastR",
+  "ParamBreastY",
+  "ParamBreath",
+  "ParamBrowLY",
+  "ParamBrowRY",
+  "ParamEyeLOpen",
+  "ParamEyeLSmile",
+  "ParamEyeROpen",
+  "ParamEyeRSmile",
+  "ParamHairSway1",
+  "ParamHairSway2",
+  "ParamHairSway3",
+  "ParamMouthForm",
+  "ParamMouthOpenY",
+  "ParamMouthX",
+  "ParamSkirtSway1",
+  "ParamSkirtSway2",
+  "ParamSkirtSway3"
+ ],
+ "parts": [
+  "Body",
+  "breast-xSeg1",
+  "breast-xSeg2",
+  "breast-ySeg1",
+  "breast-ySeg2",
+  "skirt-swaySeg1",
+  "skirt-swaySeg2",
+  "skirt-swaySeg3",
+  "Head",
+  "EyeL",
+  "EyeR",
+  "BrowL",
+  "BrowR",
+  "Mouth",
+  "hair-sway-3stepSeg1",
+  "hair-sway-3stepSeg2",
+  "hair-sway-3stepSeg3"
+ ],
+ "physicsOutputs": [
+  "ParamBreastApart",
+  "ParamBreastL",
+  "ParamBreastR",
+  "ParamBreastY",
+  "ParamHairSway1",
+  "ParamHairSway2",
+  "ParamHairSway3",
+  "ParamSkirtSway1",
+  "ParamSkirtSway2",
+  "ParamSkirtSway3"
+ ],
+ "drivers": [
+  {
+   "output": "ParamBreastL",
+   "model": "Pendulum",
+   "node": "breast-xPhys1"
+  },
+  {
+   "output": "ParamBreastR",
+   "model": "Pendulum",
+   "node": "breast-xPhys2"
+  },
+  {
+   "output": "ParamBreastY",
+   "model": "Pendulum",
+   "node": "breast-yPhys1"
+  },
+  {
+   "output": "ParamBreastApart",
+   "model": "Pendulum",
+   "node": "breast-yPhys2"
+  },
+  {
+   "output": "ParamSkirtSway1",
+   "model": "Pendulum",
+   "node": "skirt-swayPhys1"
+  },
+  {
+   "output": "ParamSkirtSway2",
+   "model": "Pendulum",
+   "node": "skirt-swayPhys2"
+  },
+  {
+   "output": "ParamSkirtSway3",
+   "model": "Pendulum",
+   "node": "skirt-swayPhys3"
+  },
+  {
+   "output": "ParamHairSway1",
+   "model": "Pendulum",
+   "node": "hair-sway-3stepPhys1"
+  },
+  {
+   "output": "ParamHairSway2",
+   "model": "Pendulum",
+   "node": "hair-sway-3stepPhys2"
+  },
+  {
+   "output": "ParamHairSway3",
+   "model": "Pendulum",
+   "node": "hair-sway-3stepPhys3"
+  }
+ ]
+}

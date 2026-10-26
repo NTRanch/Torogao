@@ -1,0 +1,35 @@
+{
+ "format": "torogao-character/1",
+ "name": "Holt",
+ "pack": "all-ages",
+ "consent": {
+  "schema": "torogao-consent/1",
+  "adult": true,
+  "wantsSelectedScenes": true
+ },
+ "anchors": {
+  "eyes": "hazel-green",
+  "hair": "sandy fringe",
+  "role": "stage magician",
+  "faceShape": "wide",
+  "invariant": "the wide face shape, the hazel-green eyes and the sandy fringe do not change across any stage"
+ },
+ "kinkVector": [
+  "performance"
+ ],
+ "refrain": "Holt keeps her own counsel.",
+ "ruptureLine": "The counsel Holt keeps is hers to give up.",
+ "stageExpressions": {
+  "0": "neutral"
+ },
+ "voice": {
+  "anchorId": "holt-anchor",
+  "anchorVersion": 1,
+  "provenance": "estate-synthetic",
+  "deliveryRules": "fixture voice record; delivery rules are data, not direction"
+ },
+ "voiceRules": {
+  "register": "fixture",
+  "notes": "M-study fixture identity; prose rules intentionally minimal"
+ }
+}

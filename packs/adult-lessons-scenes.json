@@ -1,0 +1,56 @@
+{
+  "format": "torogao-lessons/1",
+  "pack": "adult",
+  "track": "scenes",
+  "title": "Scenes Track — the conditioning lab",
+  "lessons": [
+    {
+      "id": "scenes-meet-the-lab",
+      "title": "Meet the conditioning lab",
+      "level": "beginner",
+      "xp": 10,
+      "check": {"kind": "scene-validates", "scene": "conditioning-lab"},
+      "brief": "A scene is data: plates, fixtures, props, an effects stack, emitters, and the characters placed in it — each with her consent record. This check passes when the conditioning lab validates against your project: every anchor part, hook parameter and dashboard binding resolves, and the consent records satisfy the pack model."
+    },
+    {
+      "id": "scenes-room-that-breathes",
+      "title": "A room that breathes",
+      "level": "beginner",
+      "xp": 10,
+      "check": {"kind": "scene-features", "scene": "conditioning-lab", "features": ["ambient", "effect:color-grade"]},
+      "brief": "Ambient life is declared, not rendered by hand: drifting motes, light beams, a flicker, a color grade. The lab carries all of it as scene data."
+    },
+    {
+      "id": "scenes-machines-and-rigs",
+      "title": "Machines and rigs",
+      "level": "intermediate",
+      "xp": 15,
+      "check": {"kind": "scene-features", "scene": "conditioning-lab", "features": ["fixture:machine", "fixture:suspension-rig"]},
+      "brief": "Fixtures anchor bodies to the room: the milking machine and the suspension rig declare anchor sets that name real parts of the character."
+    },
+    {
+      "id": "scenes-the-visor",
+      "title": "The visor",
+      "level": "intermediate",
+      "xp": 15,
+      "check": {"kind": "scene-features", "scene": "conditioning-lab", "features": ["prop:visor", "prop:suction"]},
+      "brief": "Hooked props drive parameters: the trance visor's cycle closes her eyes toward trance, the suction cups ride the machine's cycle. A hook that names a parameter the puppet lacks is a validation error, never a silent no-op."
+    },
+    {
+      "id": "scenes-fluids",
+      "title": "Fluids",
+      "level": "advanced",
+      "xp": 20,
+      "check": {"kind": "scene-features", "scene": "conditioning-lab", "features": ["fluid:milk"]},
+      "brief": "One deterministic simulation serves every fluid: the milk emitter's pressure pulses follow the same 2.4 s cycle the machine fixture declares, and landings read against the project's hit areas."
+    },
+    {
+      "id": "scenes-capstone",
+      "title": "Capstone: the full lab",
+      "level": "expert",
+      "xp": 40,
+      "check": {"kind": "scene-capstone", "scene": "conditioning-lab", "features": ["ambient", "fixture:machine", "fixture:suspension-rig", "prop:visor", "prop:suction", "effect:dashboard", "effect:camera-rec", "fluid:milk"]},
+      "brief": "Everything at once: the lab validates against your project and carries the whole archetype — machine, rig, visor, suction, dashboard, camera overlay, milk. Pass this and the Scenes track is complete."
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "format": "torogao-lessons/1",
+  "pack": "all-ages",
+  "track": "scenes",
+  "title": "Scenes Track — the studio",
+  "lessons": [
+    {
+      "id": "scenes-meet-the-studio",
+      "title": "Meet the studio",
+      "level": "beginner",
+      "xp": 10,
+      "check": {"kind": "scene-validates", "scene": "studio"},
+      "brief": "A scene is data: plates, fixtures, props, an effects stack, and the characters placed in it. This check passes when the studio validates against your project."
+    },
+    {
+      "id": "scenes-light-and-air",
+      "title": "Light and air",
+      "level": "beginner",
+      "xp": 10,
+      "check": {"kind": "scene-features", "scene": "studio", "features": ["ambient", "effect:color-grade"]},
+      "brief": "Ambient life is declared, not rendered by hand: window light, drifting motes, a day grade — all scene data."
+    },
+    {
+      "id": "scenes-the-stool",
+      "title": "The posing stool",
+      "level": "intermediate",
+      "xp": 15,
+      "check": {"kind": "scene-features", "scene": "studio", "features": ["fixture:stool"]},
+      "brief": "Fixtures anchor bodies to the room: the stool's anchor set names a real part of the character."
+    },
+    {
+      "id": "scenes-hud-basics",
+      "title": "HUD basics",
+      "level": "intermediate",
+      "xp": 15,
+      "check": {"kind": "scene-features", "scene": "studio", "features": ["effect:hud"]},
+      "brief": "The studio's HUD — take counter, focus peaking — is an effect in the scene's stack, ordered with the rest."
+    },
+    {
+      "id": "scenes-composition",
+      "title": "Composition",
+      "level": "advanced",
+      "xp": 20,
+      "check": {"kind": "scene-features", "scene": "studio", "features": ["ambient", "fixture:stool", "effect:hud"]},
+      "brief": "A working scene composes: ambient life, a fixture, and an overlay stack, all validating together."
+    },
+    {
+      "id": "scenes-capstone",
+      "title": "Capstone: the full studio",
+      "level": "expert",
+      "xp": 40,
+      "check": {"kind": "scene-capstone", "scene": "studio", "features": ["ambient", "fixture:stool", "effect:color-grade", "effect:hud"]},
+      "brief": "Everything at once: the studio validates against your project and carries its whole composition. Pass this and the Scenes track is complete."
+    }
+  ]
+}

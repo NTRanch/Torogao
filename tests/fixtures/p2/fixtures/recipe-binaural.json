@@ -1,0 +1,12 @@
+{
+  "format": "torogao-audio-recipe/1",
+  "name": "binaural-bed",
+  "seed": 42,
+  "durationSeconds": 4.0,
+  "targetLufs": -16.0,
+  "truePeakDb": -1.0,
+  "stems": [
+    {"type": "binaural", "baseHz": 200.0, "beatHz": 10.0, "gain": 0.5,
+     "envelope": {"attackSeconds": 0.25, "releaseSeconds": 0.25}}
+  ]
+}

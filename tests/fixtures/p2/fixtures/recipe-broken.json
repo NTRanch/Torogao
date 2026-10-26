@@ -1,0 +1,8 @@
+{
+  "format": "torogao-audio-recipe/1",
+  "name": "broken",
+  "durationSeconds": 2.0,
+  "stems": [
+    {"type": "kazoo", "gain": 2.0}
+  ]
+}

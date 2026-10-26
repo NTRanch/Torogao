@@ -1,0 +1,35 @@
+{
+ "format": "torogao-character/1",
+ "name": "Bren",
+ "pack": "adult",
+ "consent": {
+  "schema": "torogao-consent/1",
+  "adult": true,
+  "wantsSelectedScenes": true
+ },
+ "anchors": {
+  "eyes": "gray",
+  "hair": "black waist-length fall",
+  "role": "cellist",
+  "faceShape": "long",
+  "invariant": "the long face shape, the gray eyes and the black waist-length fall do not change across any stage"
+ },
+ "kinkVector": [
+  "conditioning"
+ ],
+ "refrain": "Bren keeps her own counsel.",
+ "ruptureLine": "The counsel Bren keeps is hers to give up.",
+ "stageExpressions": {
+  "0": "neutral"
+ },
+ "voice": {
+  "anchorId": "bren-anchor",
+  "anchorVersion": 1,
+  "provenance": "estate-synthetic",
+  "deliveryRules": "fixture voice record; delivery rules are data, not direction"
+ },
+ "voiceRules": {
+  "register": "fixture",
+  "notes": "M-study fixture identity; prose rules intentionally minimal"
+ }
+}

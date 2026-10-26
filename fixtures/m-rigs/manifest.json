@@ -1,0 +1,108 @@
+{
+ "format": "torogao-m-fixtures/1",
+ "purpose": "Fixture rigs for the auto-rig study's acceptance gate (AUTO-RIG-STUDY): hand-authored fixture set, ground truth recorded per fixture, two rigs held out from any tuning.",
+ "fixtures": [
+  {
+   "id": "m-rig-01",
+   "identity": "identities/m-rig-01.json",
+   "groundTruth": "ground-truth/m-rig-01.json",
+   "rig": "rigs/m-rig-01.inx",
+   "pack": "adult",
+   "presets": [
+    "hair-sway-2step"
+   ],
+   "heldOut": false,
+   "faceShape": "round"
+  },
+  {
+   "id": "m-rig-02",
+   "identity": "identities/m-rig-02.json",
+   "groundTruth": "ground-truth/m-rig-02.json",
+   "rig": "rigs/m-rig-02.inx",
+   "pack": "adult",
+   "presets": [
+    "hair-sway-3step"
+   ],
+   "heldOut": false,
+   "faceShape": "long"
+  },
+  {
+   "id": "m-rig-03",
+   "identity": "identities/m-rig-03.json",
+   "groundTruth": "ground-truth/m-rig-03.json",
+   "rig": "rigs/m-rig-03.inx",
+   "pack": "adult",
+   "presets": [
+    "hair-bounce",
+    "breast-x"
+   ],
+   "heldOut": true,
+   "faceShape": "wide"
+  },
+  {
+   "id": "m-rig-04",
+   "identity": "identities/m-rig-04.json",
+   "groundTruth": "ground-truth/m-rig-04.json",
+   "rig": "rigs/m-rig-04.inx",
+   "pack": "adult",
+   "presets": [
+    "breast-y",
+    "skirt-sway"
+   ],
+   "heldOut": false,
+   "faceShape": "heart"
+  },
+  {
+   "id": "m-rig-05",
+   "identity": "identities/m-rig-05.json",
+   "groundTruth": "ground-truth/m-rig-05.json",
+   "rig": "rigs/m-rig-05.inx",
+   "pack": "all-ages",
+   "presets": [
+    "hair-sway-2step",
+    "skirt-sway"
+   ],
+   "heldOut": false,
+   "faceShape": "square"
+  },
+  {
+   "id": "m-rig-06",
+   "identity": "identities/m-rig-06.json",
+   "groundTruth": "ground-truth/m-rig-06.json",
+   "rig": "rigs/m-rig-06.inx",
+   "pack": "adult",
+   "presets": [],
+   "heldOut": false,
+   "faceShape": "round"
+  },
+  {
+   "id": "m-rig-07",
+   "identity": "identities/m-rig-07.json",
+   "groundTruth": "ground-truth/m-rig-07.json",
+   "rig": "rigs/m-rig-07.inx",
+   "pack": "adult",
+   "presets": [
+    "hair-sway-3step",
+    "breast-x",
+    "breast-y",
+    "skirt-sway"
+   ],
+   "heldOut": true,
+   "faceShape": "long"
+  },
+  {
+   "id": "m-rig-08",
+   "identity": "identities/m-rig-08.json",
+   "groundTruth": "ground-truth/m-rig-08.json",
+   "rig": "rigs/m-rig-08.inx",
+   "pack": "all-ages",
+   "presets": [
+    "hair-bounce"
+   ],
+   "heldOut": false,
+   "faceShape": "wide"
+  }
+ ],
+ "provenance": "Estate-generated with the Character Creator over the ONE shared base-humanoid template \u2014 descriptor (face shape) and physics-chain variation across fixtures, per the study's own constraint that reachable estate art holds a single independent rig geometry. Ground truth is recorded from Creator output at authoring time (parameters, parts, physics outputs) and re-verified against a fresh inspection on every gate run; a fixture whose rig drifts from its record fails the gate.",
+ "heldOutRule": "Fixtures with heldOut=true are evaluation-only: no proposal threshold may be tuned on them."
+}

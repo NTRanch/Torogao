@@ -1,0 +1,35 @@
+{
+ "format": "torogao-character/1",
+ "name": "Alba",
+ "pack": "adult",
+ "consent": {
+  "schema": "torogao-consent/1",
+  "adult": true,
+  "wantsSelectedScenes": true
+ },
+ "anchors": {
+  "eyes": "amber",
+  "hair": "auburn bob",
+  "role": "archivist",
+  "faceShape": "round",
+  "invariant": "the round face shape, the amber eyes and the auburn bob do not change across any stage"
+ },
+ "kinkVector": [
+  "hypnosis"
+ ],
+ "refrain": "Alba keeps her own counsel.",
+ "ruptureLine": "The counsel Alba keeps is hers to give up.",
+ "stageExpressions": {
+  "0": "neutral"
+ },
+ "voice": {
+  "anchorId": "alba-anchor",
+  "anchorVersion": 1,
+  "provenance": "estate-synthetic",
+  "deliveryRules": "fixture voice record; delivery rules are data, not direction"
+ },
+ "voiceRules": {
+  "register": "fixture",
+  "notes": "M-study fixture identity; prose rules intentionally minimal"
+ }
+}

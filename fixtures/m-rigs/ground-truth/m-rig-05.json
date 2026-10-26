@@ -1,0 +1,81 @@
+{
+ "format": "torogao-m-ground-truth/1",
+ "fixture": "m-rig-05",
+ "recordedFrom": "torogao-cli inspect census of the generated rig, 2026-10-26",
+ "faceShape": "square",
+ "presets": [
+  "hair-sway-2step",
+  "skirt-sway"
+ ],
+ "parameters": [
+  "ParamAngleX",
+  "ParamAngleY",
+  "ParamAngleZ",
+  "ParamBodyAngleX",
+  "ParamBodyAngleY",
+  "ParamBodyAngleZ",
+  "ParamBreath",
+  "ParamBrowLY",
+  "ParamBrowRY",
+  "ParamEyeLOpen",
+  "ParamEyeLSmile",
+  "ParamEyeROpen",
+  "ParamEyeRSmile",
+  "ParamHairSway1",
+  "ParamHairSway2",
+  "ParamMouthForm",
+  "ParamMouthOpenY",
+  "ParamMouthX",
+  "ParamSkirtSway1",
+  "ParamSkirtSway2",
+  "ParamSkirtSway3"
+ ],
+ "parts": [
+  "Body",
+  "skirt-swaySeg1",
+  "skirt-swaySeg2",
+  "skirt-swaySeg3",
+  "Head",
+  "EyeL",
+  "EyeR",
+  "BrowL",
+  "BrowR",
+  "Mouth",
+  "hair-sway-2stepSeg1",
+  "hair-sway-2stepSeg2"
+ ],
+ "physicsOutputs": [
+  "ParamHairSway1",
+  "ParamHairSway2",
+  "ParamSkirtSway1",
+  "ParamSkirtSway2",
+  "ParamSkirtSway3"
+ ],
+ "drivers": [
+  {
+   "output": "ParamSkirtSway1",
+   "model": "Pendulum",
+   "node": "skirt-swayPhys1"
+  },
+  {
+   "output": "ParamSkirtSway2",
+   "model": "Pendulum",
+   "node": "skirt-swayPhys2"
+  },
+  {
+   "output": "ParamSkirtSway3",
+   "model": "Pendulum",
+   "node": "skirt-swayPhys3"
+  },
+  {
+   "output": "ParamHairSway1",
+   "model": "Pendulum",
+   "node": "hair-sway-2stepPhys1"
+  },
+  {
+   "output": "ParamHairSway2",
+   "model": "Pendulum",
+   "node": "hair-sway-2stepPhys2"
+  }
+ ]
+}

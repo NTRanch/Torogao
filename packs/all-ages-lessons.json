@@ -1,0 +1,71 @@
+{
+ "format": "torogao-lessons/1",
+ "pack": "all-ages",
+ "track": "characters",
+ "title": "Characters Track",
+ "lessons": [
+  {
+   "id": "create-first-character",
+   "title": "Create your first character",
+   "level": "beginner",
+   "xp": 10,
+   "check": {
+    "kind": "consent-recorded"
+   },
+   "brief": "Use create-character with an identity record to make a project. The check passes when the project carries its consent record: an adult character, recorded in the project itself."
+  },
+  {
+   "id": "know-your-states",
+   "title": "Know your states",
+   "level": "beginner",
+   "xp": 15,
+   "check": {
+    "kind": "state-applied",
+    "state": "*"
+   },
+   "brief": "States are named parameter recipes stored in the project. The check passes when any stored state composes in the preview without error \u2014 apply one and watch the parameters move."
+  },
+  {
+   "id": "expression-coverage",
+   "title": "Cover the governed expressions",
+   "level": "intermediate",
+   "xp": 20,
+   "check": {
+    "kind": "expression-covered"
+   },
+   "brief": "Every governed expression of this pack needs a state implementing it. The check passes when no governed expression is missing from the project's states."
+  },
+  {
+   "id": "tracking-basics",
+   "title": "Tracking basics: the standard face set",
+   "level": "intermediate",
+   "xp": 20,
+   "check": {
+    "kind": "tracking-covered",
+    "set": "face-standard",
+    "minRatio": 1.0
+   },
+   "brief": "The face-standard tracking set is the tracker's contract for face and torso. The check passes when the rig carries every ID of the set within its declared ranges."
+  },
+  {
+   "id": "export-gate",
+   "title": "Pass the export gate",
+   "level": "advanced",
+   "xp": 25,
+   "check": {
+    "kind": "export-builds"
+   },
+   "brief": "A character is not done until it exports. The check passes when the project builds the native lumen-rig-model with no refusal."
+  },
+  {
+   "id": "capstone-character",
+   "title": "Capstone: a complete character",
+   "level": "expert",
+   "xp": 40,
+   "check": {
+    "kind": "capstone"
+   },
+   "brief": "Everything at once: the project validates clean, carries its consent record, covers every governed expression, and exports. Pass this and the Characters track is complete."
+  }
+ ]
+}

@@ -1,0 +1,11 @@
+{
+  "format": "torogao-viseme-track/1",
+  "fps": 60,
+  "durationSeconds": 2.0,
+  "blendSeconds": 0.06,
+  "events": [
+    {"viseme": "aa", "start": 0.5, "end": 1.0},
+    {"viseme": "oh", "start": 1.0, "end": 1.5},
+    {"viseme": "sil", "start": 1.6, "end": 2.0}
+  ]
+}

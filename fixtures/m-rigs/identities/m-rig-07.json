@@ -1,0 +1,36 @@
+{
+ "format": "torogao-character/1",
+ "name": "Gaia",
+ "pack": "adult",
+ "consent": {
+  "schema": "torogao-consent/1",
+  "adult": true,
+  "wantsSelectedScenes": true
+ },
+ "anchors": {
+  "eyes": "green",
+  "hair": "mahogany cascade",
+  "role": "botanist",
+  "faceShape": "long",
+  "invariant": "the long face shape, the green eyes and the mahogany cascade do not change across any stage"
+ },
+ "kinkVector": [
+  "conditioning",
+  "hypnosis"
+ ],
+ "refrain": "Gaia keeps her own counsel.",
+ "ruptureLine": "The counsel Gaia keeps is hers to give up.",
+ "stageExpressions": {
+  "0": "neutral"
+ },
+ "voice": {
+  "anchorId": "gaia-anchor",
+  "anchorVersion": 1,
+  "provenance": "estate-synthetic",
+  "deliveryRules": "fixture voice record; delivery rules are data, not direction"
+ },
+ "voiceRules": {
+  "register": "fixture",
+  "notes": "M-study fixture identity; prose rules intentionally minimal"
+ }
+}
