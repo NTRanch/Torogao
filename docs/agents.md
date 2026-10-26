@@ -17,7 +17,44 @@ features (templates, the character creator, tutorials, scenes)
 appear on all surfaces automatically because both `tools/list`
 and the Agent Card are **generated from the registry**.
 
-## Tools (v2)
+## Tools (v3)
+
+The v3 additions (P3) are the `p3` namespace: lane packs,
+ratings, states, coverage, hit areas, the Creator, the writer,
+and voice/SFX data.
+
+| Tool | Posture | What it does |
+|---|---|---|
+| `pack-info` | read-only | Returns a lane pack in full: lane profile, rating rules + stamp contract, consent model, governed expression set, tracking sets, arc ladder, word-count bounds. |
+| `rating-check` | read-only | Returns the rating stamp a project would export with; typed mismatch when the rating is one its lane forbids. |
+| `list-states` | read-only | Lists a project's stored expression states, stage variants, blend shapes, hit areas, tracking claims, and rating meta. |
+| `apply-state` | read-only | Runs the deterministic preview with a stored state and/or variant applied as an input layer; returns curves, changes no project. |
+| `expression-check` | read-only | Coverage gate: a project's states against a pack's governed expression set (`TG-EXPR-MISSING` lists the missing names). |
+| `tracking-check` | read-only | Coverage gate: a project's parameters against a governed tracking set (`TG-TRACK-MISSING` / `TG-TRACK-RANGE`). |
+| `hitareas-list` | read-only | Lists a project's consumer-layer hit areas (names, shapes, part bindings). |
+| `hitareas-author` | export | Writes a NEW project whose consumer layer carries the spec's hit areas; the spec is validated first and a bad spec refuses the write. |
+| `create-character` | export | The Character Creator, headless: lane pack + base template + presets + a character record (consent validated against the pack's model) become a new project carrying the pack's governed states. |
+| `writer-scaffold` | export | Builds a canon-grounded scene scaffold for (character × kink × stage), or a loud gap report (`TG-WRITER-GAP`) naming the missing canon. Model-free, deterministic. |
+| `voice-check` | read-only | Validates a voice record: estate-synthetic provenance only, versioned anchor. |
+| `sfx-list` | read-only | Lists the SFX library index (named deterministic audio recipes, attachable as cue points). |
+
+`physics-preview` also accepts optional `state`, `variant`, and
+`drivers` arguments (the ambient driver set, layered under
+authored inputs — see `docs/ambient-drivers.md`).
+
+## Format limits — a standing rule
+
+Torogao and its native format carry **no inherited product-tier
+limits**. No constant, validator bound, template default,
+lane-pack rule, or export stamp may encode another product's
+license-tier caps (texture size, mesh counts, parameter counts,
+deformer counts, and the like). Tooling must handle textures up
+to 8K (7680×4320) without rejecting or silently downscaling
+them; per-platform size budgets belong only in named export
+target sets, as chosen delivery settings, never as format
+limits. Where an underlying library mechanism has a practical
+internal limit below these targets, it is named in the phase
+report as a measured upstream limit — never silently capped.
 
 | Tool | Posture | What it does |
 |---|---|---|
