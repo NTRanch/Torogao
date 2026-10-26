@@ -8,6 +8,7 @@ description = "The Torogao command-line tools: the registry, MCP and A2A servers
 
 [dependencies]
 serde_json = { workspace = true }
+sha2 = "0.10"
 torogao-engine = { path = "../torogao-engine" }
 torogao-format = { path = "../torogao-format" }
 

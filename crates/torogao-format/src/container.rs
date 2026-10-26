@@ -180,40 +180,42 @@ pub fn read_inp(bytes: &[u8]) -> FormatResult<InpFile> {
     let mut trailing_bytes = 0usize;
     if at < bytes.len() {
         if at + 8 > bytes.len() || &bytes[at..at + 8] != EXT_MAGIC {
+            // Bytes that are not an EXT region are not the
+            // loader's concern: the reference loader returns
+            // the puppet and the scan reports `ok: false`.
             scan_ok = false;
         } else {
+            // An EXT region that IS present must parse fully:
+            // the reference loader walks it and a truncated
+            // region throws there, so it is malformed here.
             at += 8;
             if at + 4 > bytes.len() {
-                scan_ok = false;
-            } else {
-                let count = get_be(bytes, at) as usize;
+                return Err(malformed("EXT section is truncated"));
+            }
+            let count = get_be(bytes, at) as usize;
+            at += 4;
+            for _ in 0..count {
+                if at + 4 > bytes.len() {
+                    return Err(malformed("EXT section entry is truncated"));
+                }
+                let name_len = get_be(bytes, at) as usize;
                 at += 4;
-                for _ in 0..count {
-                    if at + 4 > bytes.len() {
-                        scan_ok = false;
-                        break;
-                    }
-                    let name_len = get_be(bytes, at) as usize;
-                    at += 4;
-                    if at + name_len + 4 > bytes.len() {
-                        scan_ok = false;
-                        break;
-                    }
-                    let name = String::from_utf8_lossy(&bytes[at..at + name_len]).into_owned();
-                    at += name_len;
-                    let data_len = get_be(bytes, at) as usize;
-                    at += 4;
-                    if at + data_len > bytes.len() {
-                        scan_ok = false;
-                        break;
-                    }
-                    let data = bytes[at..at + data_len].to_vec();
-                    at += data_len;
-                    ext_sections.push(ExtSection { name, data });
+                if at + name_len + 4 > bytes.len() {
+                    return Err(malformed("EXT section name is truncated"));
                 }
-                if scan_ok && at < bytes.len() {
-                    trailing_bytes = bytes.len() - at;
+                let name = String::from_utf8_lossy(&bytes[at..at + name_len]).into_owned();
+                at += name_len;
+                let data_len = get_be(bytes, at) as usize;
+                at += 4;
+                if at + data_len > bytes.len() {
+                    return Err(malformed("EXT section payload is truncated"));
                 }
+                let data = bytes[at..at + data_len].to_vec();
+                at += data_len;
+                ext_sections.push(ExtSection { name, data });
+            }
+            if at < bytes.len() {
+                trailing_bytes = bytes.len() - at;
             }
         }
     }

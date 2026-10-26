@@ -90,6 +90,10 @@ pub struct Puppet {
     pub root_parts: Vec<usize>,
     /// Embedded texture slots (non-empty only).
     pub texture_slots: Vec<TextureSlotInfo>,
+    /// EXT sections by name, in file order (the reference
+    /// stores them in a map where a later duplicate wins;
+    /// lookups here scan from the end).
+    pub ext_data: Vec<(String, Vec<u8>)>,
     /// The puppet transform (identity in the CLI profile).
     pub transform: Transform,
     /// Whether parameter evaluation runs.
@@ -388,6 +392,11 @@ impl Puppet {
             driven: HashMap::new(),
             root_parts: Vec::new(),
             texture_slots,
+            ext_data: inp
+                .ext_sections
+                .iter()
+                .map(|section| (section.name.clone(), section.data.clone()))
+                .collect(),
             transform: Transform::default(),
             render_parameters: true,
             enable_drivers: true,
@@ -714,6 +723,16 @@ impl Puppet {
     /// Finds a parameter's index by name (first match).
     pub fn param_index(&self, name: &str) -> Option<usize> {
         self.params.iter().position(|p| p.name == name)
+    }
+
+    /// The raw bytes of a named EXT section (last one wins,
+    /// as in the reference's map).
+    pub fn ext_section(&self, name: &str) -> Option<&[u8]> {
+        self.ext_data
+            .iter()
+            .rev()
+            .find(|(n, _)| n == name)
+            .map(|(_, data)| data.as_slice())
     }
 
     /// Whether a parameter is driven by a driver.
