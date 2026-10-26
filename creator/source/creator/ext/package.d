@@ -8,6 +8,7 @@
 module creator.ext;
 public import creator.ext.nodes;
 public import creator.ext.param;
+public import creator.ext.assist;
 import inochi2d;
 
 import std.algorithm.searching : countUntil;

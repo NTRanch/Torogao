@@ -143,6 +143,7 @@ void incUpdate() {
 
             incHandleShortcuts();
             incMainMenu();
+            incAssistPoll();
             incToolbar();
 
             incUpdatePanels();
@@ -167,6 +168,7 @@ void incUpdateNoEv() {
 
             incHandleShortcuts();
             incMainMenu();
+            incAssistPoll();
             incToolbar();
 
             incUpdatePanels();

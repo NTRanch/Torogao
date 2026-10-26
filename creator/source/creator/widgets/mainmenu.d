@@ -509,6 +509,18 @@ void incMainMenu() {
                     }
                     incTooltip(_("Attempts to verify and repair INP files"));
 
+                    // Spacing
+                    igSpacing();
+                    igSpacing();
+
+                    igTextColored(ImVec4(0.7, 0.5, 0.5, 1), __("Agent"));
+                    igSeparator();
+
+                    if (igMenuItem(__("Validate Project via Agent..."), "", false, true)) {
+                        incAssistValidateProject();
+                    }
+                    incTooltip(_("Runs this project's validation through Torogao's agent tool surface — the same validate tool external agents drive over MCP and A2A — and shows the result here."));
+
                     igEndMenu();
                 }
 
