@@ -8,7 +8,7 @@ use crate::animation::Animation;
 use crate::automation::Automation;
 use crate::math::{Vec2, Vec3, Vec4};
 use crate::node::{MaskBinding, MeshData, Node, NodeArena, PhysicsState, SimplePhysicsState};
-use crate::param::{apply_binding, Parameter};
+use crate::param::{Parameter, apply_binding};
 use crate::physics::{Pendulum, PendulumIo, SpringIo, SpringPendulum};
 use crate::transform::Transform;
 use serde_json::Value;
@@ -304,8 +304,10 @@ fn build_node(
             node.masks = masks_of(raw);
         }
         NodeKind::SimplePhysics => {
-            let mut state = SimplePhysicsState::default();
-            state.param_ref = jnum(raw, "param", 0.0) as u32;
+            let mut state = SimplePhysicsState {
+                param_ref: jnum(raw, "param", 0.0) as u32,
+                ..Default::default()
+            };
             // Both spellings occur in the wild: payload
             // fixtures carry the serde values ("pendulum"),
             // while the template writer emits the enum
@@ -521,8 +523,12 @@ impl Puppet {
         recurse(self, root, false);
         // selfSort: stable sort by zSort descending.
         let nodes = &self.nodes;
-        self.root_parts
-            .sort_by(|a, b| nodes.nodes[*b].zsort.partial_cmp(&nodes.nodes[*a].zsort).unwrap_or(std::cmp::Ordering::Equal));
+        self.root_parts.sort_by(|a, b| {
+            nodes.nodes[*b]
+                .zsort
+                .partial_cmp(&nodes.nodes[*a].zsort)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
     }
 
     /// One evaluation frame (the reference `Puppet.update`).
@@ -638,7 +644,11 @@ impl Puppet {
             let state = self.nodes.nodes[idx].physics.as_ref().expect("physics");
             if !state.prev_anchor_set {
                 let anchor = self.physics_anchor(idx);
-                self.nodes.nodes[idx].physics.as_mut().expect("physics").anchor = anchor;
+                self.nodes.nodes[idx]
+                    .physics
+                    .as_mut()
+                    .expect("physics")
+                    .anchor = anchor;
             }
         }
         // integration
@@ -646,26 +656,28 @@ impl Puppet {
             let (gravity, ppm) = (self.gravity, self.pixels_per_meter);
             let node = &mut self.nodes.nodes[idx];
             let state = node.physics.as_mut().expect("physics");
-            let io_gravity = state.eff_gravity(gravity, ppm);
-            let io_length = state.eff_length();
-            let io_frequency = state.eff_frequency();
-            let io_angle_damping = state.eff_angle_damping();
-            let io_length_damping = state.eff_length_damping();
+            let io = TickIo {
+                angle_damping: state.eff_angle_damping(),
+                frequency: state.eff_frequency(),
+                gravity: state.eff_gravity(gravity, ppm),
+                length: state.eff_length(),
+                length_damping: state.eff_length_damping(),
+            };
             let anchor = state.anchor;
             let fixed = state.fixed_step;
             if fixed {
                 state.fixed_remainder += h;
                 while state.fixed_remainder >= 0.01 {
-                    tick_system(state, anchor, io_gravity, io_length, io_frequency, io_angle_damping, io_length_damping, 0.01);
+                    tick_system(state, anchor, &io, 0.01);
                     state.fixed_remainder -= 0.01;
                 }
             } else {
                 let mut rest = h;
                 while rest > 0.01 {
-                    tick_system(state, anchor, io_gravity, io_length, io_frequency, io_angle_damping, io_length_damping, 0.01);
+                    tick_system(state, anchor, &io, 0.01);
                     rest -= 0.01;
                 }
-                tick_system(state, anchor, io_gravity, io_length, io_frequency, io_angle_damping, io_length_damping, rest);
+                tick_system(state, anchor, &io, rest);
             }
         }
         // updateOutputs
@@ -750,39 +762,39 @@ impl Puppet {
     }
 }
 
-fn tick_system(
-    state: &mut SimplePhysicsState,
-    anchor: Vec2,
+/// The effective per-driver physics inputs for one tick.
+struct TickIo {
+    angle_damping: f32,
+    frequency: f32,
     gravity: f32,
     length: f32,
-    frequency: f32,
-    angle_damping: f32,
     length_damping: f32,
-    h: f32,
-) {
+}
+
+fn tick_system(state: &mut SimplePhysicsState, anchor: Vec2, io: &TickIo, h: f32) {
     let Some(system) = state.system.as_mut() else {
         return;
     };
     match system {
         PhysicsState::Pendulum(pendulum) => {
-            let io = PendulumIo {
+            let pio = PendulumIo {
                 anchor,
-                gravity,
-                length,
-                angle_damping,
+                gravity: io.gravity,
+                length: io.length,
+                angle_damping: io.angle_damping,
             };
-            pendulum.tick(h, &io);
+            pendulum.tick(h, &pio);
         }
         PhysicsState::Spring(spring) => {
-            let io = SpringIo {
+            let sio = SpringIo {
                 anchor,
-                gravity,
-                length,
-                frequency,
-                angle_damping,
-                length_damping,
+                gravity: io.gravity,
+                length: io.length,
+                frequency: io.frequency,
+                angle_damping: io.angle_damping,
+                length_damping: io.length_damping,
             };
-            spring.tick(h, &io);
+            spring.tick(h, &sio);
         }
     }
 }
@@ -797,7 +809,10 @@ fn decode_animations(raw: &Value) -> Vec<(String, Animation)> {
         }
         Value::Array(items) => {
             for item in items {
-                out.push((jstr(item, "name").to_string(), Animation::from_payload(item)));
+                out.push((
+                    jstr(item, "name").to_string(),
+                    Animation::from_payload(item),
+                ));
             }
         }
         _ => {}
@@ -808,7 +823,7 @@ fn decode_animations(raw: &Value) -> Vec<(String, Animation)> {
 #[cfg(test)]
 mod tests {
     use super::{Clock, Puppet};
-    use torogao_format::{read_inp, decode_payload};
+    use torogao_format::{decode_payload, read_inp};
 
     fn rich_puppet() -> Puppet {
         let path = concat!(
@@ -832,8 +847,10 @@ mod tests {
 
     #[test]
     fn clock_tick_computes_delta() {
-        let mut clock = Clock::default();
-        clock.now = 0.5;
+        let mut clock = Clock {
+            now: 0.5,
+            ..Default::default()
+        };
         clock.tick();
         assert_eq!(clock.delta, 0.5);
         clock.now = 0.75;

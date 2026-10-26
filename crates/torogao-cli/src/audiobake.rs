@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 
-use crate::curves::{quote, CurveSeries, CurveSet};
+use crate::curves::{CurveSeries, CurveSet, quote};
 use crate::util::jget;
 use crate::wav::WavData;
 
@@ -14,15 +14,12 @@ pub fn bake_envelope(
     let mut fps: i64 = 60;
     let mut target = "AudioLevel".to_string();
     if recipe.is_object() {
-        match &jget(recipe, "fps") {
-            Value::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    fps = i;
-                } else if let Some(f) = n.as_f64() {
-                    fps = f as i64;
-                }
+        if let Value::Number(n) = &jget(recipe, "fps") {
+            if let Some(i) = n.as_i64() {
+                fps = i;
+            } else if let Some(f) = n.as_f64() {
+                fps = f as i64;
             }
-            _ => {}
         }
         if let Some(s) = jget(recipe, "target").as_str() {
             target = s.to_string();

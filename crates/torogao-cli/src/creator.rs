@@ -4,12 +4,12 @@
 //! Consent is validated against the pack's own consent
 //! model before anything is written.
 
-use crate::extdoc::{write_project_with_ext, EXT_FORMAT};
+use crate::extdoc::{EXT_FORMAT, write_project_with_ext};
 use crate::packs::{pack_expressions, pack_str};
 use crate::templates::instantiate_template;
 use crate::util::jget;
 use crate::writer::CHARACTER_FORMAT;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// TG-CREATOR-CONSENT.
 pub const TG_CREATOR_CONSENT: &str = "TG-CREATOR-CONSENT";
@@ -74,7 +74,9 @@ pub fn check_identity(identity: &Value, pack: &Value) -> Vec<CreatorProblem> {
         problems.push(CreatorProblem {
             code: TG_CREATOR_CONSENT,
             field: "consent".to_string(),
-            message: "identity record carries no consent object; the pack's consent model requires one".to_string(),
+            message:
+                "identity record carries no consent object; the pack's consent model requires one"
+                    .to_string(),
         });
         return problems;
     }

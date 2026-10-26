@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::criteria::Finding;
 use crate::curves::{CurveSeries, CurveSet};
@@ -177,7 +177,7 @@ pub fn validate_take(take: &Value, pack: &Value) -> Vec<Finding> {
 }
 
 fn value_of(frame: &Value, id: &str) -> Option<f64> {
-    jget(&jget(frame, "values"), id).as_f64()
+    jget(jget(frame, "values"), id).as_f64()
 }
 
 fn sample_at(frames: &[Value], id: &str, t: f64) -> f64 {
@@ -188,7 +188,9 @@ fn sample_at(frames: &[Value], id: &str, t: f64) -> f64 {
     let mut t1 = 0.0;
     let mut v1 = 0.0;
     for frame in frames {
-        let Some(v) = value_of(frame, id) else { continue };
+        let Some(v) = value_of(frame, id) else {
+            continue;
+        };
         let ft = pack_num(frame, "time", 0.0);
         if ft <= t {
             t0 = ft;

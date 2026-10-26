@@ -45,9 +45,9 @@ pub fn census(puppet: &Puppet, walk: &Walk) -> Value {
         if node.kind == NodeKind::MeshGroup {
             deformer_count += 1;
         }
-        let parent_uuid = w.parent.map(|parent_walk| {
-            puppet.nodes.nodes[walk.nodes[parent_walk].node].uuid
-        });
+        let parent_uuid = w
+            .parent
+            .map(|parent_walk| puppet.nodes.nodes[walk.nodes[parent_walk].node].uuid);
         node_list.push(serde_json::json!({
             "children": w.children.len(),
             "enabled": node.enabled,
@@ -224,14 +224,13 @@ pub fn project_info_doc(project_path: &str) -> Result<Value, String> {
     if 12 + payload_len > buffer.len() {
         return Err("INP payload length overruns file".to_string());
     }
-    let payload: Value =
-        match serde_json::from_slice(&buffer[12..12 + payload_len]) {
-            Ok(value) => value,
-            Err(_) => {
-                doc["payload"] = Value::Bool(false);
-                return Ok(doc);
-            }
-        };
+    let payload: Value = match serde_json::from_slice(&buffer[12..12 + payload_len]) {
+        Ok(value) => value,
+        Err(_) => {
+            doc["payload"] = Value::Bool(false);
+            return Ok(doc);
+        }
+    };
     doc["payload"] = Value::Bool(true);
     if payload.is_object() {
         if let Some(meta) = payload.get("meta") {
@@ -263,10 +262,7 @@ pub fn project_info_doc(project_path: &str) -> Result<Value, String> {
         _ => {}
     }
     if let Some(Value::Object(param)) = payload.get("param") {
-        counts.insert(
-            "parameterSections".to_string(),
-            Value::from(param.len()),
-        );
+        counts.insert("parameterSections".to_string(), Value::from(param.len()));
     }
     doc["counts"] = Value::Object(counts);
 

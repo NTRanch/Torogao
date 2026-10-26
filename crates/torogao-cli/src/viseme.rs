@@ -3,12 +3,12 @@
 
 use std::collections::BTreeMap;
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use torogao_engine::Puppet;
 
 pub use crate::criteria::Finding;
-use crate::curves::{quote, CurveSet};
+use crate::curves::{CurveSet, quote};
 use crate::paths::find_data_file;
 use crate::util::{jget, jstr};
 
@@ -36,7 +36,7 @@ fn num_of(v: &Value) -> Option<f64> {
 
 /// D `getD`: numeric field or fallback.
 fn get_d(v: &Value, key: &str, fallback: f64) -> f64 {
-    num_of(&jget(v, key)).unwrap_or(fallback)
+    num_of(jget(v, key)).unwrap_or(fallback)
 }
 
 /// fps fields: integer or float casts count; unsigned integers do not.
@@ -64,10 +64,10 @@ pub fn load_viseme_contract(explicit_path: &str) -> Result<VisemeContract, Strin
     } else {
         explicit_path.to_string()
     };
-    let text = std::fs::read_to_string(&path)
-        .map_err(|e| format!("viseme contract unreadable: {e}"))?;
-    let doc: Value = serde_json::from_str(&text)
-        .map_err(|e| format!("viseme contract unreadable: {e}"))?;
+    let text =
+        std::fs::read_to_string(&path).map_err(|e| format!("viseme contract unreadable: {e}"))?;
+    let doc: Value =
+        serde_json::from_str(&text).map_err(|e| format!("viseme contract unreadable: {e}"))?;
     if jstr(&doc, "format") != "torogao-visemes/1" {
         return Err("viseme contract format must be \"torogao-visemes/1\"".to_string());
     }
@@ -152,12 +152,12 @@ pub fn bake_visemes(track: &Value, contract: &VisemeContract) -> Result<CurveSet
     if !track.is_object() || jstr(track, "format") != "torogao-viseme-track/1" {
         return Err("track format must be \"torogao-viseme-track/1\"".to_string());
     }
-    let fps: i64 = fps_of(&jget(track, "fps")).unwrap_or(60);
+    let fps: i64 = fps_of(jget(track, "fps")).unwrap_or(60);
     if ![15, 30, 60, 120].contains(&fps) {
         return Err("track fps must be one of 15, 30, 60, 120".to_string());
     }
     let duration = get_d(track, "durationSeconds", 0.0);
-    if !(duration > 0.0) {
+    if duration <= 0.0 {
         return Err("track durationSeconds (positive) is required".to_string());
     }
     let blend = get_d(track, "blendSeconds", 0.06);
@@ -173,7 +173,9 @@ pub fn bake_visemes(track: &Value, contract: &VisemeContract) -> Result<CurveSet
         for e in arr {
             let viseme = jstr(e, "viseme").to_string();
             if !contract.targets.contains_key(&viseme) {
-                return Err(format!("unknown viseme '{viseme}' (not in the contract set)"));
+                return Err(format!(
+                    "unknown viseme '{viseme}' (not in the contract set)"
+                ));
             }
             events.push(BakeEvent {
                 viseme,
@@ -181,7 +183,11 @@ pub fn bake_visemes(track: &Value, contract: &VisemeContract) -> Result<CurveSet
             });
         }
     }
-    events.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap_or(std::cmp::Ordering::Equal));
+    events.sort_by(|a, b| {
+        a.start
+            .partial_cmp(&b.start)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let steps = (duration * fps as f64 + 0.5) as usize;
     let dt = 1.0 / fps as f64;
     let sil = &contract.targets["sil"];
@@ -194,29 +200,32 @@ pub fn bake_visemes(track: &Value, contract: &VisemeContract) -> Result<CurveSet
     }
     let mut blend_start = 0.0f64;
     let mut blending = false;
-fn value_at(
-    held: &BTreeMap<String, f64>,
-    blend_from: &BTreeMap<String, f64>,
-    blending: bool,
-    blend: f64,
-    blend_start: f64,
-    p: &str,
-    t: f64,
-) -> f64 {
-    if !blending || blend == 0.0 {
-        return held[p];
+    fn value_at(
+        held: &BTreeMap<String, f64>,
+        blend_from: &BTreeMap<String, f64>,
+        blending: bool,
+        blend: f64,
+        blend_start: f64,
+        p: &str,
+        t: f64,
+    ) -> f64 {
+        if !blending || blend == 0.0 {
+            return held[p];
+        }
+        let k = (t - blend_start) / blend;
+        if k >= 1.0 {
+            held[p]
+        } else if k <= 0.0 {
+            blend_from[p]
+        } else {
+            blend_from[p] + (held[p] - blend_from[p]) * k
+        }
     }
-    let k = (t - blend_start) / blend;
-    if k >= 1.0 {
-        held[p]
-    } else if k <= 0.0 {
-        blend_from[p]
-    } else {
-        blend_from[p] + (held[p] - blend_from[p]) * k
-    }
-}
-    let mut series_values: Vec<Vec<f64>> =
-        contract.parameters.iter().map(|_| Vec::with_capacity(steps)).collect();
+    let mut series_values: Vec<Vec<f64>> = contract
+        .parameters
+        .iter()
+        .map(|_| Vec::with_capacity(steps))
+        .collect();
     let mut next = 0usize;
     for step in 0..steps {
         let t = step as f64 * dt;
@@ -226,7 +235,17 @@ fn value_at(
             let snapshot: Vec<f64> = contract
                 .parameters
                 .iter()
-                .map(|p| value_at(&held, &blend_from, blending, blend, blend_start, p, ev.start))
+                .map(|p| {
+                    value_at(
+                        &held,
+                        &blend_from,
+                        blending,
+                        blend,
+                        blend_start,
+                        p,
+                        ev.start,
+                    )
+                })
                 .collect();
             for (i, p) in contract.parameters.iter().enumerate() {
                 blend_from.insert(p.clone(), snapshot[i]);
@@ -263,9 +282,10 @@ pub fn author_viseme_track(spec: &Value, contract: &VisemeContract) -> Result<Va
         return Err("spec format must be \"torogao-viseme-authoring/1\"".to_string());
     }
     let events_v = jget(spec, "events");
-    let arr = events_v.as_array().filter(|a| !a.is_empty()).ok_or_else(|| {
-        "spec events must be a non-empty array".to_string()
-    })?;
+    let arr = events_v
+        .as_array()
+        .filter(|a| !a.is_empty())
+        .ok_or_else(|| "spec events must be a non-empty array".to_string())?;
     let mut events: Vec<(String, f64, f64)> = Vec::new();
     for e in arr {
         let name = jstr(e, "viseme").to_string();
@@ -287,7 +307,8 @@ pub fn author_viseme_track(spec: &Value, contract: &VisemeContract) -> Result<Va
         if events[i].1 < events[i - 1].2 {
             return Err(format!(
                 "events '{}' and '{}' overlap",
-                events[i - 1].0, events[i].0
+                events[i - 1].0,
+                events[i].0
             ));
         }
     }
@@ -299,7 +320,7 @@ pub fn author_viseme_track(spec: &Value, contract: &VisemeContract) -> Result<Va
     if duration < last_end {
         return Err("durationSeconds ends before the last event".to_string());
     }
-    let fps: i64 = fps_of(&jget(spec, "fps")).unwrap_or(60);
+    let fps: i64 = fps_of(jget(spec, "fps")).unwrap_or(60);
     if ![15, 30, 60, 120].contains(&fps) {
         return Err("fps must be one of 15, 30, 60, 120".to_string());
     }
@@ -334,7 +355,7 @@ pub fn validate_viseme_track(track: &Value, contract: &VisemeContract) -> Vec<Fi
         ));
         return findings;
     }
-    if !(get_d(track, "durationSeconds", 0.0) > 0.0) {
+    if get_d(track, "durationSeconds", 0.0) <= 0.0 {
         findings.push(Finding::new(
             TG_VISEME_TRACK_FORMAT,
             "error",

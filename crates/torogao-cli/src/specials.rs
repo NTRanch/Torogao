@@ -5,18 +5,16 @@
 //! name (the reference's args[1]).
 
 use crate::creator::create_character;
-use crate::extdoc::{
-    validate_hit_areas_only, write_project_with_ext, ExtView, EXT_FORMAT,
-};
-use crate::guards::{guard_output, load_project, TG_CONTAINER_MALFORMED};
+use crate::extdoc::{EXT_FORMAT, ExtView, validate_hit_areas_only, write_project_with_ext};
+use crate::guards::{TG_CONTAINER_MALFORMED, guard_output, load_project};
 use crate::packs::{load_pack, pack_names};
 use crate::templates::{instantiate_template, list_templates};
 use crate::util::jget;
 use crate::walk::Walk;
 use crate::writer::{
-    build_scaffold, load_json_file, load_sfx_index, validate_voice, ScaffoldOutcome,
+    ScaffoldOutcome, build_scaffold, load_json_file, load_sfx_index, validate_voice,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::Write;
 use torogao_format::jsonfmt::to_d_json;
 
@@ -40,11 +38,7 @@ fn refusal_doc(extra: &[(&str, Value)], code: &str, message: &str) -> Value {
 }
 
 /// Runs a special subcommand, if `args` names one.
-pub fn run_special(
-    args: &[String],
-    out: &mut dyn Write,
-    err: &mut dyn Write,
-) -> Option<i32> {
+pub fn run_special(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> Option<i32> {
     match args.first().map(String::as_str) {
         Some("audio-bake") => Some(cmd_audio_bake(args, out, err)),
         Some("audio-build-session") => Some(cmd_audio_build_session(args, out, err)),
@@ -76,19 +70,31 @@ pub fn run_special(
 /// The P5 subcommand family's interception (runs before
 /// the other specials, as in the reference's main).
 /// Returns None when the invocation is not a P5 command.
-pub fn run_p5_cli(
-    args: &[String],
-    out: &mut dyn Write,
-    err: &mut dyn Write,
-) -> Option<i32> {
+pub fn run_p5_cli(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> Option<i32> {
     match args.first().map(String::as_str) {
         Some(
-            "scene-info" | "scene-validate" | "fluid-sim" | "effects-validate"
-            | "effects-compile" | "playroom-open" | "playroom-set" | "playroom-compose"
-            | "playroom-create" | "prefset-list" | "prefset-save" | "prefset-apply"
-            | "tracking-validate" | "tracking-bake" | "gaze-take" | "glb-info"
-            | "glb-expression-check" | "glb-resolve-expression" | "video-validate"
-            | "video-build" | "video-tempo" | "video-export",
+            "scene-info"
+            | "scene-validate"
+            | "fluid-sim"
+            | "effects-validate"
+            | "effects-compile"
+            | "playroom-open"
+            | "playroom-set"
+            | "playroom-compose"
+            | "playroom-create"
+            | "prefset-list"
+            | "prefset-save"
+            | "prefset-apply"
+            | "tracking-validate"
+            | "tracking-bake"
+            | "gaze-take"
+            | "glb-info"
+            | "glb-expression-check"
+            | "glb-resolve-expression"
+            | "video-validate"
+            | "video-build"
+            | "video-tempo"
+            | "video-export",
         ) => Some(p5_dispatch(args, out, err)),
         _ => None,
     }
@@ -177,12 +183,8 @@ fn p5_dispatch(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32
         "prefset-list" => p5_prefset_list(args, out),
         "prefset-save" => p5_prefset_save(args, out, err),
         "prefset-apply" => p5_prefset_apply(args, out, err),
-        "gaze-take" | "tracking-validate" | "tracking-bake" => {
-            p5_tracking(args, out, err)
-        }
-        "glb-info" | "glb-expression-check" | "glb-resolve-expression" => {
-            p5_glb(args, out, err)
-        }
+        "gaze-take" | "tracking-validate" | "tracking-bake" => p5_tracking(args, out, err),
+        "glb-info" | "glb-expression-check" | "glb-resolve-expression" => p5_glb(args, out, err),
         "video-validate" | "video-build" | "video-tempo" | "video-export" => {
             p5_video(args, out, err)
         }
@@ -234,11 +236,7 @@ fn p5_scene(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let doc = p5_findings_doc(&findings);
     let valid = doc["result"] == "valid";
     print_doc(out, &doc);
-    if valid {
-        0
-    } else {
-        1
-    }
+    if valid { 0 } else { 1 }
 }
 
 fn p5_fluid_sim(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
@@ -290,12 +288,12 @@ fn p5_fluid_sim(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i3
     let mut runs: Vec<Value> = Vec::new();
     if let Some(emitters) = jget(&scene, "fluids").as_array() {
         for emitter in emitters {
-            if !emitter_id.is_empty()
-                && crate::packs::pack_str(emitter, "id") != emitter_id
-            {
+            if !emitter_id.is_empty() && crate::packs::pack_str(emitter, "id") != emitter_id {
                 continue;
             }
-            runs.push(crate::fluids::simulate_fluid(emitter, &areas, seconds, &face));
+            runs.push(crate::fluids::simulate_fluid(
+                emitter, &areas, seconds, &face,
+            ));
         }
     }
     if runs.is_empty() {
@@ -424,10 +422,7 @@ fn p5_playroom_open_create(args: &[String], out: &mut dyn Write, err: &mut dyn W
             session["expressionState"] = json!(state);
         }
         let _ = crate::playroom::save_session(&session_path, &session);
-        print_doc(
-            out,
-            &json!({"result": "opened", "session": session_path}),
-        );
+        print_doc(out, &json!({"result": "opened", "session": session_path}));
         return 0;
     }
     let identity_path = opt_value(args, "--identity");
@@ -489,10 +484,7 @@ fn p5_playroom_open_create(args: &[String], out: &mut dyn Write, err: &mut dyn W
         Err((problems, create_error)) => {
             if !problems.is_empty() {
                 let rows: Vec<Value> = problems.iter().map(|p| p.to_json()).collect();
-                print_doc(
-                    out,
-                    &json!({"problems": rows, "result": "invalid"}),
-                );
+                print_doc(out, &json!({"problems": rows, "result": "invalid"}));
                 1
             } else {
                 let _ = writeln!(err, "{create_error}");
@@ -519,17 +511,12 @@ fn p5_playroom_set(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
     };
     let field = opt_value(args, "--field");
     let value = opt_value(args, "--value");
-    if let Some(problem) =
-        crate::playroom::apply_session_field(&mut session, &field, &value)
-    {
+    if let Some(problem) = crate::playroom::apply_session_field(&mut session, &field, &value) {
         let _ = writeln!(err, "{problem}");
         return 1;
     }
     let _ = crate::playroom::write_session_direct(&args[1], &session);
-    print_doc(
-        out,
-        &json!({"result": "updated", "session": args[1]}),
-    );
+    print_doc(out, &json!({"result": "updated", "session": args[1]}));
     0
 }
 
@@ -662,10 +649,7 @@ fn p5_prefset_save(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
     }
     let _ = std::fs::create_dir_all(&dir);
     let _ = std::fs::write(&path, format!("{}\n", to_d_json(&set)));
-    print_doc(
-        out,
-        &json!({"path": path, "result": "saved", "set": name}),
-    );
+    print_doc(out, &json!({"path": path, "result": "saved", "set": name}));
     0
 }
 
@@ -703,16 +687,12 @@ fn p5_prefset_apply(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -
         .iter()
         .map(|w| load.loaded.puppet.nodes.nodes[w.node].name.clone())
         .collect();
-    let wardrobe =
-        crate::playroom::load_wardrobe(&crate::packs::pack_str(&session, "pack"))
-            .unwrap_or(Value::Null);
+    let wardrobe = crate::playroom::load_wardrobe(&crate::packs::pack_str(&session, "pack"))
+        .unwrap_or(Value::Null);
     if let Some(problem) =
         crate::playroom::apply_prefset(&mut session, &set, &wardrobe, &part_names)
     {
-        print_doc(
-            out,
-            &json!({"error": problem, "result": "refused"}),
-        );
+        print_doc(out, &json!({"error": problem, "result": "refused"}));
         return 1;
     }
     let _ = crate::playroom::write_session_direct(&args[1], &session);
@@ -772,10 +752,7 @@ fn p5_tracking(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32
         }
         let take = crate::tracking::generate_gaze_take(&targets, &set_id, seed, seconds);
         let _ = std::fs::write(&out_path, format!("{}\n", to_d_json(&take)));
-        print_doc(
-            out,
-            &json!({"out": out_path, "result": "generated"}),
-        );
+        print_doc(out, &json!({"out": out_path, "result": "generated"}));
         return 0;
     }
     if args.len() < 2 {
@@ -813,11 +790,7 @@ fn p5_tracking(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32
         let _ = writeln!(err, "tracking-bake requires --out");
         return 3;
     }
-    if let Err(r) = guard_output(
-        &out_path,
-        &[args[1].as_str()],
-        opt_flag(args, "--force"),
-    ) {
+    if let Err(r) = guard_output(&out_path, &[args[1].as_str()], opt_flag(args, "--force")) {
         print_refusal(out, &r);
         return 1;
     }
@@ -879,17 +852,11 @@ fn p5_glb(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         };
         return match crate::glb::resolve_expression(&map, &opt_value(args, "--name")) {
             Ok(morphs) => {
-                print_doc(
-                    out,
-                    &json!({"morphs": morphs, "result": "resolved"}),
-                );
+                print_doc(out, &json!({"morphs": morphs, "result": "resolved"}));
                 0
             }
             Err(e) => {
-                print_doc(
-                    out,
-                    &json!({"error": e, "result": "unresolved"}),
-                );
+                print_doc(out, &json!({"error": e, "result": "unresolved"}));
                 1
             }
         };
@@ -901,10 +868,7 @@ fn p5_glb(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let info = match crate::glb::load_glb(&glb_path) {
         Ok(i) => i,
         Err(e) => {
-            print_doc(
-                out,
-                &json!({"error": e, "result": "unreadable"}),
-            );
+            print_doc(out, &json!({"error": e, "result": "unreadable"}));
             return 2;
         }
     };
@@ -947,11 +911,7 @@ fn p5_glb(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             "result": if complete { "complete" } else { "incomplete" },
         }),
     );
-    if complete {
-        0
-    } else {
-        1
-    }
+    if complete { 0 } else { 1 }
 }
 
 fn p5_video(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
@@ -976,11 +936,7 @@ fn p5_video(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             let _ = writeln!(err, "video-build requires --out");
             return 3;
         }
-        if let Err(r) = guard_output(
-            &out_path,
-            &[args[1].as_str()],
-            opt_flag(args, "--force"),
-        ) {
+        if let Err(r) = guard_output(&out_path, &[args[1].as_str()], opt_flag(args, "--force")) {
             print_refusal(out, &r);
             return 1;
         }
@@ -1130,11 +1086,7 @@ fn cmd_voice_check(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
             "result": if findings.is_empty() { "clean" } else { "findings" },
         }),
     );
-    if findings.is_empty() {
-        0
-    } else {
-        1
-    }
+    if findings.is_empty() { 0 } else { 1 }
 }
 
 fn cmd_create_character(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
@@ -1310,11 +1262,7 @@ fn cmd_writer_scaffold(args: &[String], out: &mut dyn Write, err: &mut dyn Write
         let _ = std::fs::write(&out_path, format!("{}\n", to_d_json(&doc)));
     }
     print_doc(out, &doc);
-    if is_gap {
-        1
-    } else {
-        0
-    }
+    if is_gap { 1 } else { 0 }
 }
 
 fn cmd_hitareas_author(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
@@ -1390,7 +1338,11 @@ fn cmd_hitareas_author(args: &[String], out: &mut dyn Write, err: &mut dyn Write
     };
     let walk = Walk::build(&mut loaded.puppet);
     let view = ExtView::of_project(&loaded);
-    let mut ext = if view.present { view.doc.clone() } else { Value::Null };
+    let mut ext = if view.present {
+        view.doc.clone()
+    } else {
+        Value::Null
+    };
     if !ext.is_object() {
         ext = json!({ "format": EXT_FORMAT });
     }
@@ -1493,11 +1445,7 @@ fn cmd_instantiate_template(args: &[String], out: &mut dyn Write, err: &mut dyn 
     if let Err(refusal) = guard_output(&out_path, &[], force) {
         print_doc(
             out,
-            &refusal_doc(
-                &[("template", json!(name))],
-                refusal.code,
-                &refusal.message,
-            ),
+            &refusal_doc(&[("template", json!(name))], refusal.code, &refusal.message),
         );
         return 1;
     }
@@ -1550,16 +1498,15 @@ fn cmd_audio_validate(args: &[String], out: &mut dyn Write, err: &mut dyn Write)
             "result": if has_error { "findings" } else { "clean" },
         }),
     );
-    if has_error {
-        1
-    } else {
-        0
-    }
+    if has_error { 1 } else { 0 }
 }
 
 fn cmd_audio_validate_session(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     if args.len() < 2 {
-        let _ = writeln!(err, "usage: torogao-cli audio-validate-session <session.json>");
+        let _ = writeln!(
+            err,
+            "usage: torogao-cli audio-validate-session <session.json>"
+        );
         return 3;
     }
     let session = match read_json_file(&args[1]) {
@@ -1579,11 +1526,7 @@ fn cmd_audio_validate_session(args: &[String], out: &mut dyn Write, err: &mut dy
             "result": if findings.is_empty() { "clean" } else { "findings" },
         }),
     );
-    if has_error {
-        1
-    } else {
-        0
-    }
+    if has_error { 1 } else { 0 }
 }
 
 fn cmd_audio_build_session(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
@@ -1807,12 +1750,12 @@ fn cmd_audio_bake(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> 
             return 3;
         }
     };
-    if let Err(refusal) = guard_output(
-        &bake_out,
-        &[args[1].as_str(), recipe_path.as_str()],
-        force,
-    ) {
-        print_doc(out, &refusal_doc(&[("file", json!(args[1]))], refusal.code, &refusal.message));
+    if let Err(refusal) = guard_output(&bake_out, &[args[1].as_str(), recipe_path.as_str()], force)
+    {
+        print_doc(
+            out,
+            &refusal_doc(&[("file", json!(args[1]))], refusal.code, &refusal.message),
+        );
         return 1;
     }
     let curves = match crate::audiobake::bake_envelope(&wav, &recipe, &args[1]) {
@@ -1897,11 +1840,7 @@ fn cmd_viseme_check(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -
             "result": if findings.is_empty() { "clean" } else { "findings" },
         }),
     );
-    if findings.is_empty() {
-        0
-    } else {
-        1
-    }
+    if findings.is_empty() { 0 } else { 1 }
 }
 
 fn cmd_lipsync_analyze(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
@@ -1940,7 +1879,10 @@ fn cmd_lipsync_analyze(args: &[String], out: &mut dyn Write, err: &mut dyn Write
         }
     };
     if let Err(refusal) = guard_output(&proposal_out, &[args[1].as_str()], force) {
-        print_doc(out, &refusal_doc(&[("file", json!(args[1]))], refusal.code, &refusal.message));
+        print_doc(
+            out,
+            &refusal_doc(&[("file", json!(args[1]))], refusal.code, &refusal.message),
+        );
         return 1;
     }
     let proposal = match crate::lipsync::analyze_lipsync(&args[1], &contract) {
@@ -2014,7 +1956,10 @@ fn cmd_viseme_author(args: &[String], out: &mut dyn Write, err: &mut dyn Write) 
         }
     };
     if let Err(refusal) = guard_output(&author_out, &[args[1].as_str()], force) {
-        print_doc(out, &refusal_doc(&[("file", json!(args[1]))], refusal.code, &refusal.message));
+        print_doc(
+            out,
+            &refusal_doc(&[("file", json!(args[1]))], refusal.code, &refusal.message),
+        );
         return 1;
     }
     let track = match crate::viseme::author_viseme_track(&spec, &contract) {
@@ -2108,11 +2053,7 @@ fn cmd_viseme_validate(args: &[String], out: &mut dyn Write, err: &mut dyn Write
             "track": args[1],
         }),
     );
-    if has_error {
-        1
-    } else {
-        0
-    }
+    if has_error { 1 } else { 0 }
 }
 
 fn cmd_viseme_bake(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
@@ -2158,7 +2099,10 @@ fn cmd_viseme_bake(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
         }
     };
     if let Err(refusal) = guard_output(&bake_out, &[args[1].as_str()], force) {
-        print_doc(out, &refusal_doc(&[("file", json!(args[1]))], refusal.code, &refusal.message));
+        print_doc(
+            out,
+            &refusal_doc(&[("file", json!(args[1]))], refusal.code, &refusal.message),
+        );
         return 1;
     }
     let curves = match crate::viseme::bake_visemes(&track, &contract) {
@@ -2231,11 +2175,7 @@ fn cmd_events_author(args: &[String], out: &mut dyn Write, err: &mut dyn Write) 
             return 3;
         }
     };
-    if let Err(refusal) = guard_output(
-        &ev_out,
-        &[args[1].as_str(), spec_path.as_str()],
-        force,
-    ) {
+    if let Err(refusal) = guard_output(&ev_out, &[args[1].as_str(), spec_path.as_str()], force) {
         print_doc(out, &refusal_doc(&[], refusal.code, &refusal.message));
         return 1;
     }
@@ -2255,7 +2195,11 @@ fn cmd_events_author(args: &[String], out: &mut dyn Write, err: &mut dyn Write) 
         }
     };
     let view = ExtView::of_project(&loaded);
-    let mut ext = if view.present { view.doc.clone() } else { Value::Null };
+    let mut ext = if view.present {
+        view.doc.clone()
+    } else {
+        Value::Null
+    };
     if !ext.is_object() {
         ext = json!({ "format": EXT_FORMAT });
     }
@@ -2400,11 +2344,8 @@ fn cmd_writer_draft(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -
         }
     };
     if !w_out.is_empty() {
-        if let Err(refusal) = guard_output(
-            &w_out,
-            &[char_path.as_str(), lane_path.as_str()],
-            force,
-        ) {
+        if let Err(refusal) = guard_output(&w_out, &[char_path.as_str(), lane_path.as_str()], force)
+        {
             print_doc(out, &refusal_doc(&[], refusal.code, &refusal.message));
             return 1;
         }
@@ -2412,11 +2353,7 @@ fn cmd_writer_draft(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -
         let _ = std::fs::write(&w_out, format!("{text}\n"));
     }
     print_doc(out, &doc);
-    if is_draft {
-        0
-    } else {
-        1
-    }
+    if is_draft { 0 } else { 1 }
 }
 
 fn cmd_tutorial_list(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
@@ -2563,7 +2500,7 @@ fn cmd_tutorial_check(args: &[String], out: &mut dyn Write, err: &mut dyn Write)
         &loaded.payload.clone(),
         slot_count,
         &pack,
-        &jget(&lesson, "check"),
+        jget(&lesson, "check"),
         &view,
     );
     let mut doc = json!({
@@ -2601,9 +2538,5 @@ fn cmd_tutorial_check(args: &[String], out: &mut dyn Write, err: &mut dyn Write)
         doc["xpTotal"] = jget(&progress, "xpTotal").clone();
     }
     print_doc(out, &doc);
-    if outcome.passed {
-        0
-    } else {
-        1
-    }
+    if outcome.passed { 0 } else { 1 }
 }

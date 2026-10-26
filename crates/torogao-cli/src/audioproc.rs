@@ -2,7 +2,7 @@
 //! BS.1770 loudness and true-peak measurement, rendering —
 //! ported from the D `torogao.audio.proc` module.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::criteria::Finding;
 use crate::util::{jget, jstr};
@@ -98,7 +98,7 @@ impl Xoshiro256 {
 
 pub fn validate_recipe(recipe: &Value) -> Vec<Finding> {
     let mut findings = Vec::new();
-    let mut add = |code: &'static str, message: String, findings: &mut Vec<Finding>| {
+    let add = |code: &'static str, message: String, findings: &mut Vec<Finding>| {
         findings.push(Finding::new(code, "error", String::new(), message));
     };
     if !recipe.is_object() {
@@ -116,7 +116,7 @@ pub fn validate_recipe(recipe: &Value) -> Vec<Finding> {
             &mut findings,
         );
     }
-    if !is_int_like(&jget(recipe, "seed")) {
+    if !is_int_like(jget(recipe, "seed")) {
         add(
             TG_AUDIO_SEED,
             "seed (integer) is required; rendering must be seeded".to_string(),
@@ -124,7 +124,7 @@ pub fn validate_recipe(recipe: &Value) -> Vec<Finding> {
         );
     }
     let duration = get_d(recipe, "durationSeconds", 0.0);
-    if !(duration > 0.0) || duration > 600.0 {
+    if duration <= 0.0 || duration > 600.0 {
         add(
             TG_AUDIO_DURATION,
             "durationSeconds must be in (0, 600]".to_string(),
@@ -177,7 +177,7 @@ pub fn validate_recipe(recipe: &Value) -> Vec<Finding> {
         match ty {
             "sine" | "tone" => {
                 let f = get_d(stem, "freqHz", 0.0);
-                if !(f > 0.0) || f > 20000.0 {
+                if f <= 0.0 || f > 20000.0 {
                     add(
                         TG_AUDIO_FREQ,
                         format!("{prefix}freqHz must be in (0, 20000]"),
@@ -187,7 +187,7 @@ pub fn validate_recipe(recipe: &Value) -> Vec<Finding> {
             }
             "binaural" => {
                 let f = get_d(stem, "baseHz", 0.0);
-                if !(f > 0.0) || f > 20000.0 {
+                if f <= 0.0 || f > 20000.0 {
                     add(
                         TG_AUDIO_FREQ,
                         format!("{prefix}baseHz must be in (0, 20000]"),
@@ -205,7 +205,7 @@ pub fn validate_recipe(recipe: &Value) -> Vec<Finding> {
             }
             "noise" => {
                 let f = get_d(stem, "cutoffHz", 0.0);
-                if !(f > 0.0) || f > 20000.0 {
+                if f <= 0.0 || f > 20000.0 {
                     add(
                         TG_AUDIO_FREQ,
                         format!("{prefix}cutoffHz must be in (0, 20000]"),
@@ -217,8 +217,8 @@ pub fn validate_recipe(recipe: &Value) -> Vec<Finding> {
         }
         let env = jget(stem, "envelope");
         if env.is_object() {
-            let attack = get_d(&env, "attackSeconds", 0.0);
-            let release = get_d(&env, "releaseSeconds", 0.0);
+            let attack = get_d(env, "attackSeconds", 0.0);
+            let release = get_d(env, "releaseSeconds", 0.0);
             if attack < 0.0 || release < 0.0 {
                 add(
                     TG_AUDIO_ENVELOPE,
@@ -259,7 +259,11 @@ impl KWeight {
     }
 
     fn process(&mut self, x0: f64) -> f64 {
-        const B1: [f64; 3] = [1.535_124_859_586_97, -2.691_696_189_406_38, 1.198_392_810_852_85];
+        const B1: [f64; 3] = [
+            1.535_124_859_586_97,
+            -2.691_696_189_406_38,
+            1.198_392_810_852_85,
+        ];
         const A1: [f64; 3] = [1.0, -1.690_659_293_182_41, 0.732_480_774_215_85];
         const B2: [f64; 3] = [1.0, -2.0, 1.0];
         const A2: [f64; 3] = [1.0, -1.990_047_454_833_98, 0.990_072_250_366_21];
@@ -383,17 +387,22 @@ pub fn measure_true_peak_db(channels: &[Vec<f64>]) -> f64 {
         let n = ch.len() as i64;
         for i in 0..n {
             peak = peak.max(ch[i as usize].abs());
-            for q in 0..3usize {
-                let mut acc = 0.0f64;
-                for k in -15..=16i64 {
-                    let idx = i + k;
-                    let s = if idx < 0 || idx >= n {
-                        0.0
-                    } else {
-                        ch[idx as usize]
-                    };
-                    acc += s * weights[(k + 15) as usize][q];
+            let mut accs = [0.0f64; 3];
+            for k in -15..=16i64 {
+                let idx = i + k;
+                let s = if idx < 0 || idx >= n {
+                    0.0
+                } else {
+                    ch[idx as usize]
+                };
+                for (acc, w) in accs
+                    .iter_mut()
+                    .zip(weights[(k + 15) as usize].iter().take(3))
+                {
+                    *acc += s * w;
                 }
+            }
+            for acc in accs {
                 peak = peak.max(acc.abs());
             }
         }
@@ -414,8 +423,8 @@ fn envelope_at(stem: &Value, t: f64, stem_dur: f64) -> f64 {
         return 0.0;
     }
     let env = jget(stem, "envelope");
-    let attack = get_d(&env, "attackSeconds", 0.0);
-    let release = get_d(&env, "releaseSeconds", 0.0);
+    let attack = get_d(env, "attackSeconds", 0.0);
+    let release = get_d(env, "releaseSeconds", 0.0);
     let mut g = 1.0f64;
     if attack > 0.0 && local < attack {
         g = local / attack;
@@ -462,23 +471,22 @@ pub fn synthesize(recipe: &Value, frames: usize) -> Vec<Vec<f64>> {
                 for n in n0..n1 {
                     let t = n as f64 / rate;
                     let e = envelope_at(stem, t, stem_dur);
-                    channels[0][n] +=
-                        gain * (2.0 * std::f64::consts::PI * fl * t).sin() * e;
-                    channels[1][n] +=
-                        gain * (2.0 * std::f64::consts::PI * fr * t).sin() * e;
+                    channels[0][n] += gain * (2.0 * std::f64::consts::PI * fl * t).sin() * e;
+                    channels[1][n] += gain * (2.0 * std::f64::consts::PI * fr * t).sin() * e;
                 }
             }
             "noise" => {
                 let cutoff = get_d(stem, "cutoffHz", 1000.0);
                 let a = 1.0 - (-2.0 * std::f64::consts::PI * cutoff / rate).exp();
                 for (ch_idx, channel) in channels.iter_mut().enumerate() {
-                    let mut rng = Xoshiro256::from_seed(seed.wrapping_add(7919 * (ch_idx as u64 + 1)));
+                    let mut rng =
+                        Xoshiro256::from_seed(seed.wrapping_add(7919 * (ch_idx as u64 + 1)));
                     let mut lp = 0.0f64;
-                    for n in 0..n1 {
+                    for (n, sample) in channel.iter_mut().enumerate().take(n1) {
                         lp += a * (rng.uniform() - lp);
                         if n >= n0 {
                             let t = n as f64 / rate;
-                            channel[n] += gain * lp * envelope_at(stem, t, stem_dur);
+                            *sample += gain * lp * envelope_at(stem, t, stem_dur);
                         }
                     }
                 }

@@ -4,8 +4,8 @@
 
 use crate::criteria::{findings_json, validate_puppet};
 use crate::extdoc::{
-    ExtView, count_glue_keys, ext_summary, rating_blocks_export, rating_stamp, validate_container_file,
-    validate_ext,
+    ExtView, count_glue_keys, ext_summary, rating_blocks_export, rating_stamp,
+    validate_container_file, validate_ext,
 };
 use crate::guards::{self, LoadedProject, load_project, payload_guarded};
 use crate::inspect::{census, project_info_doc};

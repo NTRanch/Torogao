@@ -143,12 +143,7 @@ pub fn param_ranges(puppet: &Puppet) -> Vec<(String, [f64; 2])> {
     puppet
         .params
         .iter()
-        .map(|param| {
-            (
-                param.name.clone(),
-                [param.min.x as f64, param.max.x as f64],
-            )
-        })
+        .map(|param| (param.name.clone(), [param.min.x as f64, param.max.x as f64]))
         .collect()
 }
 
@@ -299,9 +294,7 @@ pub fn rating_verdict(ext: &ExtView) -> RatingVerdict {
         if !ok {
             return incomplete(
                 TG_RATING_STAMP_MISSING,
-                format!(
-                    "rating stamp field '{field}' is missing, not a string, or empty"
-                ),
+                format!("rating stamp field '{field}' is missing, not a string, or empty"),
             );
         }
     }
@@ -313,9 +306,7 @@ pub fn rating_verdict(ext: &ExtView) -> RatingVerdict {
         Err(_) => {
             return blocked(
                 TG_RATING_UNKNOWN,
-                format!(
-                    "rating meta names pack '{pack_name}', which is not a shipped lane pack"
-                ),
+                format!("rating meta names pack '{pack_name}', which is not a shipped lane pack"),
             );
         }
     };
@@ -337,9 +328,7 @@ pub fn rating_verdict(ext: &ExtView) -> RatingVerdict {
     if !crate::packs::pack_rating_allowed(&pack, lane, rating) {
         return blocked(
             TG_RATING_LANE_MISMATCH,
-            format!(
-                "rating '{rating}' is not permitted in lane '{lane}' by pack '{pack_name}'"
-            ),
+            format!("rating '{rating}' is not permitted in lane '{lane}' by pack '{pack_name}'"),
         );
     }
     RatingVerdict {
@@ -463,10 +452,7 @@ pub fn expression_missing(ext: &Value, pack: &Value) -> Vec<String> {
 
 /// Tracking coverage for one set of a pack against a
 /// puppet: (missing ids, range violations).
-pub fn tracking_coverage(
-    puppet: &Puppet,
-    set: &Value,
-) -> (Vec<String>, Vec<String>) {
+pub fn tracking_coverage(puppet: &Puppet, set: &Value) -> (Vec<String>, Vec<String>) {
     let ranges = param_ranges(puppet);
     let range_map: HashMap<&str, [f64; 2]> = ranges
         .iter()
@@ -749,18 +735,13 @@ pub fn validate_motion_events_only(ext: &Value, puppet: &Puppet) -> Vec<Finding>
             ));
         }
         let motion = pack_str(event, "motion");
-        let Some((_, animation)) = puppet
-            .animations
-            .iter()
-            .find(|(name, _)| name == &motion)
+        let Some((_, animation)) = puppet.animations.iter().find(|(name, _)| name == &motion)
         else {
             findings.push(Finding::new(
                 TG_EVENT_UNKNOWN_MOTION,
                 "error",
                 subject.clone(),
-                format!(
-                    "event names motion '{motion}', which is not an animation of the project"
-                ),
+                format!("event names motion '{motion}', which is not an animation of the project"),
             ));
             continue;
         };
@@ -832,9 +813,7 @@ pub fn validate_hit_areas_only(ext: &Value, puppet: &Puppet, walk: &Walk) -> Vec
                 TG_HITAREA_UNKNOWN_PART,
                 "error",
                 subject.clone(),
-                format!(
-                    "hit area binds part '{part}', which is not a node in the project"
-                ),
+                format!("hit area binds part '{part}', which is not a node in the project"),
             ));
         }
         let shape = jget(hit_area, "shape");
@@ -847,9 +826,7 @@ pub fn validate_hit_areas_only(ext: &Value, puppet: &Puppet, walk: &Walk) -> Vec
                     TG_HITAREA_SHAPE,
                     "error",
                     subject.clone(),
-                    format!(
-                        "hit area shape kind '{kind}' is not 'rect' or 'circle'"
-                    ),
+                    format!("hit area shape kind '{kind}' is not 'rect' or 'circle'"),
                 ));
                 continue;
             }
@@ -921,22 +898,15 @@ pub fn validate_container_file(path: &str) -> Vec<Finding> {
     findings
 }
 
-
 /// Writes a NEW project file: the source container's
 /// bytes with its Torogao EXT section replaced by `ext`
 /// (extdata.d's writeProjectWithExt). The source is
 /// never modified.
-pub fn write_project_with_ext(
-    in_path: &str,
-    out_path: &str,
-    ext: &Value,
-) -> Result<(), String> {
-    let bytes = std::fs::read(in_path)
-        .map_err(|e| format!("project unreadable: {e}"))?;
-    let source = torogao_format::container::read_inp(&bytes)
-        .map_err(|e| e.message().to_string())?;
+pub fn write_project_with_ext(in_path: &str, out_path: &str, ext: &Value) -> Result<(), String> {
+    let bytes = std::fs::read(in_path).map_err(|e| format!("project unreadable: {e}"))?;
+    let source =
+        torogao_format::container::read_inp(&bytes).map_err(|e| e.message().to_string())?;
     let out = torogao_format::container::write_with_ext(&source, ext);
-    std::fs::write(out_path, out)
-        .map_err(|e| format!("could not write project: {e}"))?;
+    std::fs::write(out_path, out).map_err(|e| format!("could not write project: {e}"))?;
     Ok(())
 }

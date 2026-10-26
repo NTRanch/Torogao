@@ -50,7 +50,11 @@ impl CurveSet {
         if self.step_count >= 0 {
             return self.step_count as usize;
         }
-        self.series.iter().map(|s| s.values.len()).max().unwrap_or(0)
+        self.series
+            .iter()
+            .map(|s| s.values.len())
+            .max()
+            .unwrap_or(0)
     }
 
     /// The canonical JSON text (no trailing newline).
@@ -160,7 +164,9 @@ mod tests {
             values: vec![1.0, 2.5],
         });
         let text = set.to_json();
-        assert!(text.contains("\n    {\"parameter\": \"P\", \"axis\": 0, \"values\": [1.000000, 2.500000]}"));
+        assert!(text.contains(
+            "\n    {\"parameter\": \"P\", \"axis\": 0, \"values\": [1.000000, 2.500000]}"
+        ));
         assert!(text.ends_with("\n  ]\n}"));
     }
 }

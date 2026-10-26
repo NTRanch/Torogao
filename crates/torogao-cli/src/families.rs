@@ -6,26 +6,28 @@
 //! as a fabricated success.
 
 use crate::creator::create_character;
-use crate::criteria::{findings_json, Finding};
-use crate::curves::{quote, CurveSet};
+use crate::criteria::{Finding, findings_json};
+use crate::curves::{CurveSet, quote};
 use crate::drivers::parse_driver_config as parse_driver_set;
 use crate::effects::{compile_effects, puppet_param_names, validate_effects};
 use crate::extdoc::{
-    expression_missing, ext_summary, rating_stamp, rating_verdict, tracking_coverage,
-    validate_hit_areas_only, write_project_with_ext, ExtView, EXT_FORMAT, TG_EXT_MALFORMED,
+    EXT_FORMAT, ExtView, TG_EXT_MALFORMED, expression_missing, ext_summary, rating_stamp,
+    rating_verdict, tracking_coverage, validate_hit_areas_only, write_project_with_ext,
 };
 use crate::fluids::{hit_areas_from_ext, simulate_fluid};
 use crate::glb::{check_expression_map, glb_census, load_glb, resolve_expression};
-use crate::guards::{guard_output, guard_output_files, load_project, load_puppet_guarded, tool_force};
+use crate::guards::{
+    guard_output, guard_output_files, load_project, load_puppet_guarded, tool_force,
+};
 use crate::handlers::load_for_tool;
 use crate::packs::{load_pack, pack_expressions, pack_names, pack_str, pack_tracking_set};
 use crate::playroom::{
-    apply_prefset, apply_session_field, compose_playroom, list_prefsets, load_prefset,
-    load_session, load_wardrobe, new_session, prefset_dir, prefset_path, save_session,
-    PREFSET_FORMAT,
+    PREFSET_FORMAT, apply_prefset, apply_session_field, compose_playroom, list_prefsets,
+    load_prefset, load_session, load_wardrobe, new_session, prefset_dir, prefset_path,
+    save_session,
 };
-use crate::preview::{run_physics_preview, PreviewOptions};
-use crate::registry::{opt_string_arg, string_arg, ToolResult};
+use crate::preview::{PreviewOptions, run_physics_preview};
+use crate::registry::{ToolResult, opt_string_arg, string_arg};
 use crate::scenes::{
     load_scene_doc, scene_face_expression, scene_info, validate_scene, validate_scene_grounded,
 };
@@ -34,9 +36,9 @@ use crate::util::jget;
 use crate::video::{build_timeline, chapters_file, concat_list, tempo_report, validate_timeline};
 use crate::walk::Walk;
 use crate::writer::{
-    build_scaffold, load_json_file, load_sfx_index, validate_voice, ScaffoldOutcome,
+    ScaffoldOutcome, build_scaffold, load_json_file, load_sfx_index, validate_voice,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use torogao_format::container::TOROGAO_EXT_SECTION;
 use torogao_format::jsonfmt::to_d_json;
 
@@ -52,12 +54,8 @@ pub enum LayerError {
 
 /// Loads a viseme contract and bakes a viseme track into
 /// curves (the CLI tail's --viseme layer).
-pub fn bake_viseme_layer(
-    viseme_path: &str,
-    contract_path: &str,
-) -> Result<CurveSet, LayerError> {
-    let contract = crate::viseme::load_viseme_contract(contract_path)
-        .map_err(LayerError::Usage)?;
+pub fn bake_viseme_layer(viseme_path: &str, contract_path: &str) -> Result<CurveSet, LayerError> {
+    let contract = crate::viseme::load_viseme_contract(contract_path).map_err(LayerError::Usage)?;
     let track: Value = std::fs::read_to_string(viseme_path)
         .map_err(|e| LayerError::Usage(format!("viseme track unreadable: {e}")))
         .and_then(|text| {
@@ -173,7 +171,7 @@ fn tool_apply_state(args: &Value) -> ToolResult {
             return ToolResult::fail(
                 "track_unreadable",
                 &format!("input track is not valid JSON: {message}"),
-            )
+            );
         }
     };
     let options = PreviewOptions {
@@ -303,7 +301,11 @@ fn tool_hitareas_author(args: &Value) -> ToolResult {
         );
     }
     let view = load.ext_view();
-    let mut ext = if view.present { view.doc.clone() } else { Value::Null };
+    let mut ext = if view.present {
+        view.doc.clone()
+    } else {
+        Value::Null
+    };
     if !ext.is_object() {
         ext = json!({ "format": EXT_FORMAT });
     }
@@ -493,10 +495,7 @@ fn tool_physics_preview(args: &Value) -> ToolResult {
         } else if let Some(u) = field.as_u64() {
             fps = u as i32;
         } else {
-            return ToolResult::fail(
-                "invalid_arguments",
-                "argument 'fps' must be an integer",
-            );
+            return ToolResult::fail("invalid_arguments", "argument 'fps' must be an integer");
         }
     }
     if !std::path::Path::new(&project_path).exists() {
@@ -520,7 +519,7 @@ fn tool_physics_preview(args: &Value) -> ToolResult {
             return ToolResult::fail(
                 "track_unreadable",
                 &format!("input track is not valid JSON: {message}"),
-            )
+            );
         }
     };
     let mut puppet = match load_puppet_guarded(&project_path) {
@@ -546,8 +545,7 @@ fn tool_physics_preview(args: &Value) -> ToolResult {
             "format": "torogao-controller-values/1",
             "values": controller_arg.clone(),
         });
-        let (resolved, problems) =
-            crate::controllers::resolve_controllers(&options.ext, &wrapped);
+        let (resolved, problems) = crate::controllers::resolve_controllers(&options.ext, &wrapped);
         if let Some(first) = problems.first() {
             return ToolResult::fail("invalid_arguments", first);
         }
@@ -570,7 +568,7 @@ fn tool_physics_preview(args: &Value) -> ToolResult {
                 return ToolResult::fail(
                     "override_unreadable",
                     &format!("override take is not valid JSON: {message}"),
-                )
+                );
             }
         };
         options.has_override = true;
@@ -593,10 +591,16 @@ fn load_recipe_arg(path: &str) -> Result<(Value, String), ToolResult> {
         ));
     }
     let text = std::fs::read_to_string(path).map_err(|e| {
-        ToolResult::fail("recipe_unreadable", &format!("recipe is not valid JSON: {e}"))
+        ToolResult::fail(
+            "recipe_unreadable",
+            &format!("recipe is not valid JSON: {e}"),
+        )
     })?;
     let doc: Value = serde_json::from_str(&text).map_err(|e| {
-        ToolResult::fail("recipe_unreadable", &format!("recipe is not valid JSON: {e}"))
+        ToolResult::fail(
+            "recipe_unreadable",
+            &format!("recipe is not valid JSON: {e}"),
+        )
     })?;
     Ok((doc, text))
 }
@@ -676,10 +680,7 @@ fn tool_audio_bake(args: &Value) -> ToolResult {
         Err(e) => return e,
     };
     if !std::path::Path::new(&wav_path).exists() {
-        return ToolResult::fail(
-            "wav_not_found",
-            &format!("WAV file not found: {wav_path}"),
-        );
+        return ToolResult::fail("wav_not_found", &format!("WAV file not found: {wav_path}"));
     }
     let (recipe, _) = match load_recipe_arg(&recipe_path) {
         Ok(r) => r,
@@ -745,9 +746,7 @@ fn tool_tutorial_status(args: &Value) -> ToolResult {
     if !pack_name.is_empty() {
         match crate::tutorials::load_lessons(&pack_name, "characters") {
             Ok(d) => lessons_doc = d,
-            Err(e) => {
-                return ToolResult::fail(crate::tutorials::TG_TUTORIAL_NO_LESSONS, &e)
-            }
+            Err(e) => return ToolResult::fail(crate::tutorials::TG_TUTORIAL_NO_LESSONS, &e),
         }
     }
     let mut doc = crate::tutorials::progress_summary(&progress, &lessons_doc);
@@ -799,7 +798,7 @@ fn tool_tutorial_check(args: &Value) -> ToolResult {
         &load.payload.clone(),
         slot_count,
         &pack,
-        &jget(&lesson, "check"),
+        jget(&lesson, "check"),
         &view,
     );
     let mut doc = json!({
@@ -866,7 +865,7 @@ fn tool_writer_draft(args: &Value) -> ToolResult {
             return ToolResult::fail(
                 "invalid_arguments",
                 "argument 'stage' (integer) is required",
-            )
+            );
         }
     };
     let mut sfx_ids: Vec<String> = Vec::new();
@@ -913,7 +912,7 @@ fn tool_writer_draft(args: &Value) -> ToolResult {
         crate::writerlane::LaneOutcome::Gap(d) => d,
         crate::writerlane::LaneOutcome::Refusal(d) => d,
         crate::writerlane::LaneOutcome::Error(e) => {
-            return ToolResult::fail(crate::writerlane::TG_WRITER_LANE, &e)
+            return ToolResult::fail(crate::writerlane::TG_WRITER_LANE, &e);
         }
     };
     mkdir_parent(&out_path);
@@ -1087,7 +1086,7 @@ fn tool_events_list(args: &Value) -> ToolResult {
     ToolResult::ok(json!({
         "file": project,
         "motionEvents": if view.present {
-            jget(&jget(&view.doc, "consumer"), "motionEvents").clone()
+            jget(jget(&view.doc, "consumer"), "motionEvents").clone()
         } else {
             Value::Null
         },
@@ -1262,10 +1261,7 @@ fn tool_viseme_bake(args: &Value) -> ToolResult {
     {
         Ok(s) => s,
         Err(e) => {
-            return ToolResult::fail(
-                "track_unreadable",
-                &format!("track is not valid JSON: {e}"),
-            )
+            return ToolResult::fail("track_unreadable", &format!("track is not valid JSON: {e}"));
         }
     };
     if let Err(refusal) = guard_output(&out_path, &[track_path.as_str()], tool_force(args)) {
@@ -1342,7 +1338,6 @@ fn tool_instantiate_template(args: &Value) -> ToolResult {
     }
 }
 
-/// Dispatches a non-core tool by name.
 // ------------------------------------------------------------
 // P5 family tools (p5tools.d): the helpers below mirror the
 // D module's own argStr/argNum/fail conventions, which differ
@@ -1383,8 +1378,8 @@ fn load_project_arg_p5(args: &Value) -> Result<P5Load, ToolResult> {
     if !std::path::Path::new(&project_path).exists() {
         return Err(p5_fail(&format!("project file not found: {project_path}")));
     }
-    let mut loaded = load_project(&project_path)
-        .map_err(|e| ToolResult::fail(e.code(), e.message()))?;
+    let mut loaded =
+        load_project(&project_path).map_err(|e| ToolResult::fail(e.code(), e.message()))?;
     let walk = Walk::build(&mut loaded.puppet);
     let ext = ExtView::of_project(&loaded);
     Ok(P5Load {
@@ -1473,7 +1468,7 @@ fn tool_fluid_sim(args: &Value) -> ToolResult {
         Ok(s) => s,
         Err(e) => return e,
     };
-    let mut load = match load_project_arg_p5(args) {
+    let load = match load_project_arg_p5(args) {
         Ok(l) => l,
         Err(e) => return e,
     };
@@ -1528,8 +1523,8 @@ fn load_effects_arg_p5(args: &Value) -> Result<Value, ToolResult> {
     if !std::path::Path::new(&path).exists() {
         return Err(p5_fail(&format!("effects file not found: {path}")));
     }
-    let text = std::fs::read_to_string(&path)
-        .map_err(|e| p5_fail(&format!("effects unreadable: {e}")))?;
+    let text =
+        std::fs::read_to_string(&path).map_err(|e| p5_fail(&format!("effects unreadable: {e}")))?;
     serde_json::from_str(&text).map_err(|e| p5_fail(&format!("effects unreadable: {e}")))
 }
 
@@ -1711,8 +1706,8 @@ fn tool_playroom_create(args: &Value) -> ToolResult {
         Ok(p) => p,
         Err(e) => return p5_fail(&e),
     };
-    let identity_text = std::fs::read_to_string(&identity_path)
-        .map_err(|e| format!("identity unreadable: {e}"));
+    let identity_text =
+        std::fs::read_to_string(&identity_path).map_err(|e| format!("identity unreadable: {e}"));
     let identity: Value = match identity_text
         .and_then(|t| serde_json::from_str(&t).map_err(|e| format!("identity unreadable: {e}")))
     {
@@ -1867,8 +1862,8 @@ fn load_take_arg_p5(args: &Value) -> Result<(Value, Value, String), ToolResult> 
     }
     let text = std::fs::read_to_string(&take_path)
         .map_err(|e| p5_fail(&format!("take unreadable: {e}")))?;
-    let take: Value = serde_json::from_str(&text)
-        .map_err(|e| p5_fail(&format!("take unreadable: {e}")))?;
+    let take: Value =
+        serde_json::from_str(&text).map_err(|e| p5_fail(&format!("take unreadable: {e}")))?;
     let pack = load_pack(&pack_name).map_err(|e| p5_fail(&e))?;
     Ok((take, pack, take_path))
 }
@@ -1942,8 +1937,7 @@ fn load_map_arg_p5(args: &Value) -> Result<Value, ToolResult> {
     }
     let text = std::fs::read_to_string(&path)
         .map_err(|e| p5_fail(&format!("expression map unreadable: {e}")))?;
-    serde_json::from_str(&text)
-        .map_err(|e| p5_fail(&format!("expression map unreadable: {e}")))
+    serde_json::from_str(&text).map_err(|e| p5_fail(&format!("expression map unreadable: {e}")))
 }
 
 fn tool_glb_info(args: &Value) -> ToolResult {
@@ -2011,8 +2005,7 @@ fn load_timeline_arg_p5(args: &Value) -> Result<Value, ToolResult> {
     }
     let text = std::fs::read_to_string(&path)
         .map_err(|e| p5_fail(&format!("timeline unreadable: {e}")))?;
-    serde_json::from_str(&text)
-        .map_err(|e| p5_fail(&format!("timeline unreadable: {e}")))
+    serde_json::from_str(&text).map_err(|e| p5_fail(&format!("timeline unreadable: {e}")))
 }
 
 fn tool_video_validate(args: &Value) -> ToolResult {
@@ -2042,11 +2035,11 @@ fn tool_video_build(args: &Value) -> ToolResult {
     if out_path.is_empty() {
         return p5_fail("out is required");
     }
-    let text = std::fs::read_to_string(&clips_path)
-        .map_err(|e| format!("clip list unreadable: {e}"));
-    let clip_list: Value = match text.and_then(|t| {
-        serde_json::from_str(&t).map_err(|e| format!("clip list unreadable: {e}"))
-    }) {
+    let text =
+        std::fs::read_to_string(&clips_path).map_err(|e| format!("clip list unreadable: {e}"));
+    let clip_list: Value = match text
+        .and_then(|t| serde_json::from_str(&t).map_err(|e| format!("clip list unreadable: {e}")))
+    {
         Ok(v) => v,
         Err(e) => return p5_fail(&e),
     };

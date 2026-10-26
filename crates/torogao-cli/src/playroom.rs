@@ -1,7 +1,7 @@
 //! Playroom sessions and preference sets, ported from the
 //! D `torogao.cli.playroom` module.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use torogao_engine::Puppet;
 
@@ -10,7 +10,7 @@ use crate::extdoc::ExtView;
 use crate::fluids::{hit_areas_from_ext, simulate_fluid};
 use crate::packs::pack_str;
 use crate::paths::{find_data_file, playroom_sets_dir};
-use crate::preview::{run_physics_preview, PreviewOptions};
+use crate::preview::{PreviewOptions, run_physics_preview};
 use crate::scenes::{load_scene_doc, scene_face_expression};
 use crate::util::jget;
 use crate::walk::Walk;
@@ -67,10 +67,10 @@ pub fn load_session(path: &str) -> Result<Value, String> {
     if !std::path::Path::new(path).exists() {
         return Err(format!("playroom session not found: {path}"));
     }
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| format!("playroom session unreadable: {e}"))?;
-    let session: Value = serde_json::from_str(&text)
-        .map_err(|e| format!("playroom session unreadable: {e}"))?;
+    let text =
+        std::fs::read_to_string(path).map_err(|e| format!("playroom session unreadable: {e}"))?;
+    let session: Value =
+        serde_json::from_str(&text).map_err(|e| format!("playroom session unreadable: {e}"))?;
     if pack_str(&session, "format") != PLAYROOM_FORMAT {
         return Err(format!(
             "file is not a {PLAYROOM_FORMAT} session ({TG_PLAYROOM_FORMAT})"
@@ -192,9 +192,11 @@ pub fn load_prefset(dir: &str, name: &str) -> Result<Value, String> {
 }
 
 pub fn load_wardrobe(pack: &str) -> Result<Value, String> {
-    let Some(path) =
-        find_data_file("TOROGAO_PACKS_DIR", "packs", &format!("{pack}-wardrobe.json"))
-    else {
+    let Some(path) = find_data_file(
+        "TOROGAO_PACKS_DIR",
+        "packs",
+        &format!("{pack}-wardrobe.json"),
+    ) else {
         return Err(format!("no wardrobe ships with pack '{pack}'"));
     };
     let text = std::fs::read_to_string(&path)
@@ -263,12 +265,7 @@ pub fn compose_playroom(
             let fluids = jget(&scene, "fluids").clone();
             if let Some(emitters) = fluids.as_array() {
                 for emitter in emitters {
-                    let run = simulate_fluid(
-                        emitter,
-                        &areas,
-                        f64::from(steps) / 60.0,
-                        &face_expr,
-                    );
+                    let run = simulate_fluid(emitter, &areas, f64::from(steps) / 60.0, &face_expr);
                     if let Some(contacts) = jget(&run, "faceContacts").as_array() {
                         for contact in contacts {
                             let name = pack_str(contact, "expression");
@@ -283,9 +280,8 @@ pub fn compose_playroom(
             snapshot["fluidRuns"] = Value::Array(runs);
         }
     }
-    snapshot["expressionsFired"] = Value::Array(
-        fired.iter().map(|f| Value::String(f.clone())).collect(),
-    );
+    snapshot["expressionsFired"] =
+        Value::Array(fired.iter().map(|f| Value::String(f.clone())).collect());
     snapshot["series"] = json!(curves.series.len() as i64);
     snapshot["steps"] = json!(curves.steps());
     Ok(snapshot)

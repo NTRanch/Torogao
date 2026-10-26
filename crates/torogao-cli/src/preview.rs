@@ -6,7 +6,7 @@
 //! override take > input track > viseme > controllers >
 //! state/variant recipes > ambient drivers > defaults.
 
-use crate::curves::{quote, CurveSeries, CurveSet};
+use crate::curves::{CurveSeries, CurveSet, quote};
 use crate::drivers::{active_driver_names, driver_inputs, parse_driver_config};
 use crate::extdoc::{
     count_states_named, count_variants_named, find_state, find_variant, param_ranges,
@@ -134,11 +134,7 @@ pub fn run_physics_preview(
     let steps: usize = match track.get("steps") {
         Some(field) => match json_int(field) {
             Some(value) if value > 0 && value <= 1_000_000 => value as usize,
-            _ => {
-                return Err(
-                    "track field 'steps' must be an integer in 1..1000000".to_string(),
-                )
-            }
+            _ => return Err("track field 'steps' must be an integer in 1..1000000".to_string()),
         },
         None => return Err("track field 'steps' is required".to_string()),
     };
@@ -180,7 +176,7 @@ pub fn run_physics_preview(
                         _ => {
                             return Err(format!(
                                 "track input '{name}' entries must be numbers or [x, y] pairs"
-                            ))
+                            ));
                         }
                     }
                 } else {
@@ -231,7 +227,7 @@ pub fn run_physics_preview(
                     None => {
                         return Err(format!(
                             "override take series for '{name}' holds a non-numeric value"
-                        ))
+                        ));
                     }
                 }
             }
@@ -311,8 +307,7 @@ pub fn run_physics_preview(
                 return Err(format!("state '{name}' is not stored in the project"));
             }
             let recipe = state.get("recipe").cloned().unwrap_or(Value::Null);
-            let (resolved, problems) =
-                resolve_recipe(&options.ext, &recipe, &ranges);
+            let (resolved, problems) = resolve_recipe(&options.ext, &recipe, &ranges);
             if let Some(first) = problems.first() {
                 return Err(format!("state '{name}' recipe is invalid: {first}"));
             }
@@ -338,8 +333,7 @@ pub fn run_physics_preview(
                 return Err(format!("variant '{id}' is not stored in the project"));
             }
             let recipe = variant.get("recipe").cloned().unwrap_or(Value::Null);
-            let (resolved, problems) =
-                resolve_recipe(&options.ext, &recipe, &ranges);
+            let (resolved, problems) = resolve_recipe(&options.ext, &recipe, &ranges);
             if let Some(first) = problems.first() {
                 return Err(format!("variant '{id}' recipe is invalid: {first}"));
             }
@@ -358,7 +352,15 @@ pub fn run_physics_preview(
                     "the input track and {layer} both drive parameter '{name}'"
                 ));
             }
-            append_constant(puppet, &mut inputs, &mut authored, name, *value, layer, steps)?;
+            append_constant(
+                puppet,
+                &mut inputs,
+                &mut authored,
+                name,
+                *value,
+                layer,
+                steps,
+            )?;
         }
     }
 

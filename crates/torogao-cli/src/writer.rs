@@ -4,12 +4,10 @@
 //! missing — produces a loud gap report naming the
 //! missing canon. It never produces invented content.
 
-use crate::packs::{
-    pack_expression, pack_kink_vocabulary, pack_str, pack_word_bounds,
-};
+use crate::packs::{pack_expression, pack_kink_vocabulary, pack_str, pack_word_bounds};
 use crate::paths::find_data_file;
 use crate::util::jget;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::Digest;
 use torogao_format::jsonfmt::to_d_json;
 
@@ -30,8 +28,8 @@ pub const VOICE_FORMAT: &str = "torogao-voice/1";
 /// Loads a JSON document from a file; on failure returns
 /// the reference's error string.
 pub fn load_json_file(path: &str) -> Result<Value, String> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| format!("file '{path}' is unreadable: {e}"))?;
+    let text =
+        std::fs::read_to_string(path).map_err(|e| format!("file '{path}' is unreadable: {e}"))?;
     serde_json::from_str(&text).map_err(|e| format!("file '{path}' is unreadable: {e}"))
 }
 
@@ -99,8 +97,8 @@ pub fn sfx_recipe_hash(recipe_file: &str) -> Result<String, String> {
     let Some(path) = find_data_file("TOROGAO_SFX_DIR", "sfx", recipe_file) else {
         return Err(format!("SFX recipe '{recipe_file}' not found"));
     };
-    let bytes = std::fs::read(&path)
-        .map_err(|e| format!("SFX recipe '{recipe_file}' unreadable: {e}"))?;
+    let bytes =
+        std::fs::read(&path).map_err(|e| format!("SFX recipe '{recipe_file}' unreadable: {e}"))?;
     let digest = sha2::Sha256::digest(&bytes);
     Ok(digest.iter().map(|b| format!("{b:02x}")).collect())
 }
@@ -285,11 +283,7 @@ pub fn build_scaffold(
         "wordClass": "prose",
     });
 
-    let stage_expr = jget(
-        jget(character, "stageExpressions"),
-        &format!("{stage}"),
-    )
-    .clone();
+    let stage_expr = jget(jget(character, "stageExpressions"), &format!("{stage}")).clone();
     let mut cue = json!({ "beat": "open" });
     if let Some(expression) = stage_expr.as_str() {
         cue["expression"] = json!(expression);
@@ -405,9 +399,10 @@ impl VoiceFinding {
 /// anchors are versioned, never edited in place.
 pub fn validate_voice(doc: &Value) -> Vec<VoiceFinding> {
     let mut findings = Vec::new();
-    let voice: Value = if pack_str(doc, "format") == CHARACTER_FORMAT {
-        jget(doc, "voice").clone()
-    } else if pack_str(doc, "format") != VOICE_FORMAT && jget(doc, "voice").is_object() {
+    let format = pack_str(doc, "format");
+    let voice: Value = if format == CHARACTER_FORMAT
+        || (format != VOICE_FORMAT && jget(doc, "voice").is_object())
+    {
         jget(doc, "voice").clone()
     } else {
         doc.clone()

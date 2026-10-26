@@ -893,11 +893,7 @@ impl NodeArena {
     ) -> (Vec<Vec2>, Option<Mat4>) {
         let (precalculated, dynamic, warp) = {
             let node = &self.nodes[group];
-            (
-                node.precalculated,
-                node.dynamic,
-                node.warp.clone(),
-            )
+            (node.precalculated, node.dynamic, node.warp.clone())
         };
         let Some(warp) = warp else {
             return (orig_deformation.to_vec(), None);
@@ -939,8 +935,8 @@ impl NodeArena {
                 out[i] = new_pos - vertex;
             } else {
                 let inv = center.inverse();
-                let diff = inv
-                    * Vec4::new(new_pos.x - c_vertex.x, new_pos.y - c_vertex.y, 0.0, 1.0);
+                let diff =
+                    inv * Vec4::new(new_pos.x - c_vertex.x, new_pos.y - c_vertex.y, 0.0, 1.0);
                 out[i] += Vec2::new(diff.x, diff.y);
             }
         }
@@ -1049,17 +1045,35 @@ impl NodeArena {
             let cos_a = axis0n.x * axis1n.x + axis0n.y * axis1n.y;
             let sin_a = axis0n.x * axis1n.y - axis0n.y * axis1n.x;
             let scale = Mat3::from_array([
-                if axis0_len > 0.0 { 1.0 / axis0_len } else { 0.0 },
+                if axis0_len > 0.0 {
+                    1.0 / axis0_len
+                } else {
+                    0.0
+                },
                 0.0,
                 0.0,
                 0.0,
-                if axis1_len > 0.0 { 1.0 / axis1_len } else { 0.0 },
+                if axis1_len > 0.0 {
+                    1.0 / axis1_len
+                } else {
+                    0.0
+                },
                 0.0,
                 0.0,
                 0.0,
                 1.0,
             ]);
-            let shear = Mat3::from_array([1.0, -cos_a / sin_a, 0.0, 0.0, 1.0 / sin_a, 0.0, 0.0, 0.0, 1.0]);
+            let shear = Mat3::from_array([
+                1.0,
+                -cos_a / sin_a,
+                0.0,
+                0.0,
+                1.0 / sin_a,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+            ]);
             let rotate = Mat3::from_array([
                 axis0n.x, axis0n.y, 0.0, -axis0n.y, axis0n.x, 0.0, 0.0, 0.0, 1.0,
             ]);
@@ -1169,7 +1183,9 @@ mod tests {
     #[test]
     fn set_value_accumulates_transform_offsets() {
         let mut arena = NodeArena::default();
-        arena.nodes.push(Node::new(1, "Root".to_string(), NodeKind::Node));
+        arena
+            .nodes
+            .push(Node::new(1, "Root".to_string(), NodeKind::Node));
         arena.root = 0;
         assert!(arena.set_value(0, "transform.t.x", 5.0));
         assert!(arena.set_value(0, "transform.t.x", 2.0));

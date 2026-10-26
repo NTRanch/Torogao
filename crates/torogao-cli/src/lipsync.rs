@@ -2,9 +2,9 @@
 //! centroid features classified into visemes, ported from the
 //! D `torogao.cli.lipsync` module. Output is a PROPOSAL only.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
-use crate::viseme::{bake_visemes, VisemeContract};
+use crate::viseme::{VisemeContract, bake_visemes};
 use crate::wav::{parse_wav, sha256_hex};
 
 pub const TG_LIPSYNC_INPUT: &str = "TG-LIPSYNC-INPUT";
@@ -47,7 +47,8 @@ fn measure_frame(samples: &[f64], rate: u32) -> Features {
         let mut re = 0.0f64;
         let mut im = 0.0f64;
         for (j, &s) in samples.iter().enumerate() {
-            let window = 0.5 * (1.0 - (2.0 * std::f64::consts::PI * j as f64 / (n as f64 - 1.0)).cos());
+            let window =
+                0.5 * (1.0 - (2.0 * std::f64::consts::PI * j as f64 / (n as f64 - 1.0)).cos());
             let angle = step * j as f64;
             re += s * window * angle.cos();
             im -= s * window * angle.sin();
@@ -88,10 +89,9 @@ fn classify(rms: f64, zcr: f64, centroid: f64) -> &'static str {
 }
 
 pub fn analyze_lipsync(wav_path: &str, contract: &VisemeContract) -> Result<Value, String> {
-    let bytes = std::fs::read(wav_path)
-        .map_err(|e| format!("{TG_LIPSYNC_INPUT}: cannot read WAV: {e}"))?;
-    let wav = parse_wav(&bytes)
-        .map_err(|e| format!("{TG_LIPSYNC_INPUT}: cannot read WAV: {e}"))?;
+    let bytes =
+        std::fs::read(wav_path).map_err(|e| format!("{TG_LIPSYNC_INPUT}: cannot read WAV: {e}"))?;
+    let wav = parse_wav(&bytes).map_err(|e| format!("{TG_LIPSYNC_INPUT}: cannot read WAV: {e}"))?;
     let frames = wav.frames();
     if wav.channels.is_empty() || frames == 0 {
         return Err(format!("{TG_LIPSYNC_INPUT}: WAV carries no samples"));
@@ -167,14 +167,8 @@ pub fn analyze_lipsync(wav_path: &str, contract: &VisemeContract) -> Result<Valu
         fd.insert("viseme".to_string(), json!(ev.viseme));
         fd.insert("start".to_string(), json!(start));
         fd.insert("end".to_string(), json!(end));
-        fd.insert(
-            "meanRms".to_string(),
-            json!(ev.rms_sum / ev.count as f64),
-        );
-        fd.insert(
-            "meanZcr".to_string(),
-            json!(ev.zcr_sum / ev.count as f64),
-        );
+        fd.insert("meanRms".to_string(), json!(ev.rms_sum / ev.count as f64));
+        fd.insert("meanZcr".to_string(), json!(ev.zcr_sum / ev.count as f64));
         fd.insert(
             "meanCentroidHz".to_string(),
             json!(ev.centroid_sum / ev.count as f64),
@@ -188,9 +182,8 @@ pub fn analyze_lipsync(wav_path: &str, contract: &VisemeContract) -> Result<Valu
     track.insert("blendSeconds".to_string(), json!(0.06));
     track.insert("events".to_string(), Value::Array(track_events));
     let track = Value::Object(track);
-    let curves = bake_visemes(&track, contract).map_err(|e| {
-        format!("{TG_LIPSYNC_INPUT}: proposal track failed to bake: {e}")
-    })?;
+    let curves = bake_visemes(&track, contract)
+        .map_err(|e| format!("{TG_LIPSYNC_INPUT}: proposal track failed to bake: {e}"))?;
     let mut doc = Map::new();
     doc.insert("format".to_string(), json!("torogao-lipsync-proposal/1"));
     doc.insert("result".to_string(), json!("proposal"));

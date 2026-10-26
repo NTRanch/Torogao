@@ -34,7 +34,7 @@ pub fn pack_str(obj: &Value, key: &str) -> String {
 
 /// Numeric member access with fallback (`packNum`).
 pub fn pack_num(obj: &Value, key: &str, fallback: f64) -> f64 {
-        crate::util::jnum(obj, key, fallback)
+    crate::util::jnum(obj, key, fallback)
 }
 
 /// Names of all shipped packs (the v1 pair, each present

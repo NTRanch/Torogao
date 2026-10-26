@@ -4,8 +4,8 @@
 
 use crate::paths::{existing_data_dirs, find_data_file};
 use crate::util::jget;
-use serde_json::{json, Map, Value};
-use torogao_format::container::{build_inp, TextureSlot};
+use serde_json::{Map, Value, json};
+use torogao_format::container::{TextureSlot, build_inp};
 use torogao_format::jsonfmt::to_d_json;
 
 /// One listed template.
@@ -85,8 +85,11 @@ pub fn list_templates() -> Vec<TemplateInfo> {
 /// Loads a named data document (template or preset); the
 /// noun in the error wording is the caller's.
 fn load_named(name: &str, noun: &str) -> Result<Value, String> {
-    let Some(path) = find_data_file("TOROGAO_TEMPLATES_DIR", "templates", &format!("{name}.json"))
-    else {
+    let Some(path) = find_data_file(
+        "TOROGAO_TEMPLATES_DIR",
+        "templates",
+        &format!("{name}.json"),
+    ) else {
         return Err(format!("{noun} '{name}' not found"));
     };
     let text = std::fs::read_to_string(&path)

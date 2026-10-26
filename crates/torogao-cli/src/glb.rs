@@ -1,7 +1,7 @@
 //! GLB container census and 3D expression-map governance,
 //! ported from the D `torogao.cli.glb` module.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::packs::pack_str;
 use crate::util::jget;
@@ -23,8 +23,8 @@ fn read_u32le(bytes: &[u8], off: usize) -> u32 {
 }
 
 pub fn load_glb(path: &str) -> Result<GlbInfo, String> {
-    let bytes = std::fs::read(path)
-        .map_err(|_| format!("TG-GLB-MALFORMED: cannot read '{path}'"))?;
+    let bytes =
+        std::fs::read(path).map_err(|_| format!("TG-GLB-MALFORMED: cannot read '{path}'"))?;
     if bytes.len() < 20 || &bytes[0..4] != b"glTF" {
         return Err(format!(
             "TG-GLB-MALFORMED: '{path}' is not a GLB container (bad magic)"
@@ -54,11 +54,11 @@ pub fn load_glb(path: &str) -> Result<GlbInfo, String> {
         for mesh in meshes {
             let prims = jget(mesh, "primitives");
             let target_count = match prims.as_array().and_then(|p| p.first()) {
-                Some(first) => count_of(&jget(first, "targets")),
+                Some(first) => count_of(jget(first, "targets")),
                 None => 0,
             };
             info.morph_count += target_count;
-            if let Some(names) = jget(&jget(mesh, "extras"), "targetNames").as_array() {
+            if let Some(names) = jget(jget(mesh, "extras"), "targetNames").as_array() {
                 for (i, name) in names.iter().enumerate() {
                     if i as i64 >= target_count {
                         break;
@@ -84,7 +84,7 @@ pub fn load_glb(path: &str) -> Result<GlbInfo, String> {
             info.skin_names.push(pack_str(skin, "name"));
         }
     }
-    info.animation_count = count_of(&jget(&gltf, "animations"));
+    info.animation_count = count_of(jget(&gltf, "animations"));
     Ok(info)
 }
 
@@ -106,11 +106,7 @@ pub fn glb_census(path: &str, info: &GlbInfo) -> Value {
     })
 }
 
-pub fn check_expression_map(
-    map: &Value,
-    info: &GlbInfo,
-    governed_names: &[String],
-) -> Vec<String> {
+pub fn check_expression_map(map: &Value, info: &GlbInfo, governed_names: &[String]) -> Vec<String> {
     let mut problems = Vec::new();
     if pack_str(map, "format") != EXPR_MAP_3D_FORMAT {
         problems.push(format!(

@@ -1,7 +1,7 @@
 //! Video timeline validation and edit-decision artifacts,
 //! ported from the D `torogao.cli.video` module.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::criteria::Finding;
 use crate::effects::validate_effects;
@@ -25,12 +25,8 @@ fn num_str(v: f64) -> String {
 }
 
 pub fn beat_seconds(timeline: &Value) -> f64 {
-    let bpm = pack_num(&jget(timeline, "tempo"), "bpm", 0.0);
-    if bpm > 0.0 {
-        60.0 / bpm
-    } else {
-        0.0
-    }
+    let bpm = pack_num(jget(timeline, "tempo"), "bpm", 0.0);
+    if bpm > 0.0 { 60.0 / bpm } else { 0.0 }
 }
 
 pub fn validate_timeline(timeline: &Value, base_dir: &str) -> Vec<Finding> {
@@ -75,7 +71,9 @@ pub fn validate_timeline(timeline: &Value, base_dir: &str) -> Vec<Finding> {
             ));
         }
         let clips = jget(track, "clips");
-        let Some(clips) = clips.as_array() else { continue };
+        let Some(clips) = clips.as_array() else {
+            continue;
+        };
         let mut last_end = -1.0f64;
         let mut last_id = String::new();
         for (ci, clip) in clips.iter().enumerate() {
@@ -157,7 +155,9 @@ pub fn tempo_report(timeline: &Value) -> Value {
     if let Some(tracks) = jget(timeline, "tracks").as_array() {
         for track in tracks {
             let clips = jget(track, "clips");
-            let Some(clips) = clips.as_array() else { continue };
+            let Some(clips) = clips.as_array() else {
+                continue;
+            };
             for clip in clips {
                 let start = pack_num(clip, "start", 0.0);
                 let dur = pack_num(clip, "out", 0.0) - pack_num(clip, "in", 0.0);
@@ -185,7 +185,7 @@ pub fn tempo_report(timeline: &Value) -> Value {
     json!({
         "beatSeconds": round6(beat),
         "boundaries": rows,
-        "bpm": pack_num(&jget(timeline, "tempo"), "bpm", 0.0),
+        "bpm": pack_num(jget(timeline, "tempo"), "bpm", 0.0),
         "onBeat": on_beat,
         "total": total,
     })
@@ -275,8 +275,7 @@ pub fn chapters_file(timeline: &Value) -> String {
             if let Some(clips) = jget(track, "clips").as_array() {
                 for clip in clips {
                     let start = pack_num(clip, "start", 0.0);
-                    let end =
-                        start + (pack_num(clip, "out", 0.0) - pack_num(clip, "in", 0.0));
+                    let end = start + (pack_num(clip, "out", 0.0) - pack_num(clip, "in", 0.0));
                     out.push_str(&format!(
                         "[CHAPTER]\nTIMEBASE=1/1000\nSTART={}\nEND={}\ntitle={}\n",
                         (start * 1000.0) as i64,

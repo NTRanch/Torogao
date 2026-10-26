@@ -397,7 +397,6 @@ mod tests {
 
     #[test]
     fn scan_reports_duplicates_and_trailing_bytes() {
-        let mut bytes = fixture();
         // Append a second EXT region is not how duplicates
         // arise; build one directly instead: two torogao
         // sections inside one EXT region, plus slack.
@@ -415,7 +414,7 @@ mod tests {
                 },
             ],
         );
-        bytes = dup;
+        let mut bytes = dup;
         bytes.extend_from_slice(&[9, 9, 9]);
         let scan = scan_container(&bytes);
         assert!(scan.ok);

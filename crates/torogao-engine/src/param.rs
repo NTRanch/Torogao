@@ -7,7 +7,7 @@
 //! yield zero here), and the apply step that pushes values
 //! and deformations into nodes.
 
-use crate::math::{clamp_f32, Vec2};
+use crate::math::{Vec2, clamp_f32};
 use crate::node::NodeArena;
 use serde_json::Value;
 use torogao_format::NodeKind;
@@ -120,8 +120,8 @@ impl Combinator {
     /// The sum of pushed values.
     pub fn csum(&self) -> Vec2 {
         let mut val = Vec2::ZERO;
-        for i in 0..self.count {
-            val += self.values[i];
+        for value in self.values.iter().take(self.count) {
+            val += *value;
         }
         val
     }
@@ -244,7 +244,7 @@ impl Parameter {
             _ => {
                 return Err(ParamDecodeError(
                     "parameter record carries no numeric uuid".to_string(),
-                ))
+                ));
             }
         };
         let name = match jget(raw, "name") {
@@ -252,7 +252,7 @@ impl Parameter {
             _ => {
                 return Err(ParamDecodeError(
                     "parameter record carries no string name".to_string(),
-                ))
+                ));
             }
         };
         let is_vec2 = matches!(jget(raw, "is_vec2"), Value::Bool(true));
@@ -437,10 +437,9 @@ fn binding_from_payload(
                     Value::Array(cells) => cells
                         .iter()
                         .map(|cell| match cell {
-                            Value::Array(points) => points
-                                .iter()
-                                .map(|point| vec2_of(point))
-                                .collect::<Deformation>(),
+                            Value::Array(points) => {
+                                points.iter().map(vec2_of).collect::<Deformation>()
+                            }
                             _ => Vec::new(),
                         })
                         .collect(),
@@ -533,7 +532,11 @@ impl Binding {
             return 0.0;
         };
         let get = |x: usize, y: usize| -> f32 {
-            values.get(x).and_then(|row| row.get(y)).copied().unwrap_or(0.0)
+            values
+                .get(x)
+                .and_then(|row| row.get(y))
+                .copied()
+                .unwrap_or(0.0)
         };
         match self.interpolate_mode {
             InterpolateMode::Nearest => {
@@ -563,7 +566,10 @@ impl Binding {
             InterpolateMode::Cubic => {
                 let xlen = values.len().saturating_sub(1);
                 if param.is_vec2 {
-                    let ylen = values.first().map(|row| row.len().saturating_sub(1)).unwrap_or(0);
+                    let ylen = values
+                        .first()
+                        .map(|row| row.len().saturating_sub(1))
+                        .unwrap_or(0);
                     let mut out = [0.0f32; 4];
                     for (row, slot) in out.iter_mut().enumerate() {
                         let yp = (index[1] as i64 + row as i64 - 1).clamp(0, ylen as i64) as usize;
@@ -616,7 +622,11 @@ impl Binding {
             }
             InterpolateMode::Linear => {
                 if param.is_vec2 {
-                    let p0 = deform_lerp(get(index[0], index[1]), get(index[0], index[1] + 1), offset.y);
+                    let p0 = deform_lerp(
+                        get(index[0], index[1]),
+                        get(index[0], index[1] + 1),
+                        offset.y,
+                    );
                     let p1 = deform_lerp(
                         get(index[0] + 1, index[1]),
                         get(index[0] + 1, index[1] + 1),
@@ -630,7 +640,10 @@ impl Binding {
             InterpolateMode::Cubic => {
                 let xlen = values.len().saturating_sub(1);
                 if param.is_vec2 {
-                    let ylen = values.first().map(|row| row.len().saturating_sub(1)).unwrap_or(0);
+                    let ylen = values
+                        .first()
+                        .map(|row| row.len().saturating_sub(1))
+                        .unwrap_or(0);
                     let mut out: Vec<Deformation> = Vec::with_capacity(4);
                     for row in 0..4 {
                         let yp = (index[1] as i64 + row as i64 - 1).clamp(0, ylen as i64) as usize;
@@ -728,12 +741,22 @@ pub fn node_has_param(nodes: &NodeArena, idx: usize, key: &str) -> bool {
         ),
         NodeKind::Composite => matches!(
             key,
-            "opacity" | "tint.r" | "tint.g" | "tint.b" | "screenTint.r" | "screenTint.g"
+            "opacity"
+                | "tint.r"
+                | "tint.g"
+                | "tint.b"
+                | "screenTint.r"
+                | "screenTint.g"
                 | "screenTint.b"
         ),
         NodeKind::SimplePhysics => matches!(
             key,
-            "gravity" | "length" | "frequency" | "angleDamping" | "lengthDamping" | "outputScale.x"
+            "gravity"
+                | "length"
+                | "frequency"
+                | "angleDamping"
+                | "lengthDamping"
+                | "outputScale.x"
                 | "outputScale.y"
         ),
         _ => false,

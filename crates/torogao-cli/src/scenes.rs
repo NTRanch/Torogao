@@ -3,12 +3,12 @@
 
 use std::collections::HashSet;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use torogao_engine::Puppet;
 
 use crate::criteria::Finding;
-use crate::effects::{puppet_param_names, validate_effects, TG_FX_BINDING};
+use crate::effects::{TG_FX_BINDING, puppet_param_names, validate_effects};
 use crate::extdoc::node_names;
 use crate::packs::pack_str;
 use crate::paths::find_data_file;
@@ -28,15 +28,18 @@ pub const TG_SCENE_UNKNOWN_PART: &str = "TG-SCENE-UNKNOWN-PART";
 pub fn load_scene_doc(path_or_name: &str) -> Result<Value, String> {
     let mut path = path_or_name.to_string();
     if !std::path::Path::new(&path).exists() {
-        match find_data_file("TOROGAO_SCENES_DIR", "scenes", &format!("{path_or_name}.json")) {
+        match find_data_file(
+            "TOROGAO_SCENES_DIR",
+            "scenes",
+            &format!("{path_or_name}.json"),
+        ) {
             Some(p) => path = p.to_string_lossy().into_owned(),
             None => return Err(format!("scene '{path_or_name}' not found")),
         }
     }
     let text = std::fs::read_to_string(&path)
         .map_err(|e| format!("scene '{path_or_name}' is unreadable: {e}"))?;
-    serde_json::from_str(&text)
-        .map_err(|e| format!("scene '{path_or_name}' is unreadable: {e}"))
+    serde_json::from_str(&text).map_err(|e| format!("scene '{path_or_name}' is unreadable: {e}"))
 }
 
 fn count_of(v: &Value) -> i64 {
@@ -79,7 +82,7 @@ pub fn validate_scene(scene: &Value) -> Vec<Finding> {
             "scene requires the pack it belongs to",
         ));
     }
-    let plates = jget(&jget(scene, "background"), "plates");
+    let plates = jget(jget(scene, "background"), "plates");
     if let Some(plates) = plates.as_array() {
         for (i, plate) in plates.iter().enumerate() {
             if pack_str(plate, "file").is_empty() {
@@ -95,7 +98,9 @@ pub fn validate_scene(scene: &Value) -> Vec<Finding> {
     let mut ids: HashSet<String> = HashSet::new();
     for what in ["fixtures", "props", "fluids"] {
         let list = jget(scene, what);
-        let Some(list) = list.as_array() else { continue };
+        let Some(list) = list.as_array() else {
+            continue;
+        };
         for (i, entry) in list.iter().enumerate() {
             let id = pack_str(entry, "id");
             let at = format!("{what}[{i}]");
@@ -129,9 +134,7 @@ pub fn validate_scene(scene: &Value) -> Vec<Finding> {
                     TG_SCENE_EMITTER,
                     "error",
                     format!("{at}.behavior"),
-                    format!(
-                        "unknown fluid behavior '{behavior}' (spray, milk, saliva)"
-                    ),
+                    format!("unknown fluid behavior '{behavior}' (spray, milk, saliva)"),
                 ));
             }
             let source = jget(emitter, "source");
@@ -205,7 +208,9 @@ pub fn validate_scene_grounded(
     if let Some(props) = props.as_array() {
         for (i, prop) in props.iter().enumerate() {
             let hooks = jget(prop, "hooks");
-            let Some(hooks) = hooks.as_array() else { continue };
+            let Some(hooks) = hooks.as_array() else {
+                continue;
+            };
             for (j, hook) in hooks.iter().enumerate() {
                 let param = pack_str(hook, "parameter");
                 if !param.is_empty() && !param_set.contains(&param) {
@@ -222,7 +227,7 @@ pub fn validate_scene_grounded(
     let fluids = jget(scene, "fluids");
     if let Some(fluids) = fluids.as_array() {
         for (i, emitter) in fluids.iter().enumerate() {
-            let part = pack_str(&jget(emitter, "source"), "part");
+            let part = pack_str(jget(emitter, "source"), "part");
             if !part.is_empty() && !part_set.contains(&part) {
                 findings.push(Finding::new(
                     TG_SCENE_UNKNOWN_PART,
@@ -246,7 +251,7 @@ pub fn validate_scene_grounded(
             }
         }
     }
-    let required = jget(&jget(pack, "consentModel"), "requiredFields");
+    let required = jget(jget(pack, "consentModel"), "requiredFields");
     let characters = jget(scene, "characters");
     if let Some(characters) = characters.as_array() {
         for (i, entry) in characters.iter().enumerate() {
@@ -288,20 +293,20 @@ pub fn validate_scene_grounded(
 }
 
 pub fn scene_face_expression(scene: &Value) -> String {
-    pack_str(&jget(scene, "reactionProfile"), "faceContact")
+    pack_str(jget(scene, "reactionProfile"), "faceContact")
 }
 
 pub fn scene_info(scene: &Value) -> Value {
     let fx = jget(scene, "effects");
     json!({
-        "characters": count_of(&jget(scene, "characters")),
-        "effects": if fx.is_object() { count_of(&jget(fx, "effects")) } else { 0 },
-        "fixtures": count_of(&jget(scene, "fixtures")),
-        "fluidEmitters": count_of(&jget(scene, "fluids")),
+        "characters": count_of(jget(scene, "characters")),
+        "effects": if fx.is_object() { count_of(jget(fx, "effects")) } else { 0 },
+        "fixtures": count_of(jget(scene, "fixtures")),
+        "fluidEmitters": count_of(jget(scene, "fluids")),
         "format": pack_str(scene, "format"),
         "name": pack_str(scene, "name"),
         "pack": pack_str(scene, "pack"),
-        "plates": count_of(&jget(&jget(scene, "background"), "plates")),
-        "props": count_of(&jget(scene, "props")),
+        "plates": count_of(jget(jget(scene, "background"), "plates")),
+        "props": count_of(jget(scene, "props")),
     })
 }

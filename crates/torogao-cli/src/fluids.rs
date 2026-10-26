@@ -1,7 +1,7 @@
 //! Deterministic fixed-step fluid particle simulation,
 //! ported from the D `torogao.cli.fluids` module.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::audioproc::Xoshiro256;
 use crate::packs::{pack_num, pack_str};
@@ -62,20 +62,23 @@ pub fn point_in_area(px: f64, py: f64, area: &Value) -> bool {
     if kind == "rect" {
         let w = pack_num(shape, "w", 0.0);
         let h = pack_num(shape, "h", 0.0);
-        return px >= ax - w / 2.0 && px <= ax + w / 2.0 && py >= ay - h / 2.0 && py <= ay + h / 2.0;
+        return px >= ax - w / 2.0
+            && px <= ax + w / 2.0
+            && py >= ay - h / 2.0
+            && py <= ay + h / 2.0;
     }
     false
 }
 
 pub fn hit_areas_from_ext(ext: &Value) -> Vec<Value> {
-    match jget(&jget(ext, "consumer"), "hitAreas").as_array() {
+    match jget(jget(ext, "consumer"), "hitAreas").as_array() {
         Some(a) => a.clone(),
         None => Vec::new(),
     }
 }
 
 pub fn is_face_area(area: &Value) -> bool {
-    let part = pack_str(&jget(area, "binding"), "part");
+    let part = pack_str(jget(area, "binding"), "part");
     let name = pack_str(area, "name");
     part.to_lowercase().contains("face") || name.to_lowercase().contains("face") || part == "Head"
 }
@@ -112,7 +115,9 @@ pub fn simulate_fluid(
         dy /= len;
     }
     let seed: i64 = match jget(emitter, "seed") {
-        Value::Number(n) => n.as_i64().unwrap_or_else(|| n.as_u64().map_or(0, |u| u as i64)),
+        Value::Number(n) => n
+            .as_i64()
+            .unwrap_or_else(|| n.as_u64().map_or(0, |u| u as i64)),
         _ => 0,
     };
     let mut rng = Xoshiro256::from_seed(seed as u64);
@@ -184,7 +189,7 @@ pub fn simulate_fluid(
             let mut landed = false;
             for area in hit_areas {
                 if point_in_area(p.x, p.y, area) {
-                    let part = pack_str(&jget(area, "binding"), "part");
+                    let part = pack_str(jget(area, "binding"), "part");
                     landings.push(json!({
                         "part": part,
                         "step": step,

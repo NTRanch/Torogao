@@ -17,7 +17,7 @@ use crate::extdoc::ExtView;
 use crate::handlers::{ToolLoad, join_path, stamp_doc};
 use crate::registry::ToolResult;
 use crate::util::{f64_of_f32, fmt_g};
-use crate::walk::{grid_dims, is_part, slugify, suffixed_name, Walk};
+use crate::walk::{Walk, grid_dims, is_part, slugify, suffixed_name};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use torogao_engine::param::BindingValues;
@@ -184,11 +184,11 @@ impl<'a> RigExporter<'a> {
         let mut used_ids: HashSet<String> = HashSet::new();
         for (param_idx, param) in self.puppet.params.iter().enumerate() {
             let base = format!("{}_{}", slugify(&param.name, 44), param.uuid);
-            let degenerate = !(param.min.x < param.max.x)
+            let degenerate = param.min.x >= param.max.x
                 || param.defaults.x < param.min.x
                 || param.defaults.x > param.max.x
                 || (param.is_vec2
-                    && (!(param.min.y < param.max.y)
+                    && (param.min.y >= param.max.y
                         || param.defaults.y < param.min.y
                         || param.defaults.y > param.max.y));
             if degenerate {
@@ -285,10 +285,7 @@ impl<'a> RigExporter<'a> {
     }
 
     // ------------------------------------------------ lattices
-    fn collect_axes(
-        &self,
-        bindings: &[BindingRef],
-    ) -> Result<Vec<AxisSrc>, String> {
+    fn collect_axes(&self, bindings: &[BindingRef]) -> Result<Vec<AxisSrc>, String> {
         let mut axes: Vec<AxisSrc> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
         for &(param_idx, _) in bindings {
@@ -323,9 +320,7 @@ impl<'a> RigExporter<'a> {
         }
         for axis in &axes {
             let Some(scalar_id) = &axis.scalar_id else {
-                return Err(
-                    "an axis parameter was dropped during parameter conversion".to_string(),
-                );
+                return Err("an axis parameter was dropped during parameter conversion".to_string());
             };
             if axis.keys.len() < 2 || axis.keys.len() > 32 {
                 return Err(format!(
@@ -471,9 +466,7 @@ impl<'a> RigExporter<'a> {
             .collect();
         let keys: Vec<Value> = axes
             .iter()
-            .map(|axis| {
-                Value::Array(axis.keys.iter().map(|key| jv(*key)).collect())
-            })
+            .map(|axis| Value::Array(axis.keys.iter().map(|key| jv(*key)).collect()))
             .collect();
         serde_json::json!({
             "axes": axis_ids,
@@ -496,11 +489,7 @@ fn merge_mode_name(mode: torogao_engine::MergeMode) -> &'static str {
 
 /// The physics model member name.
 pub fn physics_model_name(spring: bool) -> &'static str {
-    if spring {
-        "SpringPendulum"
-    } else {
-        "Pendulum"
-    }
+    if spring { "SpringPendulum" } else { "Pendulum" }
 }
 
 /// The parameter map mode member name.
@@ -646,13 +635,16 @@ impl<'a> RigExporter<'a> {
         let world_pos = self.walk.world_pos(walk_idx);
         self.anchor_point.insert(node.uuid, world_pos);
 
-        let base_rz_deg =
-            (-(node.local.rotation.z as f64) * 180.0 / std::f64::consts::PI) as f32;
+        let base_rz_deg = (-(node.local.rotation.z as f64) * 180.0 / std::f64::consts::PI) as f32;
         let base_sx = node.local.scale.x;
         let base_sy = node.local.scale.y;
 
         let nx = axes[0].keys.len();
-        let ny = if axes.len() > 1 { axes[1].keys.len() } else { 1 };
+        let ny = if axes.len() > 1 {
+            axes[1].keys.len()
+        } else {
+            1
+        };
         let mut forms = Vec::new();
         for i in 0..nx {
             for j in 0..ny {
@@ -660,8 +652,8 @@ impl<'a> RigExporter<'a> {
                 let (mut scale_x, mut scale_y) = (base_sx, base_sy);
                 for binding in &rz {
                     let (bx, by) = self.binding_indices(*binding, &axes, i, j);
-                    let delta = (self.value_at(*binding, bx, by) as f64) * 180.0
-                        / std::f64::consts::PI;
+                    let delta =
+                        (self.value_at(*binding, bx, by) as f64) * 180.0 / std::f64::consts::PI;
                     angle = (angle as f64 - delta) as f32;
                 }
                 for binding in &sx {
@@ -761,29 +753,27 @@ impl<'a> RigExporter<'a> {
                         self.note(
                             "dropped",
                             construct,
-                            format!(
-                                "warp deformation cannot form a lumen lattice: {reason}"
-                            ),
+                            format!("warp deformation cannot form a lumen lattice: {reason}"),
                         );
                     }
                 }
                 Ok(axes) => {
                     let nx = axes[0].keys.len();
-                    let ny = if axes.len() > 1 { axes[1].keys.len() } else { 1 };
+                    let ny = if axes.len() > 1 {
+                        axes[1].keys.len()
+                    } else {
+                        1
+                    };
                     let mut forms = Vec::new();
                     for i in 0..nx {
                         for j in 0..ny {
                             let mut positions = Vec::new();
                             for (vi, vertex) in mesh.vertices.iter().enumerate() {
-                                let mut point =
-                                    self.walk.to_world(walk_idx, *vertex, mesh.origin);
+                                let mut point = self.walk.to_world(walk_idx, *vertex, mesh.origin);
                                 for binding in &defs {
-                                    let (bx, by) =
-                                        self.binding_indices(*binding, &axes, i, j);
-                                    let offset =
-                                        self.deform_offset_at(*binding, bx, by, vi);
-                                    let delta =
-                                        self.walk.delta_to_world(walk_idx, offset);
+                                    let (bx, by) = self.binding_indices(*binding, &axes, i, j);
+                                    let offset = self.deform_offset_at(*binding, bx, by, vi);
+                                    let delta = self.walk.delta_to_world(walk_idx, offset);
                                     point[0] += delta[0];
                                     point[1] += delta[1];
                                 }
@@ -855,8 +845,7 @@ impl<'a> RigExporter<'a> {
                 "id": self.walk.nodes[walk_idx].part_id,
             });
             if let Some(parent) = self.walk.nodes[walk_idx].parent {
-                part["parent"] =
-                    Value::String(self.walk.nodes[parent].part_id.clone());
+                part["parent"] = Value::String(self.walk.nodes[parent].part_id.clone());
             }
             arr.push(part);
             let world_pos = self.walk.world_pos(walk_idx);
@@ -970,8 +959,7 @@ impl<'a> RigExporter<'a> {
                     "part references no texture; a lumen mesh requires a texture reference"
                         .to_string(),
                 )
-            } else if node.texture_ids[0] >= 0
-                && (node.texture_ids[0] as usize) >= self.slot_count
+            } else if node.texture_ids[0] >= 0 && (node.texture_ids[0] as usize) >= self.slot_count
             {
                 Some(format!(
                     "part's texture slot {} does not exist ({} slots embedded)",
@@ -1047,9 +1035,13 @@ impl<'a> RigExporter<'a> {
             let mut blend_notes: Vec<(&'static str, String, String)> = Vec::new();
             let blend_mode = {
                 let path_ref = &path;
-                blend_mode_for(&node.blend_mode, path_ref, &mut |verdict, construct, detail| {
-                    blend_notes.push((verdict, construct, detail));
-                })
+                blend_mode_for(
+                    &node.blend_mode,
+                    path_ref,
+                    &mut |verdict, construct, detail| {
+                        blend_notes.push((verdict, construct, detail));
+                    },
+                )
             };
             for (verdict, construct, detail) in blend_notes {
                 self.note(verdict, construct, detail);
@@ -1075,8 +1067,7 @@ impl<'a> RigExporter<'a> {
                 let src_walk = mask
                     .src
                     .and_then(|src| self.walk.index_of_node(self.puppet, src));
-                let src_mesh_id = src_walk
-                    .and_then(|src| self.walk.nodes[src].mesh_id.clone());
+                let src_mesh_id = src_walk.and_then(|src| self.walk.nodes[src].mesh_id.clone());
                 match src_mesh_id {
                     Some(mesh_id) if !dropped_mesh_ids.contains(&mesh_id) => {
                         mask_ids.push(Value::String(mesh_id));
@@ -1106,25 +1097,26 @@ impl<'a> RigExporter<'a> {
                             self.note(
                                 "dropped",
                                 construct,
-                                format!(
-                                    "mesh deformation cannot form a lumen lattice: {reason}"
-                                ),
+                                format!("mesh deformation cannot form a lumen lattice: {reason}"),
                             );
                         }
                     }
                     Ok(axes) => {
                         let nx = axes[0].keys.len();
-                        let ny = if axes.len() > 1 { axes[1].keys.len() } else { 1 };
+                        let ny = if axes.len() > 1 {
+                            axes[1].keys.len()
+                        } else {
+                            1
+                        };
                         let mut forms = Vec::new();
                         for i in 0..nx {
                             for j in 0..ny {
                                 let mut verts = Vec::new();
                                 for (vi, vertex) in mesh.vertices.iter().enumerate() {
-                                    let mut point = self.walk
-                                        .to_world(walk_idx, *vertex, mesh.origin);
+                                    let mut point =
+                                        self.walk.to_world(walk_idx, *vertex, mesh.origin);
                                     for binding in &defs {
-                                        let (bx, by) =
-                                            self.binding_indices(*binding, &axes, i, j);
+                                        let (bx, by) = self.binding_indices(*binding, &axes, i, j);
                                         let delta = self.walk.delta_to_world(
                                             walk_idx,
                                             self.deform_offset_at(*binding, bx, by, vi),
@@ -1160,10 +1152,7 @@ impl<'a> RigExporter<'a> {
                     "lumen v1 meshes carry no tint".to_string(),
                 );
             }
-            if node.screen_tint.x != 0.0
-                || node.screen_tint.y != 0.0
-                || node.screen_tint.z != 0.0
-            {
+            if node.screen_tint.x != 0.0 || node.screen_tint.y != 0.0 || node.screen_tint.z != 0.0 {
                 self.note(
                     "dropped",
                     format!("Part '{path}' screen tint"),
@@ -1203,21 +1192,12 @@ impl<'a> RigExporter<'a> {
                 if self.walk.nodes[parent].warp_id.is_some()
                     || self.walk.nodes[parent].rot_id.is_some()
                 {
-                    let id = self
-                        .walk
-                        .deformer_id_of(parent)
-                        .unwrap_or("")
-                        .to_string();
+                    let id = self.walk.deformer_id_of(parent).unwrap_or("").to_string();
                     anchor = Some((parent, "deformer", id));
                     break;
                 }
-                if is_part(parent_node.kind)
-                    && self.walk.nodes[parent].mesh_id.is_some()
-                {
-                    let id = self.walk.nodes[parent]
-                        .mesh_id
-                        .clone()
-                        .unwrap_or_default();
+                if is_part(parent_node.kind) && self.walk.nodes[parent].mesh_id.is_some() {
+                    let id = self.walk.nodes[parent].mesh_id.clone().unwrap_or_default();
                     anchor = Some((parent, "mesh", id));
                     break;
                 }
@@ -1232,7 +1212,7 @@ impl<'a> RigExporter<'a> {
                 );
                 continue;
             };
-            if !(state.length > 0.0) {
+            if state.length <= 0.0 {
                 self.note(
                     "dropped",
                     format!("SimplePhysics '{path}'"),
@@ -1345,15 +1325,12 @@ impl<'a> RigExporter<'a> {
                 }
                 let channel = binding.param_name.as_str();
                 let reason = if matches!(binding.values, BindingValues::Deform(_)) {
-                    "deformation binding was not consumed by any exporter path"
-                        .to_string()
+                    "deformation binding was not consumed by any exporter path".to_string()
                 } else if channel.len() >= 10 && &channel.as_bytes()[..10] == b"transform." {
                     "node transform channels have no lumen v1 representation (parts carry no transforms); only transform.r.z / s.x / s.y are consumed, as rotation deformers"
                         .to_string()
                 } else {
-                    format!(
-                        "property channel '{channel}' has no lumen v1 representation"
-                    )
+                    format!("property channel '{channel}' has no lumen v1 representation")
                 };
                 let construct = self.binding_construct(key);
                 self.note("dropped", construct, reason);
@@ -1410,10 +1387,7 @@ pub fn export_rig_files(
     let model_path = join_path(out_dir, &format!("{base}.model.json"));
     let report_path = join_path(out_dir, &format!("{base}.export-report.json"));
     let stamp_path = join_path(out_dir, &format!("{base}.stamp.json"));
-    let model_text = format!(
-        "{}\n",
-        torogao_format::jsonfmt::to_d_json(&result.model)
-    );
+    let model_text = format!("{}\n", torogao_format::jsonfmt::to_d_json(&result.model));
     std::fs::write(&model_path, model_text).map_err(|err| ExportError::Io(err.to_string()))?;
     let stamp = stamp_doc(&load.path, &model_path, &ext_view.doc);
     std::fs::write(
@@ -1441,12 +1415,7 @@ pub fn export_rig_files(
 }
 
 /// The registry tool's shape over `export_rig_files`.
-pub fn export_rig(
-    load: &ToolLoad,
-    out_dir: &str,
-    base: &str,
-    ext_view: &ExtView,
-) -> ToolResult {
+pub fn export_rig(load: &ToolLoad, out_dir: &str, base: &str, ext_view: &ExtView) -> ToolResult {
     match export_rig_files(load, out_dir, base, ext_view) {
         Ok(report) => ToolResult::ok(report),
         Err(ExportError::Build(message)) => ToolResult::fail("export_failed", &message),

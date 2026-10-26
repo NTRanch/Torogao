@@ -1,7 +1,7 @@
 //! Session validation and session-to-recipe compilation,
 //! ported from the D `torogao.cli.sessionbuild` module.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::audioproc::validate_recipe;
 use crate::criteria::Finding;
@@ -34,9 +34,9 @@ fn finding(code: &'static str, message: String) -> Finding {
 pub fn session_reference_gain(session: &Value) -> f64 {
     let bed = jget(session, "bed");
     if bed.is_object() {
-        num(&bed, "gain", 0.0)
+        num(bed, "gain", 0.0)
     } else {
-        num(&jget(session, "carrier"), "gain", 0.0)
+        num(jget(session, "carrier"), "gain", 0.0)
     }
 }
 
@@ -45,7 +45,7 @@ pub fn subliminal_gain(session: &Value) -> f64 {
     if !sub.is_object() {
         return 0.0;
     }
-    session_reference_gain(session) * 10f64.powf(num(&sub, "levelDb", 0.0) / 20.0)
+    session_reference_gain(session) * 10f64.powf(num(sub, "levelDb", 0.0) / 20.0)
 }
 
 pub fn validate_session(session: &Value) -> Vec<Finding> {
@@ -60,22 +60,22 @@ pub fn validate_session(session: &Value) -> Vec<Finding> {
     if jstr(session, "name").is_empty() {
         findings.push(finding(TG_SESSION_FORMAT, "name is required".to_string()));
     }
-    if !is_int_like(&jget(session, "seed")) {
+    if !is_int_like(jget(session, "seed")) {
         findings.push(finding(
             TG_SESSION_FORMAT,
             "seed (integer) is required — sessions are deterministic".to_string(),
         ));
     }
     let carrier = jget(session, "carrier");
-    let base = num(&carrier, "baseHz", 0.0);
-    if !carrier.is_object() || !(base > 0.0) || base > 20000.0 {
+    let base = num(carrier, "baseHz", 0.0);
+    if !carrier.is_object() || base <= 0.0 || base > 20000.0 {
         findings.push(finding(
             TG_SESSION_CARRIER,
             "carrier.baseHz must be in (0, 20000]".to_string(),
         ));
     }
-    let cgain = num(&carrier, "gain", -1.0);
-    if !(cgain > 0.0) || cgain > 1.0 {
+    let cgain = num(carrier, "gain", -1.0);
+    if cgain <= 0.0 || cgain > 1.0 {
         findings.push(finding(
             TG_SESSION_CARRIER,
             "carrier.gain must be in (0, 1]".to_string(),
@@ -83,15 +83,15 @@ pub fn validate_session(session: &Value) -> Vec<Finding> {
     }
     let bed = jget(session, "bed");
     if bed.is_object() {
-        let cutoff = num(&bed, "cutoffHz", 0.0);
-        if !(cutoff > 0.0) || cutoff > 20000.0 {
+        let cutoff = num(bed, "cutoffHz", 0.0);
+        if cutoff <= 0.0 || cutoff > 20000.0 {
             findings.push(finding(
                 TG_SESSION_BED,
                 "bed.cutoffHz must be in (0, 20000]".to_string(),
             ));
         }
-        let bgain = num(&bed, "gain", -1.0);
-        if !(bgain > 0.0) || bgain > 1.0 {
+        let bgain = num(bed, "gain", -1.0);
+        if bgain <= 0.0 || bgain > 1.0 {
             findings.push(finding(
                 TG_SESSION_BED,
                 "bed.gain must be in (0, 1]".to_string(),
@@ -114,7 +114,7 @@ pub fn validate_session(session: &Value) -> Vec<Finding> {
                     ));
                 }
                 let seconds = num(phase, "seconds", 0.0);
-                if !(seconds > 0.0) {
+                if seconds <= 0.0 {
                     findings.push(finding(
                         TG_SESSION_PHASE,
                         format!("phase {i}: seconds must be positive"),
@@ -141,14 +141,14 @@ pub fn validate_session(session: &Value) -> Vec<Finding> {
     }
     let sub = jget(session, "subliminal");
     if sub.is_object() {
-        let freq = num(&sub, "freqHz", 0.0);
-        if !(freq > 0.0) || freq > 20000.0 {
+        let freq = num(sub, "freqHz", 0.0);
+        if freq <= 0.0 || freq > 20000.0 {
             findings.push(finding(
                 TG_SESSION_SUBLIMINAL_LEVEL,
                 "subliminal.freqHz must be in (0, 20000]".to_string(),
             ));
         }
-        let level = num(&sub, "levelDb", 0.0);
+        let level = num(sub, "levelDb", 0.0);
         if level >= 0.0 {
             findings.push(finding(
                 TG_SESSION_SUBLIMINAL_LEVEL,
@@ -180,15 +180,15 @@ pub fn build_session_recipe(session: &Value) -> Result<Value, String> {
     let phases: &[Value] = phases_v.as_array().map_or(&[], |a| a);
     let total: f64 = phases.iter().map(|p| num(p, "seconds", 0.0)).sum();
     let carrier = jget(session, "carrier");
-    let carrier_gain = num(&carrier, "gain", 0.0);
-    let base_hz = num(&carrier, "baseHz", 0.0);
+    let carrier_gain = num(carrier, "gain", 0.0);
+    let base_hz = num(carrier, "baseHz", 0.0);
     let mut stems: Vec<Value> = Vec::new();
     let bed = jget(session, "bed");
     if bed.is_object() {
         let mut stem = Map::new();
         stem.insert("type".to_string(), json!("noise"));
-        stem.insert("cutoffHz".to_string(), json!(num(&bed, "cutoffHz", 800.0)));
-        stem.insert("gain".to_string(), json!(num(&bed, "gain", 0.0)));
+        stem.insert("cutoffHz".to_string(), json!(num(bed, "cutoffHz", 800.0)));
+        stem.insert("gain".to_string(), json!(num(bed, "gain", 0.0)));
         stem.insert("startSeconds".to_string(), json!(0.0));
         stem.insert("durationSeconds".to_string(), json!(total));
         stems.push(Value::Object(stem));
@@ -226,7 +226,7 @@ pub fn build_session_recipe(session: &Value) -> Result<Value, String> {
     if sub.is_object() {
         let mut stem = Map::new();
         stem.insert("type".to_string(), json!("tone"));
-        stem.insert("freqHz".to_string(), json!(num(&sub, "freqHz", 0.0)));
+        stem.insert("freqHz".to_string(), json!(num(sub, "freqHz", 0.0)));
         stem.insert("gain".to_string(), json!(subliminal_gain(session)));
         stem.insert("startSeconds".to_string(), json!(0.0));
         stem.insert("durationSeconds".to_string(), json!(total));
@@ -241,7 +241,10 @@ pub fn build_session_recipe(session: &Value) -> Result<Value, String> {
         "targetLufs".to_string(),
         json!(num(session, "targetLufs", -16.0)),
     );
-    doc.insert("truePeakDb".to_string(), json!(num(session, "truePeakDb", -1.0)));
+    doc.insert(
+        "truePeakDb".to_string(),
+        json!(num(session, "truePeakDb", -1.0)),
+    );
     doc.insert("stems".to_string(), Value::Array(stems));
     let doc = Value::Object(doc);
     for f in validate_recipe(&doc) {

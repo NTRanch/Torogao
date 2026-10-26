@@ -1,17 +1,15 @@
 //! Tutorial lessons, machine checks and the progress store,
 //! ported from the D `torogao.cli.tutorials` module.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use torogao_engine::Puppet;
 
 use crate::criteria::validate_puppet;
-use crate::extdoc::{
-    expression_missing, tracking_coverage, validate_ext, ExtView,
-};
+use crate::extdoc::{ExtView, expression_missing, tracking_coverage, validate_ext};
 use crate::packs::{pack_str, pack_tracking_set};
 use crate::paths::find_data_file;
-use crate::preview::{run_physics_preview, PreviewOptions};
+use crate::preview::{PreviewOptions, run_physics_preview};
 use crate::rigexport::RigExporter;
 use crate::util::{fmt_g, jget};
 use crate::walk::Walk;
@@ -41,10 +39,10 @@ pub fn load_lessons(pack_name: &str, track: &str) -> Result<Value, String> {
     let Some(path) = path else {
         return Err(format!("no lessons file for pack '{pack_name}'"));
     };
-    let text = std::fs::read_to_string(&path)
-        .map_err(|e| format!("lessons file unreadable: {e}"))?;
-    let doc: Value = serde_json::from_str(&text)
-        .map_err(|e| format!("lessons file unreadable: {e}"))?;
+    let text =
+        std::fs::read_to_string(&path).map_err(|e| format!("lessons file unreadable: {e}"))?;
+    let doc: Value =
+        serde_json::from_str(&text).map_err(|e| format!("lessons file unreadable: {e}"))?;
     if pack_str(&doc, "format") != LESSONS_FORMAT {
         return Err("lessons file format must be \"torogao-lessons/1\"".to_string());
     }
@@ -77,7 +75,7 @@ pub fn lessons_summary(lessons_doc: &Value) -> Value {
         row.insert("xp".to_string(), jget(&lesson, "xp").clone());
         row.insert(
             "checkKind".to_string(),
-            json!(pack_str(&jget(&lesson, "check"), "kind")),
+            json!(pack_str(jget(&lesson, "check"), "kind")),
         );
         rows.push(Value::Object(row));
     }
@@ -108,9 +106,9 @@ fn fail(kind: &str, mut evidence: Vec<String>) -> LessonCheckResult {
 }
 
 fn consent_recorded(ext: &Value) -> bool {
-    let consent = jget(&jget(ext, "character"), "consent");
-    jget(&consent, "adult") == &Value::Bool(true)
-        && jget(&consent, "wantsSelectedScenes") == &Value::Bool(true)
+    let consent = jget(jget(ext, "character"), "consent");
+    jget(consent, "adult") == &Value::Bool(true)
+        && jget(consent, "wantsSelectedScenes") == &Value::Bool(true)
 }
 
 fn validates_evidence(
@@ -152,11 +150,7 @@ fn expression_evidence(ext: &ExtView, pack: &Value) -> (Vec<String>, bool) {
     (ev, missing.is_empty())
 }
 
-fn export_evidence(
-    puppet: &Puppet,
-    walk: &mut Walk,
-    slot_count: usize,
-) -> (Vec<String>, bool) {
+fn export_evidence(puppet: &Puppet, walk: &mut Walk, slot_count: usize) -> (Vec<String>, bool) {
     // RP1-D1: the port's exporter emits the "torogao-rig-model"
     // token; the check tests for the port token and names it.
     match RigExporter::run(puppet, walk, slot_count) {
@@ -197,7 +191,7 @@ pub fn scene_has_feature(scene: &Value, feature: &str) -> bool {
         return false;
     }
     if let Some(kind) = feature.strip_prefix("effect:") {
-        if let Some(list) = jget(&jget(scene, "effects"), "effects").as_array() {
+        if let Some(list) = jget(jget(scene, "effects"), "effects").as_array() {
             return list.iter().any(|e| pack_str(e, "kind") == kind);
         }
         return false;
@@ -224,7 +218,7 @@ fn scene_validates_evidence(
             return (
                 vec![format!("scene '{scene_name}' could not be loaded: {e}")],
                 false,
-            )
+            );
         }
     };
     let mut findings = crate::scenes::validate_scene(&scene);
@@ -277,7 +271,11 @@ fn scene_features_evidence(
         let present = scene_has_feature(&scene, name);
         ev.push(format!(
             "{}: {name}",
-            if present { "feature present" } else { "feature MISSING" }
+            if present {
+                "feature present"
+            } else {
+                "feature MISSING"
+            }
         ));
         if !present {
             ok = false;
@@ -324,19 +322,21 @@ pub fn check_lesson(
                 };
             }
             if state_name.is_empty() {
-                return fail(&kind, vec!["the project stores no state to apply".to_string()]);
+                return fail(
+                    &kind,
+                    vec!["the project stores no state to apply".to_string()],
+                );
             }
             let mut track = Map::new();
-            track.insert(
-                "format".to_string(),
-                json!("torogao-input-track/1"),
-            );
+            track.insert("format".to_string(), json!("torogao-input-track/1"));
             track.insert("steps".to_string(), json!(30));
             track.insert("inputs".to_string(), Value::Object(Map::new()));
             let track = Value::Object(track);
-            let mut options = PreviewOptions::default();
-            options.ext = ext_doc.clone();
-            options.state_name = state_name.clone();
+            let options = PreviewOptions {
+                ext: ext_doc.clone(),
+                state_name: state_name.clone(),
+                ..Default::default()
+            };
             match run_physics_preview(puppet, &track, 0, "tutorial-check", &options) {
                 Ok(_) => (
                     vec![format!("state '{state_name}' composes in the preview")],
@@ -366,9 +366,8 @@ pub fn check_lesson(
             if let Value::Number(n) = &mr {
                 min_ratio = n.as_f64().unwrap_or(min_ratio);
             }
-            let ok = range_bad.is_empty()
-                && total > 0
-                && (covered as f64 / total as f64) >= min_ratio;
+            let ok =
+                range_bad.is_empty() && total > 0 && (covered as f64 / total as f64) >= min_ratio;
             let mut ev = vec![format!(
                 "set '{}': {}/{} ids covered, {} range violations, required ratio {}",
                 set_id,
@@ -398,12 +397,7 @@ pub fn check_lesson(
             ev.extend(ev4);
             (ev, v_ok && c_ok && e_ok && x_ok)
         }
-        _ => {
-            return fail(
-                &kind,
-                vec![format!("unknown check kind '{kind}'")],
-            )
-        }
+        _ => return fail(&kind, vec![format!("unknown check kind '{kind}'")]),
     };
     if ok {
         LessonCheckResult {
@@ -435,10 +429,10 @@ pub fn load_progress(path: &str) -> Result<Value, String> {
     if path.is_empty() || !std::path::Path::new(path).exists() {
         return Ok(fresh_progress());
     }
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| format!("progress file unreadable: {e}"))?;
-    let doc: Value = serde_json::from_str(&text)
-        .map_err(|e| format!("progress file unreadable: {e}"))?;
+    let text =
+        std::fs::read_to_string(path).map_err(|e| format!("progress file unreadable: {e}"))?;
+    let doc: Value =
+        serde_json::from_str(&text).map_err(|e| format!("progress file unreadable: {e}"))?;
     if pack_str(&doc, "format") != PROGRESS_FORMAT {
         return Err(format!(
             "progress file format must be \"{PROGRESS_FORMAT}\""
@@ -458,8 +452,7 @@ pub fn save_progress(path: &str, progress: &Value) -> Result<(), String> {
     }
     let tmp = format!("{path}.tmp");
     let text = torogao_format::jsonfmt::to_d_json(progress);
-    std::fs::write(&tmp, format!("{text}\n"))
-        .map_err(|e| format!("cannot write progress: {e}"))?;
+    std::fs::write(&tmp, format!("{text}\n")).map_err(|e| format!("cannot write progress: {e}"))?;
     std::fs::rename(&tmp, path).map_err(|e| format!("cannot write progress: {e}"))?;
     Ok(())
 }
@@ -494,7 +487,7 @@ pub fn record_completion(
             obj.insert("completed".to_string(), Value::Object(Map::new()));
         }
     }
-    if jget(&jget(progress, "completed"), &key).is_object() {
+    if jget(jget(progress, "completed"), &key).is_object() {
         return false;
     }
     let seq = progress_int(progress, "seq") + 1;
@@ -505,10 +498,7 @@ pub fn record_completion(
     entry.insert("xp".to_string(), jget(lesson, "xp").clone());
     entry.insert("projectSha256".to_string(), json!(sha256_hex(&bytes)));
     if let Some(obj) = progress.as_object_mut() {
-        if let Some(completed) = obj
-            .get_mut("completed")
-            .and_then(|c| c.as_object_mut())
-        {
+        if let Some(completed) = obj.get_mut("completed").and_then(|c| c.as_object_mut()) {
             completed.insert(key, Value::Object(entry));
         }
         obj.insert("seq".to_string(), json!(seq));
@@ -544,7 +534,7 @@ pub fn progress_summary(progress: &Value, lessons_doc: &Value) -> Value {
         let mut remaining = 0usize;
         for lesson in lesson_list(lessons_doc) {
             let key = format!("{pack_name}/{track}/{}", pack_str(&lesson, "id"));
-            if !jget(&completed_obj, &key).is_object() {
+            if !jget(completed_obj, &key).is_object() {
                 remaining += 1;
             }
         }

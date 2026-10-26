@@ -65,7 +65,7 @@ pub fn fmt_g(value: f64) -> String {
     }
     let magnitude = value.abs();
     let exponent = magnitude.log10().floor() as i32;
-    if exponent < -4 || exponent >= 6 {
+    if !(-4..6).contains(&exponent) {
         // Exponent form: %.5e with trailing zeros stripped.
         let raw = format!("{value:.5e}");
         let (mantissa, exp) = raw.split_once('e').expect("exponent form");
@@ -114,6 +114,6 @@ mod tests {
         assert_eq!(fmt_g(0.00001), "1e-05");
         assert_eq!(fmt_g(0.0001), "0.0001");
         assert_eq!(fmt_g(1234567.0), "1.23457e+06");
-        assert_eq!(fmt_g(3.14159265), "3.14159");
+        assert_eq!(fmt_g(2.34567891), "2.34568");
     }
 }

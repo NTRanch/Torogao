@@ -6,8 +6,8 @@
 //! std::net — two routes, one request shape, size caps
 //! on headers and body.
 
-use crate::registry::{call_tool, list_tools, REGISTRY_VERSION};
-use serde_json::{json, Value};
+use crate::registry::{REGISTRY_VERSION, call_tool, list_tools};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -103,7 +103,12 @@ impl A2aServer {
     fn handle_rpc(&mut self, msg: &Value) -> Value {
         let id = msg.get("id").cloned().unwrap_or(Value::Null);
         let Some(method) = msg.get("method").and_then(Value::as_str) else {
-            return rpc_error(&id, -32600, "invalid_request", "request has no string method");
+            return rpc_error(
+                &id,
+                -32600,
+                "invalid_request",
+                "request has no string method",
+            );
         };
         let params = msg.get("params").cloned().unwrap_or_else(|| json!({}));
         match method {

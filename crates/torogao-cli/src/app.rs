@@ -10,14 +10,17 @@
 
 use crate::criteria::findings_json;
 use crate::extdoc::{
-    ExtView, TG_EXT_MALFORMED, count_glue_keys, expression_missing, ext_summary, rating_blocks_export,
-    rating_stamp, rating_verdict, tracking_coverage,
+    ExtView, TG_EXT_MALFORMED, count_glue_keys, expression_missing, ext_summary,
+    rating_blocks_export, rating_stamp, rating_verdict, tracking_coverage,
 };
 use crate::guards::{self, TG_CONTAINER_MALFORMED, load_project, payload_guarded};
-use crate::handlers::{base_stem, join_path, validate_findings, ToolLoad};
+use crate::handlers::{ToolLoad, base_stem, join_path, validate_findings};
 use crate::inspect::{census, project_info_doc};
 use crate::packs::{load_pack, pack_str, pack_tracking_set};
-use crate::paths::{PathKind, base_dir, default_playroom_session_path, default_tutorial_progress_path, playroom_sets_dir};
+use crate::paths::{
+    PathKind, base_dir, default_playroom_session_path, default_tutorial_progress_path,
+    playroom_sets_dir,
+};
 use crate::registry;
 use crate::util::jget;
 use crate::walk::Walk;
@@ -193,15 +196,13 @@ fn run_tail(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             "--override" => take_value(args, &mut i, &mut override_path),
             "--pack" => take_value(args, &mut i, &mut pack_name),
             "--set" => take_value(args, &mut i, &mut set_id),
-            "--fps" => {
-                if i + 1 < args.len() {
-                    i += 1;
-                    match args[i].parse::<i32>() {
-                        Ok(value) => fps_override = value,
-                        Err(_) => {
-                            let _ = writeln!(err, "--fps needs a number");
-                            return 3;
-                        }
+            "--fps" if i + 1 < args.len() => {
+                i += 1;
+                match args[i].parse::<i32>() {
+                    Ok(value) => fps_override = value,
+                    Err(_) => {
+                        let _ = writeln!(err, "--fps needs a number");
+                        return 3;
                     }
                 }
             }
@@ -244,7 +245,10 @@ fn run_tail(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         return 3;
     }
     if command == "apply-state" && state_name.is_empty() && variant_id.is_empty() {
-        let _ = writeln!(err, "apply-state requires --state <name> and/or --variant <id>");
+        let _ = writeln!(
+            err,
+            "apply-state requires --state <name> and/or --variant <id>"
+        );
         return 3;
     }
 
@@ -408,8 +412,7 @@ fn run_tail(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
                 let _ = writeln!(err, "pack '{pack_name}' has no tracking set '{set_id}'");
                 return 3;
             }
-            let (missing, range_bad) =
-                tracking_coverage(&load.loaded.puppet, &set);
+            let (missing, range_bad) = tracking_coverage(&load.loaded.puppet, &set);
             let ok = missing.is_empty() && range_bad.is_empty();
             let mut doc = serde_json::json!({
                 "completeness": pack_str(&set, "completeness"),

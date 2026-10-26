@@ -9,11 +9,11 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::packs::pack_kink_vocabulary;
 use crate::util::{jget, jstr};
-use crate::writer::{build_scaffold, ScaffoldOutcome};
+use crate::writer::{ScaffoldOutcome, build_scaffold};
 
 pub const LANE_FORMAT: &str = "torogao-writer-lane/1";
 pub const TRANSCRIPT_FORMAT: &str = "torogao-writer-transcript/1";
@@ -33,8 +33,7 @@ pub struct LaneConfig {
 }
 
 pub fn load_lane_config(path: &str) -> Result<LaneConfig, String> {
-    let text =
-        std::fs::read_to_string(path).map_err(|e| format!("lane config unreadable: {e}"))?;
+    let text = std::fs::read_to_string(path).map_err(|e| format!("lane config unreadable: {e}"))?;
     let doc: Value =
         serde_json::from_str(&text).map_err(|e| format!("lane config unreadable: {e}"))?;
     if jstr(&doc, "format") != LANE_FORMAT {
@@ -77,7 +76,7 @@ pub fn count_words(text: &str) -> usize {
 }
 
 fn word_bounds_for(scaffold: &Value, class: &str) -> (i64, i64) {
-    let bounds = jget(&jget(scaffold, "wordCounts"), class);
+    let bounds = jget(jget(scaffold, "wordCounts"), class);
     let int_or_zero = |v: &Value| -> i64 {
         match v {
             Value::Number(n) => {
@@ -93,8 +92,8 @@ fn word_bounds_for(scaffold: &Value, class: &str) -> (i64, i64) {
         }
     };
     (
-        int_or_zero(&jget(&bounds, "minWords")),
-        int_or_zero(&jget(&bounds, "maxWords")),
+        int_or_zero(jget(bounds, "minWords")),
+        int_or_zero(jget(bounds, "maxWords")),
     )
 }
 
@@ -107,7 +106,7 @@ struct Slot {
 
 fn slot_prompt(scaffold: &Value, slot: &Slot, min: i64, max: i64) -> String {
     let function = if slot.class == "prose" {
-        jstr(&jget(scaffold, "proseStructure"), "structure").to_string()
+        jstr(jget(scaffold, "proseStructure"), "structure").to_string()
     } else {
         slot.function.clone()
     };
@@ -143,17 +142,15 @@ impl FixtureCache {
         if self.doc.is_none() {
             let text = std::fs::read_to_string(&cfg.transcript)
                 .map_err(|e| format!("transcript unreadable: {e}"))?;
-            let doc: Value = serde_json::from_str(&text)
-                .map_err(|e| format!("transcript unreadable: {e}"))?;
+            let doc: Value =
+                serde_json::from_str(&text).map_err(|e| format!("transcript unreadable: {e}"))?;
             if jstr(&doc, "format") != TRANSCRIPT_FORMAT {
-                return Err(
-                    "transcript format must be \"torogao-writer-transcript/1\"".to_string(),
-                );
+                return Err("transcript format must be \"torogao-writer-transcript/1\"".to_string());
             }
             self.doc = Some(doc);
         }
         let doc = self.doc.as_ref().unwrap();
-        match jget(&jget(doc, "responses"), slot_id) {
+        match jget(jget(doc, "responses"), slot_id) {
             Value::String(s) => Ok(s.clone()),
             _ => Err(format!(
                 "transcript carries no response for slot '{slot_id}'"
@@ -167,9 +164,9 @@ fn http_fill(cfg: &LaneConfig, prompt: &str) -> Result<String, String> {
     // dependency; the endpoint is a local model server).
     let endpoint = cfg.endpoint.trim_end_matches('/');
     let url = format!("{endpoint}/api/generate");
-    let stripped = url.strip_prefix("http://").ok_or_else(|| {
-        "endpoint call failed: only http:// endpoints are supported".to_string()
-    })?;
+    let stripped = url
+        .strip_prefix("http://")
+        .ok_or_else(|| "endpoint call failed: only http:// endpoints are supported".to_string())?;
     let (host_port, path) = match stripped.find('/') {
         Some(i) => (&stripped[..i], &stripped[i..]),
         None => (stripped, "/"),
@@ -205,8 +202,8 @@ fn http_fill(cfg: &LaneConfig, prompt: &str) -> Result<String, String> {
     let response_text = &raw_text[body_start + 4..];
     // Chunked transfer-encoding is not decoded; the model
     // servers this lane targets answer with Content-Length.
-    let doc: Value = serde_json::from_str(response_text)
-        .map_err(|e| format!("endpoint call failed: {e}"))?;
+    let doc: Value =
+        serde_json::from_str(response_text).map_err(|e| format!("endpoint call failed: {e}"))?;
     match jget(&doc, "response") {
         Value::String(s) => Ok(s.clone()),
         _ => Err("endpoint returned no 'response' text".to_string()),
@@ -236,7 +233,10 @@ fn refusal_doc(code: &'static str, detail: String, cfg: &LaneConfig) -> Value {
     if cfg.mode == "http" {
         doc.insert("model".to_string(), json!(cfg.model));
     }
-    doc.insert("note".to_string(), json!("The lane refuses the whole draft and never re-prompts or repairs inside one call."));
+    doc.insert(
+        "note".to_string(),
+        json!("The lane refuses the whole draft and never re-prompts or repairs inside one call."),
+    );
     Value::Object(doc)
 }
 
@@ -345,8 +345,7 @@ pub fn run_writer_lane(
     let refrain = jstr(&scaffold, "refrain");
     let closing_text = fills
         .iter()
-        .filter(|f| f.class == "dialogue")
-        .next_back()
+        .rfind(|f| f.class == "dialogue")
         .map(|f| f.text.as_str())
         .unwrap_or("");
     if !closing_text.contains(refrain) {

@@ -1,7 +1,7 @@
 //! Preview effects stack validation and compilation,
 //! ported from the D `torogao.cli.effects` module.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use torogao_engine::Puppet;
 
@@ -94,9 +94,7 @@ pub fn validate_effects(doc: &Value, param_names: Option<&[String]>) -> Vec<Find
                     TG_FX_DUPLICATE,
                     "error",
                     format!("{at}.kind"),
-                    format!(
-                        "singleton effect '{kind}' appears more than once; two do not compose"
-                    ),
+                    format!("singleton effect '{kind}' appears more than once; two do not compose"),
                 ));
             }
             seen_singletons.push(kind.clone());

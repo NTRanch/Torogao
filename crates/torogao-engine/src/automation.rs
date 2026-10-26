@@ -6,7 +6,7 @@
 //! unused, and the sine phase is a field the deserializer
 //! never reads (it stays 0).
 
-use crate::math::{clamp_f32, Vec2};
+use crate::math::{Vec2, clamp_f32};
 use crate::param::{MergeMode, Parameter};
 use serde_json::Value;
 use torogao_format::value::{jget, jnum, jstr};
@@ -185,7 +185,7 @@ impl Automation {
                 let speed = sine.speed as f64;
                 let phase = sine.phase as f64;
                 for binding in &self.bindings {
-                    let raw = (current_time * speed + phase) as f64;
+                    let raw = current_time * speed + phase;
                     let wave_unit = match sine.sine_type {
                         0 => raw.sin(),
                         1 => raw.cos(),
@@ -194,12 +194,7 @@ impl Automation {
                     let unit = ((wave_unit + 1.0) / 2.0) as f32;
                     let wave = binding.range.x + unit * (binding.range.y - binding.range.x);
                     if let Some(param) = binding.param.and_then(|i| params.get_mut(i)) {
-                        param.push_offset_axis(
-                            binding.axis,
-                            wave,
-                            MergeMode::Passthrough,
-                            1.0,
-                        );
+                        param.push_offset_axis(binding.axis, wave, MergeMode::Passthrough, 1.0);
                     }
                 }
             }
@@ -211,8 +206,7 @@ impl Automation {
                 let gravity = phys.gravity;
                 let bounciness = phys.bounciness;
                 let steps = self.bindings.len().min(phys.nodes.len());
-                for i in 0..steps {
-                    let node = &mut phys.nodes[i];
+                for node in phys.nodes.iter_mut().take(steps) {
                     let tmp = node.position;
                     node.position = (node.position - node.old_position)
                         + Vec2::new(0.0, gravity) * (dt * dt) * bounciness;
@@ -228,12 +222,7 @@ impl Automation {
                     node.position.x = clamp_f32(node.position.x, binding.range.x, binding.range.y);
                     let x = node.position.x;
                     if let Some(param) = binding.param.and_then(|idx| params.get_mut(idx)) {
-                        param.push_offset_axis(
-                            binding.axis,
-                            x,
-                            MergeMode::Passthrough,
-                            1.0,
-                        );
+                        param.push_offset_axis(binding.axis, x, MergeMode::Passthrough, 1.0);
                     }
                 }
             }
@@ -253,7 +242,11 @@ fn constrain(nodes: &mut [VerletNode], bindings: &[AutomationBinding], params: &
             }
         }
         let (node1_pos, node2_pos, node2_distance) = {
-            (nodes[i].position, nodes[i + 1].position, nodes[i + 1].distance)
+            (
+                nodes[i].position,
+                nodes[i + 1].position,
+                nodes[i + 1].distance,
+            )
         };
         let diff_x = node1_pos.x - node2_pos.x;
         let diff_y = node1_pos.y - node2_pos.y;
@@ -293,7 +286,8 @@ mod tests {
 
     #[test]
     fn sine_phase_never_loads() {
-        let raw = json!({"type": "sine", "name": "S", "speed": 2.0, "sine_type": 1, "bindings": []});
+        let raw =
+            json!({"type": "sine", "name": "S", "speed": 2.0, "sine_type": 1, "bindings": []});
         let automation = Automation::from_payload(&raw).expect("sine");
         match automation.kind {
             super::AutomationKind::Sine(s) => {

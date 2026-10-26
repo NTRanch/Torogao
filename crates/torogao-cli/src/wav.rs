@@ -148,8 +148,10 @@ pub fn parse_wav(bytes: &[u8]) -> Result<WavData, String> {
                         as f64
                         / 2_147_483_648.0
                 }
-                _ => f32::from_le_bytes([data[base], data[base + 1], data[base + 2], data[base + 3]])
-                    as f64,
+                _ => {
+                    f32::from_le_bytes([data[base], data[base + 1], data[base + 2], data[base + 3]])
+                        as f64
+                }
             };
             channel.push(v);
         }

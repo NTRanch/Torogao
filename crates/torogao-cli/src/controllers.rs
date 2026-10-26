@@ -150,10 +150,7 @@ pub fn validate_controllers(ext: &Value, param_names: &[String]) -> Vec<Finding>
 /// Values not supplied fall back to each controller's
 /// default. Unknown controller ids in the values doc are
 /// reported as problems.
-pub fn resolve_controllers(
-    ext: &Value,
-    values_doc: &Value,
-) -> (Vec<(String, f64)>, Vec<String>) {
+pub fn resolve_controllers(ext: &Value, values_doc: &Value) -> (Vec<(String, f64)>, Vec<String>) {
     let mut out: Vec<(String, f64)> = Vec::new();
     let mut problems = Vec::new();
     let Value::Array(controllers) = jget(ext, "controllers") else {
@@ -187,8 +184,8 @@ pub fn resolve_controllers(
                 if param.is_empty() {
                     continue;
                 }
-                let resolved = pack_num(binding, "gain", 1.0) * value
-                    + pack_num(binding, "offset", 0.0);
+                let resolved =
+                    pack_num(binding, "gain", 1.0) * value + pack_num(binding, "offset", 0.0);
                 // Later bindings overwrite (reference AA assignment).
                 if let Some(slot) = out.iter_mut().find(|(name, _)| *name == param) {
                     slot.1 = resolved;
