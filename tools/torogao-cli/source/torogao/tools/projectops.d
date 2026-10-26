@@ -24,6 +24,7 @@ import torogao.cli.inpfile;
 import torogao.cli.inspect_;
 import torogao.cli.puppetwalk;
 import torogao.cli.rigexport;
+import torogao.tools.audiotools;
 import torogao.tools.physicstools;
 import torogao.tools.registry;
 import torogao.tools.templatools;
@@ -334,6 +335,7 @@ ToolRegistry buildCoreRegistry() {
     // surfaces pick them up from the registry automatically.
     registerPhysicsTools(reg);
     registerTemplateTools(reg);
+    registerAudioTools(reg);
 
     return reg;
 }

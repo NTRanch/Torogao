@@ -13,6 +13,10 @@
         torogao-cli list-templates     list rig templates + presets
         torogao-cli instantiate-template <name> [--preset <p>]...
                     --out <file.inx>   build a puppet from a template
+        torogao-cli audio-render <recipe.json> --out <dir>
+        torogao-cli audio-validate <recipe.json>
+        torogao-cli audio-bake <file.wav> --recipe <bake.json>
+                    --out <curves.json>
         torogao-cli mcp [--stdio]      MCP server over stdio
         torogao-cli a2a [--bind <addr>] [--port <n>]
                                        A2A HTTP surface
@@ -38,10 +42,14 @@ import torogao.a2a.server;
 import torogao.cli.criteria;
 import torogao.cli.inpfile;
 import torogao.cli.inspect_;
+import torogao.audio.bake;
+import torogao.audio.proc;
+import torogao.audio.wav;
 import torogao.cli.physicspreview;
 import torogao.cli.puppetwalk;
 import torogao.cli.rigexport;
 import torogao.cli.templates;
+import torogao.curves;
 import torogao.mcp.server;
 import torogao.tools.projectops;
 import torogao.tools.registry;
@@ -142,6 +150,115 @@ int main(string[] args) {
             return 3;
         }
         writeln(summary.toString());
+        return 0;
+    }
+    if (args.length >= 2 && args[1] == "audio-validate") {
+        if (args.length < 3) {
+            stderr.writeln("usage: torogao-cli audio-validate <recipe.json>");
+            return 3;
+        }
+        JSONValue recipe;
+        try recipe = parseJSON(readText(args[2]));
+        catch (Exception ex) {
+            stderr.writeln("recipe unreadable: ", ex.msg);
+            return 3;
+        }
+        auto findings = validateRecipe(recipe);
+        JSONValue doc;
+        doc["file"] = args[2];
+        bool hasError = false;
+        JSONValue[] list;
+        foreach (f; findings) {
+            list ~= f.toJson();
+            if (f.severity == "error") hasError = true;
+        }
+        doc["result"] = hasError ? "findings" : "clean";
+        doc["findings"] = list;
+        writeln(doc.toString());
+        return hasError ? 1 : 0;
+    }
+    if (args.length >= 2 && args[1] == "audio-render") {
+        if (args.length < 3) {
+            stderr.writeln("usage: torogao-cli audio-render " ~
+                "<recipe.json> --out <dir>");
+            return 3;
+        }
+        string outDir;
+        for (size_t i = 3; i < args.length; i++)
+            if (args[i] == "--out" && i + 1 < args.length)
+                outDir = args[++i];
+        if (outDir.length == 0) {
+            stderr.writeln("audio-render requires --out <dir>");
+            return 3;
+        }
+        string recipeText;
+        JSONValue recipe;
+        try {
+            recipeText = readText(args[2]);
+            recipe = parseJSON(recipeText);
+        } catch (Exception ex) {
+            stderr.writeln("recipe unreadable: ", ex.msg);
+            return 3;
+        }
+        mkdirRecurse(outDir);
+        auto result = renderRecipe(recipe, recipeText, outDir);
+        if (result.error.length > 0) {
+            JSONValue doc;
+            doc["file"] = args[2];
+            doc["result"] = "error";
+            doc["error"] = result.error;
+            writeln(doc.toString());
+            return 3;
+        }
+        writeln(result.manifest.toString());
+        return 0;
+    }
+    if (args.length >= 2 && args[1] == "audio-bake") {
+        if (args.length < 3) {
+            stderr.writeln("usage: torogao-cli audio-bake <file.wav> " ~
+                "--recipe <bake.json> --out <curves.json>");
+            return 3;
+        }
+        string bakeRecipePath, bakeOut;
+        for (size_t i = 3; i < args.length; i++) {
+            if (args[i] == "--recipe" && i + 1 < args.length)
+                bakeRecipePath = args[++i];
+            else if (args[i] == "--out" && i + 1 < args.length)
+                bakeOut = args[++i];
+        }
+        if (bakeRecipePath.length == 0 || bakeOut.length == 0) {
+            stderr.writeln("audio-bake requires --recipe and --out");
+            return 3;
+        }
+        JSONValue bakeRecipe;
+        try bakeRecipe = parseJSON(readText(bakeRecipePath));
+        catch (Exception ex) {
+            stderr.writeln("bake recipe unreadable: ", ex.msg);
+            return 3;
+        }
+        WavData wav;
+        try wav = readWavFile(args[2]);
+        catch (Exception ex) {
+            stderr.writeln("WAV unreadable: ", ex.msg);
+            return 3;
+        }
+        CurveSet curves;
+        string bakeError;
+        if (!bakeEnvelope(wav, bakeRecipe, args[2], curves, bakeError)) {
+            JSONValue doc;
+            doc["file"] = args[2];
+            doc["result"] = "error";
+            doc["error"] = bakeError;
+            writeln(doc.toString());
+            return 3;
+        }
+        write(bakeOut, curves.toJson() ~ "\n");
+        JSONValue doc;
+        doc["file"] = args[2];
+        doc["curves"] = bakeOut;
+        doc["steps"] = curves.steps();
+        doc["series"] = curves.series.length;
+        writeln(doc.toString());
         return 0;
     }
     if (args.length < 3) {
