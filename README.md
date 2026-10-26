@@ -44,9 +44,11 @@ cd creator && dub build
 
 The default dub configuration is `torogao`, derived from upstream's
 `barebones` configuration: a plain Linux executable build with no
-branding or demo nagscreen. The library is pinned exactly at v0.8.7
-by `creator/dub.selections.json` (path-resolved to `../inochi2d`),
-and i2d-imgui is path-resolved to the vendored copy.
+branding or demo nagscreen. `creator/dub.selections.json` is
+committed and pins every dependency to an exact version (library
+0.8.7, i2d-imgui 0.8.1); the `dub add-local` steps above bind those
+two versions to the vendored trees in this repository instead of
+the registry copies.
 
 ### Hermetic native dependencies
 
