@@ -11,4 +11,4 @@ to **100% Rust**; the D build, complete and gated through phase
 P5b, is frozen as the reference implementation for the port.
 
 - The port plan: [PORT-PLAN.md](PORT-PLAN.md)
-- Status: port phase RP0 (workspace + gate wiring) is next.
+- Status: port phase RP0 (workspace + gate wiring) is in progress.

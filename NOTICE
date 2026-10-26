@@ -1,0 +1,14 @@
+Torogao
+Copyright (c) 2026, Nice Thoughts Ranch
+
+Torogao began as a downstream fork of the Inochi Creator application
+and the inochi2d puppet-animation library, and this Rust port carries
+their design and file-format lineage. Inochi Creator and inochi2d are
+works of the Inochi2D Project and its contributors, distributed under
+the BSD 2-Clause License:
+
+    https://github.com/Inochi2D/inochi-creator
+    https://github.com/Inochi2D/inochi2d
+
+The test harnesses and fixtures under tests/ were authored during
+Torogao's D development phases and are part of this project.

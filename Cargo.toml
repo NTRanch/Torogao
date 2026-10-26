@@ -1,0 +1,14 @@
+[workspace]
+members = [
+    "crates/torogao-app",
+    "crates/torogao-cli",
+    "crates/torogao-engine",
+    "crates/torogao-format",
+]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+license = "BSD-2-Clause"
+rust-version = "1.85"
+version = "0.1.0"
