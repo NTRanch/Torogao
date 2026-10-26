@@ -8,6 +8,13 @@
         torogao-cli inspect <project.inx> [--out file.json]
         torogao-cli validate <project.inx> [--out file.json]
         torogao-cli export-rig <project.inx> --out <dir>
+        torogao-cli mcp [--stdio]      MCP server over stdio
+        torogao-cli a2a [--bind <addr>] [--port <n>]
+                                       A2A HTTP surface
+        torogao-cli registry-dump      the tool registry as JSON
+
+    The agent surfaces (mcp, a2a) delegate to the same tool
+    registry the subcommands use; see docs/agents.md.
 
     Exit codes:
         0  success (validate: no findings)
@@ -22,19 +29,52 @@ import inochi2d.torogao.bridge : torogaoInitHeadless;
 import inochi2d.core : Puppet;
 import inochi2d.fmt : inLoadPuppet;
 import inochi2d.integration : inCurrentPuppetTextureSlots;
+import torogao.a2a.server;
 import torogao.cli.criteria;
 import torogao.cli.inpfile;
 import torogao.cli.inspect_;
 import torogao.cli.puppetwalk;
 import torogao.cli.rigexport;
+import torogao.mcp.server;
+import torogao.tools.projectops;
+import torogao.tools.registry;
 import std.json : JSONValue, JSONType;
 import std.stdio : writeln, stderr;
 import std.file : exists, mkdirRecurse, write;
 import std.path : baseName, buildPath, stripExtension;
 
 int main(string[] args) {
+    // Agent-surface modes take no project argument.
+    if (args.length >= 2 && args[1] == "mcp") {
+        return runMcpServer(buildCoreRegistry());
+    }
+    if (args.length >= 2 && args[1] == "registry-dump") {
+        writeln(buildCoreRegistry().dumpJson().toString());
+        return 0;
+    }
+    if (args.length >= 2 && args[1] == "a2a") {
+        string bind = "127.0.0.1";
+        ushort port = a2aDefaultPort;
+        for (size_t i = 2; i < args.length; i++) {
+            if (args[i] == "--port" && i + 1 < args.length) {
+                import std.conv : to, ConvException;
+                try {
+                    port = to!ushort(args[++i]);
+                } catch (ConvException) {
+                    stderr.writeln("a2a: --port needs a number");
+                    return 3;
+                }
+            } else if (args[i] == "--bind" && i + 1 < args.length) {
+                bind = args[++i];
+            } else {
+                stderr.writeln("a2a: unknown argument: ", args[i]);
+                return 3;
+            }
+        }
+        return runA2aServer(buildCoreRegistry(), bind, port);
+    }
     if (args.length < 3) {
-        stderr.writeln("usage: torogao-cli <inspect|validate|export-rig> <project.inx> [--out <path>]");
+        stderr.writeln("usage: torogao-cli <inspect|validate|export-rig|mcp|a2a|registry-dump> <project.inx> [--out <path>]");
         return 3;
     }
     string command = args[1];
