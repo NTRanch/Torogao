@@ -2,7 +2,7 @@
 //!
 //! Raw values are NOT proof of anything — they are the input to
 //! `crate::validate`. Keeping raw and validated types distinct is
-//! what lets the validator own every invariant (the Tiger Style
+//! what lets the validator own every invariant (the
 //! "validated vs raw" distinction). Every struct denies unknown
 //! fields: an unrecognized key is `LRF-104`, never ignored.
 
