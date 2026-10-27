@@ -71,6 +71,34 @@ impl ExportResult {
     }
 }
 
+/// Radians → degrees quotient at extended precision:
+/// the product `value * 180.0f` rounds to a float first,
+/// the division by π then runs at extended precision and
+/// is NOT rounded back to a float here — the reference
+/// keeps the quotient at `real` precision into the angle
+/// arithmetic, and only the stored angle rounds. (The
+/// product-first rounding is verified against the
+/// reference export; keeping the product exact, or
+/// dividing at f32 precision, lands one ulp off.)
+fn degrees_quotient(value: f32) -> f64 {
+    f64::from(value * 180.0f32) / std::f64::consts::PI
+}
+
+/// The deformer's base angle: -(z * 180 / π), the
+/// reference's `-(rotation.z * 180.0f / PI)` float —
+/// this one IS a float variable, so it rounds here.
+fn base_degrees(rotation_z: f32) -> f32 {
+    -(degrees_quotient(rotation_z) as f32)
+}
+
+/// One `angle -= value * 180.0f / PI` step: the
+/// subtraction runs at extended precision against the
+/// unrounded quotient and the result rounds back into
+/// the float angle.
+fn angle_minus_degrees(angle: f32, radians: f32) -> f32 {
+    (f64::from(angle) - degrees_quotient(radians)) as f32
+}
+
 fn jv(value: f32) -> Value {
     f64_of_f32(value)
 }
@@ -635,7 +663,7 @@ impl<'a> RigExporter<'a> {
         let world_pos = self.walk.world_pos(walk_idx);
         self.anchor_point.insert(node.uuid, world_pos);
 
-        let base_rz_deg = (-(node.local.rotation.z as f64) * 180.0 / std::f64::consts::PI) as f32;
+        let base_rz_deg = base_degrees(node.local.rotation.z);
         let base_sx = node.local.scale.x;
         let base_sy = node.local.scale.y;
 
@@ -652,9 +680,7 @@ impl<'a> RigExporter<'a> {
                 let (mut scale_x, mut scale_y) = (base_sx, base_sy);
                 for binding in &rz {
                     let (bx, by) = self.binding_indices(*binding, &axes, i, j);
-                    let delta =
-                        (self.value_at(*binding, bx, by) as f64) * 180.0 / std::f64::consts::PI;
-                    angle = (angle as f64 - delta) as f32;
+                    angle = angle_minus_degrees(angle, self.value_at(*binding, bx, by));
                 }
                 for binding in &sx {
                     let (bx, by) = self.binding_indices(*binding, &axes, i, j);

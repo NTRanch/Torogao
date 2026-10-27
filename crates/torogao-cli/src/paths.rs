@@ -123,10 +123,12 @@ pub fn candidate_data_dirs(env_var: &str, leaf: &str) -> Vec<PathBuf> {
         }
     }
     if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            dirs.push(dir.join("../../../").join(leaf));
-            dirs.push(dir.join("../").join(leaf));
-        }
+        // The reference builds its candidates from the
+        // executable's full file path (the file-name
+        // component counts as one level), not its parent
+        // directory.
+        dirs.push(exe.join("../../../").join(leaf));
+        dirs.push(exe.join("../").join(leaf));
     }
     dirs.push(PathBuf::from(".").join(leaf));
     dirs

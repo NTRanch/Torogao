@@ -297,7 +297,7 @@ fn build_node(
             node.comp_threshold = jnum(raw, "threshold", 0.5) as f32;
             node.tint = vec3_of(jget(raw, "tint"), Vec3::ONE);
             node.screen_tint = vec3_of(jget(raw, "screenTint"), Vec3::ZERO);
-            let blend = jstr(raw, "blending_mode");
+            let blend = jstr(raw, "blend_mode");
             if !blend.is_empty() {
                 node.blend_mode = blend.to_string();
             }
@@ -521,12 +521,27 @@ impl Puppet {
         }
         let root = self.nodes.root;
         recurse(self, root, false);
-        // selfSort: stable sort by zSort descending.
+        // selfSort: stable sort by zSort descending, where
+        // zSort is the reference's accumulated property —
+        // parent.zSort + own (zsort + offsetSort), associated
+        // root-down exactly as the reference recursion does.
+        fn accumulated(nodes: &NodeArena, idx: usize) -> f32 {
+            let mut chain = Vec::new();
+            let mut current = Some(idx);
+            while let Some(i) = current {
+                chain.push(i);
+                current = nodes.nodes[i].parent;
+            }
+            let mut total = 0.0f32;
+            for i in chain.iter().rev() {
+                total += nodes.nodes[*i].rel_zsort();
+            }
+            total
+        }
         let nodes = &self.nodes;
         self.root_parts.sort_by(|a, b| {
-            nodes.nodes[*b]
-                .zsort
-                .partial_cmp(&nodes.nodes[*a].zsort)
+            accumulated(nodes, *b)
+                .partial_cmp(&accumulated(nodes, *a))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
     }

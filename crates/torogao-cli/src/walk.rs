@@ -183,7 +183,19 @@ impl Walk {
         } else {
             None
         };
-        let world = puppet.nodes.transform(node_idx).trs;
+        // SimplePhysics nodes carry no placement of their own
+        // in the reference walk: the driver owns their
+        // transform, and at rest their world matrix is their
+        // parent's (verified against the reference export:
+        // strand offsets place every physics node exactly at
+        // its anchor parent's world position).
+        let world = if kind == NodeKind::SimplePhysics {
+            parent
+                .map(|parent_walk| self.nodes[parent_walk].world)
+                .unwrap_or_else(|| puppet.nodes.transform(node_idx).trs)
+        } else {
+            puppet.nodes.transform(node_idx).trs
+        };
         let walk_idx = self.nodes.len();
         self.nodes.push(WNode {
             node: node_idx,
