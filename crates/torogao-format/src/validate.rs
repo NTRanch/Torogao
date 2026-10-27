@@ -1254,3 +1254,190 @@ fn convert_strand<'a>(
         output,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{FormatTokenClass, classify_format_token, parse_model};
+    use crate::model::{FormatWarning, LEGACY_MODEL_FORMAT_TOKEN, MODEL_FORMAT_TOKEN};
+    use crate::parse_error::ParseError;
+
+    /// A minimal valid model document carrying `format`, in the
+    /// shape a hand-migrated file carries it: the header fields
+    /// (`format`, `format_version: 1`, `id: "Base_Humanoid"`)
+    /// reproduce the header of the real legacy-token export in
+    /// the RP1 probe corpus (no `.model.json` fixture is in-tree,
+    /// so the header is reproduced inline rather than included).
+    /// `None` omits the `format` field entirely.
+    fn minimal_model_bytes(format: Option<&str>) -> Vec<u8> {
+        let header = match format {
+            Some(token) => format!(r#""format": "{token}", "#),
+            None => String::new(),
+        };
+        format!(
+            r#"{{{header}"format_version": 1, "id": "Base_Humanoid", "generator": null, "parameters": [], "parts": [], "textures": [], "deformers": [], "meshes": [], "physics": []}}"#
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn classify_accepts_current_token() {
+        assert_eq!(MODEL_FORMAT_TOKEN, "torogao-rig-model");
+        let class =
+            classify_format_token(Some("torogao-rig-model")).expect("the current token classifies");
+        assert_eq!(class, FormatTokenClass::Current);
+        assert_eq!(
+            classify_format_token(Some(MODEL_FORMAT_TOKEN)).expect("constant classifies"),
+            FormatTokenClass::Current
+        );
+    }
+
+    #[test]
+    fn classify_accepts_legacy_token_as_legacy() {
+        assert_eq!(LEGACY_MODEL_FORMAT_TOKEN, "lumen-rig-model");
+        let class =
+            classify_format_token(Some("lumen-rig-model")).expect("the legacy token classifies");
+        assert_eq!(class, FormatTokenClass::Legacy);
+        assert_eq!(
+            classify_format_token(Some(LEGACY_MODEL_FORMAT_TOKEN)).expect("constant classifies"),
+            FormatTokenClass::Legacy
+        );
+    }
+
+    #[test]
+    fn classify_refuses_missing_token_with_lrf_105() {
+        let err = classify_format_token(None).expect_err("a missing token refuses");
+        assert_eq!(
+            err,
+            ParseError::UnsupportedFormat {
+                found: "<missing>".to_string()
+            }
+        );
+        assert_eq!(err.code(), "LRF-105");
+    }
+
+    #[test]
+    fn classify_refuses_near_miss_tokens_with_lrf_105() {
+        for token in [
+            "Torogao-Rig-Model",
+            "TOROGAO-RIG-MODEL",
+            "Lumen-Rig-Model",
+            "torogao-rig-model-v2",
+            "torogao-rig-model ",
+            "xtorogao-rig-model",
+            "lumen-rig-model2",
+            "",
+        ] {
+            let err = classify_format_token(Some(token))
+                .expect_err("a near-miss token must refuse, never classify");
+            assert_eq!(err.code(), "LRF-105", "token: {token:?}");
+            assert_eq!(
+                err,
+                ParseError::UnsupportedFormat {
+                    found: token.to_string()
+                },
+                "token: {token:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn classify_refuses_nonsense_token_with_lrf_105() {
+        let err = classify_format_token(Some("nonsense-token-xyz"))
+            .expect_err("a nonsense token refuses");
+        assert_eq!(
+            err,
+            ParseError::UnsupportedFormat {
+                found: "nonsense-token-xyz".to_string()
+            }
+        );
+        assert_eq!(err.code(), "LRF-105");
+    }
+
+    #[test]
+    fn parse_accepts_current_token_file_without_warnings() {
+        let parsed = parse_model(&minimal_model_bytes(Some(MODEL_FORMAT_TOKEN)))
+            .expect("a current-token file parses");
+        assert!(
+            parsed.warnings.is_empty(),
+            "warnings: {:?}",
+            parsed.warnings
+        );
+    }
+
+    #[test]
+    fn parse_accepts_legacy_token_file_with_exactly_one_typed_warning() {
+        let parsed = parse_model(&minimal_model_bytes(Some(LEGACY_MODEL_FORMAT_TOKEN)))
+            .expect("a legacy-token file parses under RP1-D1");
+        assert_eq!(parsed.warnings.len(), 1, "warnings: {:?}", parsed.warnings);
+        assert_eq!(parsed.warnings[0].code(), "TG-LEGACY-FORMAT-TOKEN");
+        assert_eq!(
+            parsed.warnings[0],
+            FormatWarning::LegacyFormatToken {
+                found: "lumen-rig-model".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn parse_hand_migrated_legacy_file_reemits_only_the_current_token() {
+        // Legacy in: a file carrying the legacy token as it
+        // appears in the real probe-corpus export header.
+        let parsed = parse_model(&minimal_model_bytes(Some("lumen-rig-model")))
+            .expect("the hand-migrated source file parses");
+        assert_eq!(parsed.warnings.len(), 1);
+        // New out: writers emit the current token only, so the
+        // file migrates when it is next written.
+        let canonical = parsed.model.to_canonical_json();
+        assert!(
+            canonical.contains(r#""format": "torogao-rig-model""#),
+            "canonical: {canonical}"
+        );
+        assert!(
+            !canonical.contains(LEGACY_MODEL_FORMAT_TOKEN),
+            "canonical: {canonical}"
+        );
+        let reparsed =
+            parse_model(canonical.as_bytes()).expect("the re-emitted file re-parses cleanly");
+        assert!(reparsed.warnings.is_empty());
+        assert_eq!(reparsed.model, parsed.model);
+    }
+
+    #[test]
+    fn parse_refuses_file_with_missing_format_field_with_lrf_105() {
+        let err = parse_model(&minimal_model_bytes(None))
+            .expect_err("a file with no format field refuses");
+        assert_eq!(
+            err,
+            ParseError::UnsupportedFormat {
+                found: "<missing>".to_string()
+            }
+        );
+        assert_eq!(err.code(), "LRF-105");
+    }
+
+    #[test]
+    fn parse_refuses_file_with_near_miss_token_with_lrf_105() {
+        let err = parse_model(&minimal_model_bytes(Some("Torogao-Rig-Model")))
+            .expect_err("a case-variant token must refuse, never warn-accept");
+        assert_eq!(err.code(), "LRF-105");
+        assert_eq!(
+            err,
+            ParseError::UnsupportedFormat {
+                found: "Torogao-Rig-Model".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn parse_refuses_file_with_nonsense_token_with_lrf_105() {
+        let err = parse_model(&minimal_model_bytes(Some("nonsense-token-xyz")))
+            .expect_err("a nonsense-token file refuses");
+        assert_eq!(
+            err,
+            ParseError::UnsupportedFormat {
+                found: "nonsense-token-xyz".to_string()
+            }
+        );
+        assert_eq!(err.code(), "LRF-105");
+    }
+}
