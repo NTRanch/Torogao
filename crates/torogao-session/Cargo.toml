@@ -1,0 +1,23 @@
+[package]
+name = "torogao-session"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "The Torogao editor-state interop core: session state, the torogao-author decide() gate, the tool registry, and the canonical session record."
+publish = false
+
+[dependencies]
+# Fleet pin (MCP standardization program, D-113): rmcp is pinned
+# exactly and releases in lockstep with the 2026-07-28 protocol
+# era. default-features = false + server keeps the client stack
+# (and its TLS/HTTP machinery) out of this crate.
+rmcp = { version = "=3.8.0", default-features = false, features = ["server"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+# io-std: the stdio transport endpoints; io-util: buffered line
+# framing for the era guard; rt/macros/time: the pipeline runtime.
+tokio = { version = "1", features = ["io-std", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
+torogao-author = { path = "../torogao-author" }
+tungstenite = "0.28"
