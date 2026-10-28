@@ -287,7 +287,7 @@ fn set_field(fields: &mut Vec<(String, Ron)>, name: &str, value: Ron) {
     }
 }
 
-fn nested_fields<'a>(fields: &'a mut Vec<(String, Ron)>, name: &str) -> &'a mut Vec<(String, Ron)> {
+fn nested_fields<'a>(fields: &'a mut [(String, Ron)], name: &str) -> &'a mut Vec<(String, Ron)> {
     for (n, value) in fields.iter_mut() {
         if n == name {
             return match value {
