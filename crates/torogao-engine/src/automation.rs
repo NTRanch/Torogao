@@ -187,9 +187,9 @@ impl Automation {
                 for binding in &self.bindings {
                     let raw = current_time * speed + phase;
                     let wave_unit = match sine.sine_type {
-                        0 => raw.sin(),
-                        1 => raw.cos(),
-                        _ => raw.tan(),
+                        0 => crate::detmath::sin_f64(raw),
+                        1 => crate::detmath::cos_f64(raw),
+                        _ => crate::detmath::tan_f64(raw),
                     };
                     let unit = ((wave_unit + 1.0) / 2.0) as f32;
                     let wave = binding.range.x + unit * (binding.range.y - binding.range.x);

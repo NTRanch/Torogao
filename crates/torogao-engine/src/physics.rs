@@ -198,7 +198,8 @@ impl Pendulum {
     /// anchor and length.
     pub fn tick(&mut self, h: f32, io: &dyn Fn() -> PendulumIo) {
         let first = io();
-        let angle = (-(self.bob.x - first.anchor.x)).atan2(self.bob.y - first.anchor.y);
+        let angle =
+            crate::detmath::atan2_f32(-(self.bob.x - first.anchor.x), self.bob.y - first.anchor.y);
         self.system.set(Self::ANGLE, angle);
         self.system.tick(h, &mut |sys, _t| {
             let io = io();
@@ -207,12 +208,16 @@ impl Pendulum {
             sys.set_derivative(Self::ANGLE, d_angle);
             let length_ratio = io.gravity / io.length;
             let crit_damp = 2.0 * length_ratio.sqrt();
-            let dd = -length_ratio * angle.sin() - d_angle * io.angle_damping * crit_damp;
+            let dd = -length_ratio * crate::detmath::sin_f32(angle)
+                - d_angle * io.angle_damping * crit_damp;
             sys.set_derivative(Self::D_ANGLE, dd);
         });
         let last = io();
         let angle = self.system.get(Self::ANGLE);
-        let d_bob = Vec2::new(-angle.sin(), angle.cos());
+        let d_bob = Vec2::new(
+            -crate::detmath::sin_f32(angle),
+            crate::detmath::cos_f32(angle),
+        );
         self.bob = last.anchor + d_bob * last.length;
         self.output = self.bob;
     }
@@ -502,7 +507,7 @@ mod tests {
         // the state equals what the re-derivation staged
         // (the revert restores the pre-tick state, which
         // the staging had just set from the bob).
-        let staged = (-(60.0f32)).atan2(80.0f32);
+        let staged = crate::detmath::atan2_f32(-60.0f32, 80.0f32);
         assert!(
             (p.angle() - staged).abs() < 1e-6,
             "angle {} != staged {}",

@@ -237,9 +237,9 @@ impl Mat4 {
     /// radians, composed as Rz * Ry * Rx (the reference
     /// quaternion's matrix form).
     pub fn euler_rotation(x: f32, y: f32, z: f32) -> Mat4 {
-        let (cx, sx) = (x.cos(), x.sin());
-        let (cy, sy) = (y.cos(), y.sin());
-        let (cz, sz) = (z.cos(), z.sin());
+        let (cx, sx) = (crate::detmath::cos_f32(x), crate::detmath::sin_f32(x));
+        let (cy, sy) = (crate::detmath::cos_f32(y), crate::detmath::sin_f32(y));
+        let (cz, sz) = (crate::detmath::cos_f32(z), crate::detmath::sin_f32(z));
         // R = Rz * Ry * Rx, written out element by element
         // (row form shown in comments; storage is column-major).
         // row 0: [cz*cy, cz*sy*sx - sz*cx, cz*sy*cx + sz*sx]

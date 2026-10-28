@@ -7,5 +7,6 @@ rust-version.workspace = true
 description = "The Torogao puppet engine: model, parameter and deformer evaluation, physics, and rendering."
 
 [dependencies]
+libm = "0.2"
 serde_json = { workspace = true }
 torogao-format = { path = "../torogao-format" }

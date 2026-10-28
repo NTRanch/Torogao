@@ -798,7 +798,8 @@ impl Puppet {
         // reference on about 35% of inputs (by 1 ulp),
         // while this f64 path matches; see the G-17 section
         // of GATE-REPORT-RP2.md.
-        let angle = (-local_angle.x).atan2(local_angle.y) as f64 / std::f64::consts::PI;
+        let angle =
+            crate::detmath::atan2_f32(-local_angle.x, local_angle.y) as f64 / std::f64::consts::PI;
         let p = match map_mode {
             1 => {
                 let mut xy = Vec2::new(local_angle.x * rel_length, local_angle.y * rel_length);
