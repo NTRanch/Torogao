@@ -1,9 +1,12 @@
 //! AMENDMENT-T4 §8.2/§8.3/§8.4 gates for the arousal
-//! engine (`arousal-engine/1`, D-211 constants), plus
-//! §5.6 re-arm, §5.8 stop/reset, §5.9 persistence, and
-//! §5.11 determinism. Fixtures run the default profile,
-//! full contact (q = 1000), constant waveform, device
-//! applied at tick 0 — the §8.3 fixture conditions.
+//! engine (`arousal-engine/2`, D-211 constants as
+//! revised by D-237/D-238), plus §5.6 re-arm, §5.8
+//! stop/reset, §5.9 persistence, and §5.11 determinism.
+//! The §8 fixtures themselves are UNCHANGED from /1 —
+//! they run the default profile, full contact
+//! (q = 1000), constant waveform, device applied at
+//! tick 0 — the §8.3 fixture conditions, and /2's
+//! mechanisms are neutral under that profile.
 
 use torogao_session::arousal::*;
 use torogao_session::{ArousalEngine, ArousalHost, ArousalOp};
@@ -680,7 +683,18 @@ fn trajectory_determinism_36000_mixed() {
     assert_eq!(hash_a, GOLDEN_TRAJECTORY_HASH, "trajectory hash golden");
 }
 
-const GOLDEN_TRAJECTORY_HASH: u64 = 17_404_604_780_309_621_038;
+// D-237/D-238 re-baseline (arousal-engine/2): the /1
+// golden was 17_404_604_780_309_621_038. The canonical
+// record gained the /2 fields (surge/carry, then the
+// D-238 arc/switch/sub-space fields), so the trajectory
+// hash moved by construction; the D-237.1 surge
+// deadband+persistence form then moved it once more
+// (surge commits 6 ticks after a step, not on it).
+// The /2 value below was measured on the sandbox,
+// run-twice stable (2026-10-28); the primo mirror
+// reproduction is a named follow-on in
+// REALISM-OPT.md, not claimed here.
+const GOLDEN_TRAJECTORY_HASH: u64 = 9_799_619_064_544_636_570;
 
 // ------------------------------------------------------------------ §6 effects
 

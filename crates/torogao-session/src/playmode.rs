@@ -42,6 +42,18 @@
 //! resolution are recorded in GATE-REPORT-PM1.md; the
 //! data can be re-pointed at 110 / 45 by a ruling, at
 //! which point gate PM-G6 fails by the same measurement.
+//!
+//! D-237 (`arousal-engine/2`) grows the leak near the
+//! threshold (τ ramps 200 s → 60 s across Q 700..1000),
+//! so the equilibrium the governor solves for uses the
+//! *effective* τ at the held charge: [`GovernorData`]
+//! carries the band beside the base constants
+//! (700 / 60 in the Blossom definition), and the
+//! derivation's shape is unchanged — "the input at
+//! which §5.3's charge law nets to zero", evaluated
+//! under the law as it now stands. Definitions saved
+//! before the band existed load with the band disabled
+//! (the /1 equilibrium), by serde default.
 
 use crate::arousal::{
     ArousalEvent, ArousalHost, ArousalOp, CharacterProfile, EngineOutput, Phase, TickInputs,
@@ -180,7 +192,7 @@ fn splitmix_next(state: &mut u64) -> u64 {
 
 /// The Hold governor's data (§3.3): the §5.3 charge-law
 /// constants the equilibrium is derived from. Defaults
-/// are the engine's live D-211 constants; see the module
+/// are the engine's live constants; see the module
 /// header for the named interpretation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -188,23 +200,67 @@ pub struct GovernorData {
     /// §5.3 charge coefficient (permille/s at I = 1,
     /// S = 1000).
     pub charge_coeff: i64,
-    /// §5.3 Q leak time constant, seconds.
+    /// §5.3 Q leak time constant, seconds (the value
+    /// at and below the leak band start).
     pub leak_tau_s: i64,
+    /// D-237 leak growth: the charge (permille) at
+    /// which the leak time constant starts ramping
+    /// toward `leak_tau_min_s`. Serde default 1000 =
+    /// the band never engages below full charge (the
+    /// pre-D-237 equilibrium for saved definitions).
+    #[serde(default = "default_leak_band_start")]
+    pub leak_band_start_permille: i64,
+    /// D-237 leak growth: the leak time constant
+    /// (seconds) at Q ≥ 1000. Serde default 0 = growth
+    /// disabled (the pre-D-237 equilibrium).
+    #[serde(default)]
+    pub leak_tau_min_s: i64,
+}
+
+/// The serde default for [`GovernorData::
+/// leak_band_start_permille`]: growth disengaged.
+fn default_leak_band_start() -> i64 {
+    1000
 }
 
 impl GovernorData {
+    /// The effective leak time constant (seconds) at a
+    /// charge, under this data's band — the same shape
+    /// as the engine's `leak_tau_s`.
+    fn effective_tau_s(&self, q_permille: u32) -> i64 {
+        let q = i64::from(q_permille);
+        if self.leak_tau_min_s <= 0
+            || self.leak_tau_min_s >= self.leak_tau_s
+            || q <= self.leak_band_start_permille
+        {
+            return self.leak_tau_s;
+        }
+        if q >= 1000 {
+            return self.leak_tau_min_s;
+        }
+        let span = 1000 - self.leak_band_start_permille;
+        self.leak_tau_s
+            - div_round(
+                (self.leak_tau_s - self.leak_tau_min_s) as i128
+                    * (q - self.leak_band_start_permille) as i128,
+                span as i128,
+            ) as i64
+    }
+
     /// `I_hold(Q, S)` in permille: the input at which the
     /// charge law nets to zero,
-    /// `(Q / (τ · coeff · (S/1000)))^(2/3)`, in integer
-    /// math (cube root over micro units).
+    /// `(Q / (τ_eff(Q) · coeff · (S/1000)))^(2/3)`, in
+    /// integer math (cube root over micro units).
     pub fn i_hold_permille(&self, q_permille: u32, s_permille: u32) -> u32 {
         if q_permille == 0 || s_permille == 0 {
             return 0;
         }
-        // r = 1000·Q / (τ · coeff · S), a micro fraction.
+        // r = 1000·Q / (τ_eff · coeff · S), a micro fraction.
         let r_micro = div_round(
             1000 * (q_permille as i128) * 1_000_000,
-            (self.leak_tau_s as i128) * (self.charge_coeff as i128) * (s_permille as i128),
+            (self.effective_tau_s(q_permille) as i128)
+                * (self.charge_coeff as i128)
+                * (s_permille as i128),
         ) as u128;
         // r^(2/3) in micro = cbrt(r_micro² · 1e6).
         let i_micro = icbrt(r_micro * r_micro * 1_000_000);
@@ -691,6 +747,8 @@ impl PlaytimeDefinition {
             governor: GovernorData {
                 charge_coeff: 150,
                 leak_tau_s: 200,
+                leak_band_start_permille: 700,
+                leak_tau_min_s: 60,
             },
             pulse: PulseLawData::default(),
             ejection: EjectionData::default(),
@@ -2371,12 +2429,41 @@ impl PlaytimeMode {
                 self.applied_amplitude = desired;
             }
             if self.hold_engaged {
-                // Touch is input too: cap its strength
-                // at the same equilibrium.
+                // Touch is input too — and §3.3 caps
+                // the COMBINED effective input at
+                // I_hold, not each source separately.
+                // The D-237.1 re-derivation: under /1's
+                // flat leak the per-source approximation
+                // held within ±5% (PM-G6: 845–851), but
+                // /2's grown leak put the equilibrium
+                // where the combination law's slack
+                // (device at cap + 0.35 · touch at cap,
+                // convex through I^1.5) drifted Q to
+                // +6.9% over 36,000 ticks — measured.
+                // So the touch budget is what remains
+                // of I_hold after the device's effective
+                // share, solved through the §5.3
+                // combination (max + 0.35 · rest),
+                // floored — conservative, like the
+                // device cap.
                 if let Some((site, strength)) = &mut engine_inputs.touch {
                     let w = data.profile.site_weight(site);
                     if w > 0 {
-                        let cap = (u64::from(i_hold) * 1000 / u64::from(w)).min(1000) as u32;
+                        let d_eff = (u64::from(desired)
+                            * u64::from(self.device_contact_quality)
+                            * u64::from(weight)
+                            / 1_000_000) as u32;
+                        let h = i_hold;
+                        let t_max = if d_eff >= h {
+                            0
+                        } else if h * 100 >= d_eff * 135 {
+                            // t ≥ d branch: t + 0.35·d ≤ H.
+                            h - d_eff * 35 / 100
+                        } else {
+                            // t ≤ d branch: d + 0.35·t ≤ H.
+                            (h - d_eff) * 100 / 35
+                        };
+                        let cap = (u64::from(t_max) * 1000 / u64::from(w)).min(1000) as u32;
                         *strength = (*strength).min(cap);
                     }
                 }

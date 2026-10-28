@@ -46,7 +46,8 @@ pub mod ws_stream;
 pub use arousal::{
     ArousalEngine, ArousalEvent, ArousalHost, ArousalLogEntry, ArousalOp, ArousalVector,
     CharacterProfile, DeviceOutput, DeviceSpec, DriveSignal, EffectsOutput, EngineOutput,
-    PerformanceOutput, Phase, TIERS, TickInputs, TierSpec, WaveKind, WaveSpec, tier_of,
+    PerformanceOutput, Phase, SwitchMode, SwitchState, TIERS, TickInputs, TierSpec, WaveKind,
+    WaveSpec, WeakSpot, expression_band_next, leak_tau_s, raw_expression_band, tier_of,
 };
 pub use canon::{from_canon_ron, state_hash, to_canon_ron};
 pub use dispatch::{DispatchHandle, SessionInfo};

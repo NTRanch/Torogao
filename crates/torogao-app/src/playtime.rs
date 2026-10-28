@@ -441,6 +441,11 @@ impl PlayroomPlaytime {
             episode: 1,
             phase_ticks: 0,
             afterglow_level: 150,
+            charge_surge: 0,
+            sensitivity_carry: 0,
+            arc_affinity: 0,
+            switch_state: torogao_session::SwitchState::None,
+            subspace: false,
         });
         lines.push(format!(
             "stage {} (engine phase {})",

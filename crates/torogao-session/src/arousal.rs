@@ -1,9 +1,85 @@
-//! The persistent arousal engine (`arousal-engine/1`,
+//! The persistent arousal engine (`arousal-engine/2`,
 //! AMENDMENT-T4 §§5–6): a deterministic fixed-step state
 //! machine, one instance per character, living in the
 //! session-host layer so the Playroom and (later) the
 //! desktop companion present the same state, never two
 //! stores (AMENDMENT-T4 §3.3).
+//!
+//! ## Realism revision (D-237, `arousal-engine/2`)
+//!
+//! Version 2 keeps the D-211 integration constants and
+//! every §8 fixture, and closes the measured realism gaps
+//! of /1 against the estate's Laplace3D/doujin standard
+//! (distillation + audit + simulation evidence:
+//! `REALISM-OPT.md`; simulation:
+//! `t4-conflict-check/sim_realism.py`). The changes, each
+//! simulation-gated before implementation:
+//!
+//! - **Near-threshold leak growth** — the Q leak time
+//!   constant ramps 200 s → 60 s across Q 700..1000, so
+//!   holding near the edge needs rising input (natural
+//!   edging: dwell +45%, edge equilibrium input +24% in
+//!   simulation). Below 700 the /1 law is untouched.
+//! - **Charge surge** — a positive input step surges the
+//!   charge rate (×(1000 + surge)/1000, surge capped at
+//!   600, τ 2.5 s): the jolt when intensity jumps (+55%
+//!   charge rate over the first 0.5 s in simulation).
+//!   D-237.1 form: the step must clear a 100-permille
+//!   deadband and persist 6 ticks — the un-deadbanded
+//!   form sustained itself on a Hold-capped touch
+//!   ripple and broke the PM-G6 Hold equilibrium
+//!   (measured: 1 culmination in 36,000 ticks); ripple
+//!   is not a step. R-G12 is the regression gate.
+//! - **Sensitivity carry** — S at the firing tick freezes
+//!   a carry (⅔ of the excess over 1000, capped at 250)
+//!   that decays while she rests (τ 240 s) and snaps S
+//!   back above baseline at re-arm (the post-refractory
+//!   rebound: second build 36% faster in simulation).
+//! - **Expression hysteresis** — §6.5's bands enter at
+//!   their threshold and exit 40 permille below it
+//!   (band flicker 114 → 1 transitions on an oscillating
+//!   trace), plus a near-band register split
+//!   (strained / pleading).
+//! - **Reaction density + lead channel** — §6 gains the
+//!   Laplace level + density law as an engine output
+//!   (steady-state density ≈ 310 permille, onset bursts,
+//!   afterglow tail) and a lead-layer output (exactly
+//!   one channel leads; lead changes are the
+//!   escalation), plus tick-hash jitter on tremble
+//!   amplitude (±12.5 permille-class, output-only).
+//!
+//! Two candidate mechanisms were measured and REJECTED
+//! (evidence in `REALISM-OPT.md`): an arousal-target
+//! boost (eaten by the A ≤ 1000 clamp — the D-211 curve
+//! already saturates at 990) and a relax-target carry
+//! (a no-op: the phase stays Refractory, at S target
+//! 650, until re-arm).
+//!
+//! ## Individuality layer (D-238)
+//!
+//! The realism unit is the individual, not the act.
+//! The profile is structured data the engine, the
+//! face/body presentation, and torori's cue selection
+//! all read: a **trigger map** (zone weights + activity-
+//! class weights — power exchange, servitude, hypnosis,
+//! outfit state; SFW classes are first-class inputs), a
+//! **weak spot + switch** (a per-episode dose at her
+//! dominant zone flips her to ENGAGE — slope steepens —
+//! or BLANK — responsiveness drops, charge accumulates
+//! passively), an **arc term** (surrender affinity grows
+//! slowly with submission-class exposure across episodes
+//! and discounts the switch/sub-space thresholds), a
+//! **sub-space state** (submission-class triggers gate a
+//! distinct state with its own output law), and an
+//! **orgasm pattern** (per-episode strength trend,
+//! refractory depth/duration, carry scaling, and
+//! culmination-coupled side channels where canon fits).
+//! Every D-238 field defaults to neutral, so the default
+//! profile is exactly the /1 character and the §8
+//! fixtures are untouched. The cast's values are
+//! PROPOSED tuning under the ratified D-223 directions
+//! (AMENDMENT-T4 §9 item 3 reserves the ruling to the
+//! Owner); the distinctness gate (R-G10) measures them.
 //!
 //! ## Numeric contract (§5.1)
 //!
@@ -44,8 +120,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// The engine data version (AMENDMENT-T4 §5.3).
-pub const ENGINE_FORMAT: &str = "arousal-engine/1";
+/// The engine data version (AMENDMENT-T4 §5.3; /2 is
+/// the D-237 realism revision — see the module header).
+pub const ENGINE_FORMAT: &str = "arousal-engine/2";
 
 /// Micro-permille in one permille.
 pub const MP_PER_PERMILLE: i64 = 1_000_000;
@@ -56,8 +133,80 @@ pub const TICKS_PER_SECOND: u64 = 60;
 
 /// D-211 charge coefficient (permille/s at I = 1, S = 1000).
 const CHARGE_PERMILLE_PER_S: i64 = 150;
-/// D-211 Q leak time constant, seconds.
+/// D-211 Q leak time constant, seconds (the value at
+/// and below the D-237 leak band start).
 const Q_LEAK_TAU_S: i64 = 200;
+/// D-237 leak growth: at and above this charge
+/// (permille) the leak time constant ramps linearly
+/// from [`Q_LEAK_TAU_S`] down to [`Q_LEAK_TAU_MIN_S`]
+/// at Q = 1000, and holds at the minimum above it.
+const LEAK_BAND_START_PERMILLE: i64 = 700;
+/// D-237 leak growth floor: the leak time constant at
+/// Q ≥ 1000, seconds.
+const Q_LEAK_TAU_MIN_S: i64 = 60;
+/// D-237 charge surge: the surge ceiling (micro-
+/// permille) and per-tick decay divisor (τ 2.5 s at
+/// the 60 Hz step). A positive input step of the full
+/// scale adds 1500 permille of surge (see `step`).
+const SURGE_CAP_MP: i64 = 600 * MP_PER_PERMILLE;
+/// Surge decay divisor per tick (150 ticks = 2.5 s).
+const SURGE_DECAY_DIVISOR: i64 = 150;
+/// D-237.1 surge step deadband: a positive step must
+/// reach this size (micro-permille) to count as a
+/// deliberate intensity step at all. Below it is
+/// dither — governor ripple, capped-touch ripple —
+/// and dither must not pump the surge (the PM-G6
+/// Hold failure of the un-deadbanded form: a capped
+/// touch every 45 ticks sustained the surge against
+/// its 2.5 s decay and broke the equilibrium).
+const SURGE_STEP_MIN_MP: i64 = 100 * MP_PER_PERMILLE;
+/// D-237.1 surge persistence: a qualifying step must
+/// hold above the deadband for this many consecutive
+/// ticks before the surge commits. A one-tick ripple
+/// never commits; a deliberate step (held by the hand
+/// that made it) commits in 0.1 s.
+const SURGE_PERSIST_TICKS: u64 = 6;
+/// D-237 sensitivity carry: ceiling (permille), the
+/// rest-decay time constant (seconds), and the
+/// smallest carry (permille) that snaps S at re-arm.
+const CARRY_CAP_MP: i64 = 250 * MP_PER_PERMILLE;
+/// Carry rest-decay time constant, seconds (τ 240 s).
+const CARRY_TAU_S: i64 = 240;
+/// Carry snap threshold at re-arm (permille).
+const CARRY_SNAP_MIN_PERMILLE: i64 = 25;
+/// D-237 expression hysteresis: a band exits this far
+/// (permille) below the threshold it entered at.
+const BAND_HYSTERESIS_PERMILLE: u32 = 40;
+/// D-238 ENGAGE switch law: the charge-rate bonus
+/// (permille) while a character's weak-spot switch is
+/// flipped to ENGAGE — she leans in; the slope steepens.
+const ENGAGE_CHARGE_BONUS_PERMILLE: i64 = 350;
+/// D-238 BLANK switch law: while the switch is flipped
+/// to BLANK the leak divisor doubles — responsiveness
+/// drops (no sensitization rise, thinned density) but
+/// charge holds and accumulates passively.
+const BLANK_LEAK_DIVISOR_SCALE: i64 = 2;
+/// D-238 arc growth: micro-permille of surrender
+/// affinity per qualifying tick (submission-class input
+/// at ≥ 250 effective while A ≥ 250). 166_667 mp/tick
+/// ≈ 10 permille/s of qualifying exposure — full
+/// affinity after ~100 s of exposure spread across
+/// episodes: deliberately slow inside any one tick,
+/// visible across a handful of episodes, which is the
+/// arc's narrative unit.
+const ARC_GROWTH_MP_PER_TICK: i64 = 166_667;
+/// D-238 arc effect ceiling: at full affinity the
+/// weak-spot switch threshold and the sub-space entry
+/// requirement fall to this fraction (permille) of
+/// their profile values.
+const ARC_DISCOUNT_FLOOR_PERMILLE: i64 = 500;
+/// D-238 sub-space entry: sustained qualifying ticks
+/// required at zero arc (5 s), before the arc discount.
+const SUBSPACE_ENTER_TICKS: u64 = 300;
+/// D-238 sub-space exit: the sustained counter must
+/// fall below half the entry requirement to leave —
+/// the state has hysteresis, like the bands.
+const SUBSPACE_EXIT_FRACTION: u64 = 2;
 /// Presence charge rate (permille/s) for floor gear with no
 /// active stimulation; the §5.3 cap (250) is the binding
 /// constraint, enforced as a clamp.
@@ -203,6 +352,141 @@ fn sin_cycle_micro(frac_micro: i64) -> i64 {
 /// FNV-1a 64-bit over bytes (the §5.11 trajectory hash and
 /// the engine state hash share the primitive; the resonance
 /// D.3 pattern).
+/// The Q leak time constant (seconds) at a given
+/// charge (D-237 leak growth): [`Q_LEAK_TAU_S`] at or
+/// below the band start, ramping linearly to
+/// [`Q_LEAK_TAU_MIN_S`] at Q = 1000, held above.
+/// Pure; the Hold governor's equilibrium derivation
+/// (playmode §3.3) uses the same shape.
+pub fn leak_tau_s(charge_permille: u32) -> i64 {
+    let q = i64::from(charge_permille);
+    if q <= LEAK_BAND_START_PERMILLE {
+        return Q_LEAK_TAU_S;
+    }
+    if q >= 1000 {
+        return Q_LEAK_TAU_MIN_S;
+    }
+    let span = 1000 - LEAK_BAND_START_PERMILLE;
+    Q_LEAK_TAU_S
+        - div_round(
+            (Q_LEAK_TAU_S - Q_LEAK_TAU_MIN_S) as i128 * (q - LEAK_BAND_START_PERMILLE) as i128,
+            span as i128,
+        ) as i64
+}
+
+/// A stateless SplitMix64 hash of a tick index (the
+/// tremble jitter source: deterministic per tick, no
+/// state, identical on every machine).
+fn tick_hash(tick: u64) -> u64 {
+    let mut z = tick ^ FLUID_SEED;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// The tremble amplitude jitter factor (permille) for
+/// a tick: 875..=1125, the humanized irregularity the
+/// parity record measures in Laplace cycle timing,
+/// applied to an output amplitude only — never to
+/// state (D-237).
+fn tremble_jitter_permille(tick: u64) -> u32 {
+    875 + (tick_hash(tick) % 251) as u32
+}
+
+/// §6.5's raw expression band for a state, before
+/// hysteresis: 0 ambient, 1 aroused, 2 building,
+/// 3 near. Pure.
+pub fn raw_expression_band(arousal_permille: u32, charge_permille: u32) -> u8 {
+    if arousal_permille >= 800 {
+        3
+    } else if arousal_permille >= 550 || charge_permille >= 700 {
+        2
+    } else if arousal_permille >= 250 {
+        1
+    } else {
+        0
+    }
+}
+
+/// The hysteresis step for the §6.5 band state
+/// (D-237): a higher raw band enters immediately; a
+/// lower one takes over only once arousal has fallen
+/// [`BAND_HYSTERESIS_PERMILLE`] below the current
+/// band's entry threshold (the building band's charge
+/// entry is honoured symmetrically). Pure; gated
+/// directly by the realism battery.
+pub fn expression_band_next(current: u8, arousal_permille: u32, charge_permille: u32) -> u8 {
+    let raw = raw_expression_band(arousal_permille, charge_permille);
+    if raw >= current {
+        return raw;
+    }
+    let h = BAND_HYSTERESIS_PERMILLE;
+    let exited = match current {
+        3 => arousal_permille < 800 - h,
+        2 => arousal_permille < 550 - h && charge_permille < 700 - h,
+        1 => arousal_permille < 250 - h,
+        _ => true,
+    };
+    if exited { raw } else { current }
+}
+
+/// The reaction density (permille) for a tick — the
+/// density half of the Laplace level + density law
+/// (D-237): how much of the cycle carries a reaction
+/// (voice one-shot class) at this state. Steady
+/// Stimulated sits at the measured ≈ ⅓; phase entries
+/// burst; culmination is densest; afterglow keeps a
+/// low tail (the return). Pure function of the tick's
+/// resolved state.
+fn reaction_density_permille(phase: Phase, band: u8, tier: Option<u8>, phase_ticks: u64) -> u32 {
+    match phase {
+        Phase::Culminating => {
+            let base = 650 + 80 * u32::from(tier.unwrap_or(1));
+            if phase_ticks == 0 {
+                base.max(950)
+            } else {
+                base
+            }
+        }
+        Phase::Taper => 380,
+        Phase::Afterglow => 140,
+        Phase::Refractory => 40,
+        Phase::Baseline => 0,
+        Phase::Stimulated => {
+            if phase_ticks == 0 {
+                900 // onset burst at the episode's first tick
+            } else {
+                match band {
+                    3 => 420,
+                    2 => 310,
+                    1 => 200,
+                    _ => 80,
+                }
+            }
+        }
+    }
+}
+
+/// The lead channel for a tick (D-237, the scene
+/// study's lead-layer law): exactly one channel leads;
+/// lead changes are the escalation. Build is led by
+/// the body, the edge by the voice, culmination by
+/// the eyes; the return settles back through the body
+/// to the breath. Pure function of the resolved state.
+fn lead_channel(phase: Phase, band: u8) -> &'static str {
+    match phase {
+        Phase::Culminating => "eyes",
+        Phase::Taper => "body",
+        Phase::Stimulated => match band {
+            3 => "voice",
+            2 => "body",
+            1 => "blush",
+            _ => "breath",
+        },
+        _ => "breath",
+    }
+}
+
 pub fn fnv1a_64(bytes: &[u8]) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for &b in bytes {
@@ -546,10 +830,66 @@ impl DeviceSpec {
     }
 }
 
+/// D-238: what a character's weak-spot switch does
+/// when it flips. ENGAGE — she leans in: the charge
+/// slope steepens and she participates actively.
+/// BLANK — she surrenders: responsiveness drops,
+/// pleasure accumulates passively (the "cum drunk"
+/// presentation state).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SwitchMode {
+    Engage,
+    Blank,
+}
+
+/// D-238: a character's dominant zone and the dose
+/// (permille-seconds of effective input at that site)
+/// at which her switch flips for the episode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WeakSpot {
+    /// The dominant site name (matches device/touch
+    /// site names).
+    pub site: String,
+    /// Dose threshold, permille-seconds (1..=100_000).
+    pub threshold_dose: u32,
+    /// What the switch does when it flips.
+    pub mode: SwitchMode,
+}
+
+/// The evaluated switch state for one tick (D-238).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SwitchState {
+    /// No weak spot, or not yet flipped this episode.
+    #[default]
+    None,
+    Engage,
+    Blank,
+}
+
+impl SwitchState {
+    /// The canonical-record token.
+    pub fn token(self) -> &'static str {
+        match self {
+            SwitchState::None => "none",
+            SwitchState::Engage => "engage",
+            SwitchState::Blank => "blank",
+        }
+    }
+}
+
 /// Per-character profile data (§5.3's seam): site weights,
 /// effect ceilings, phase-duration scaling. Bounded and
 /// versioned with the engine; a gear file never carries
-/// these (§5.3).
+/// these (§5.3). D-238 extends the profile into the
+/// structured individuality record: a trigger map over
+/// activity classes as well as body zones, a weak-spot
+/// switch, an arc term, a sub-space gate, and an orgasm
+/// pattern. Every D-238 field defaults to neutral, so
+/// the default profile — and the §8 fixtures that run
+/// on it — is exactly the /1 character.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CharacterProfile {
@@ -557,6 +897,47 @@ pub struct CharacterProfile {
     pub site_weights: BTreeMap<String, u32>,
     /// Weight for a site the map does not name.
     pub default_site_weight: u32,
+    /// D-238 trigger map, activity half: class name →
+    /// weight, permille (0..=1000). Activity classes
+    /// (power exchange, domestic servitude, hypnotic
+    /// suggestion, clothing/outfit state, …) are
+    /// first-class inputs, set through the engine's
+    /// activity channel — SFW classes included.
+    #[serde(default)]
+    pub activity_weights: BTreeMap<String, u32>,
+    /// Weight for an activity class the map does not
+    /// name. Zero in the default profile: an unmapped
+    /// class is not a trigger for her.
+    #[serde(default)]
+    pub default_activity_weight: u32,
+    /// D-238: the weak spot + switch. `None` = she has
+    /// no single dominant zone (the default profile).
+    #[serde(default)]
+    pub weak_spot: Option<WeakSpot>,
+    /// D-238: the activity classes that count as
+    /// submission-class triggers — they feed the arc
+    /// term and gate sub-space.
+    #[serde(default)]
+    pub submission_classes: Vec<String>,
+    /// D-238: the sustained submission-class effective
+    /// input (permille) at which sub-space can engage.
+    /// Zero disables sub-space (the default profile).
+    #[serde(default)]
+    pub subspace_threshold_permille: u32,
+    /// D-238 orgasm pattern: the per-episode strength
+    /// trend, permille per episode after the first
+    /// (negative flattens, positive escalates).
+    #[serde(default)]
+    pub episode_trend_permille: i32,
+    /// D-238 orgasm pattern: refractory depth — the
+    /// refractory sensitivity target scales by this
+    /// (permille of the §5.3 value 650).
+    #[serde(default = "default_refractory_depth")]
+    pub refractory_depth_permille: u32,
+    /// D-238 orgasm pattern: the frozen sensitivity
+    /// carry (D-237) scales by this, permille.
+    #[serde(default = "default_carry_scale")]
+    pub carry_scale_permille: u32,
     /// Blush ceiling the §6.1 ratio scales, permille.
     pub blush_max: u32,
     /// Afterglow hold, ticks (§5.5: scalable, never zero).
@@ -572,6 +953,16 @@ pub struct CharacterProfile {
     pub fluid_contact_input_permille: u32,
 }
 
+/// Serde default: refractory depth at the §5.3 value.
+fn default_refractory_depth() -> u32 {
+    1000
+}
+
+/// Serde default: carry at the D-237 value.
+fn default_carry_scale() -> u32 {
+    1000
+}
+
 impl Default for CharacterProfile {
     /// The default profile the §8 fixtures name: unit site
     /// weights, full blush, §5.5 default durations.
@@ -579,6 +970,14 @@ impl Default for CharacterProfile {
         CharacterProfile {
             site_weights: BTreeMap::new(),
             default_site_weight: 1000,
+            activity_weights: BTreeMap::new(),
+            default_activity_weight: 0,
+            weak_spot: None,
+            submission_classes: Vec::new(),
+            subspace_threshold_permille: 0,
+            episode_trend_permille: 0,
+            refractory_depth_permille: 1000,
+            carry_scale_permille: 1000,
             blush_max: 1000,
             afterglow_ticks: AFTERGLOW_DEFAULT_TICKS,
             refractory_ticks: REFRACTORY_DEFAULT_TICKS,
@@ -609,6 +1008,63 @@ impl CharacterProfile {
                 1000,
             ));
         }
+        for (class, w) in &self.activity_weights {
+            if *w > 1000 {
+                return Err(bound(&format!("activity_weights[{class}]"), *w, 1000));
+            }
+        }
+        if self.default_activity_weight > 1000 {
+            return Err(bound(
+                "default_activity_weight",
+                self.default_activity_weight,
+                1000,
+            ));
+        }
+        if let Some(ws) = &self.weak_spot {
+            if ws.site.is_empty() {
+                return Err(Refusal::new(
+                    "TG-ARO-BOUND",
+                    "weak_spot.site must name a site".to_string(),
+                ));
+            }
+            if !(1..=100_000).contains(&ws.threshold_dose) {
+                return Err(bound(
+                    "weak_spot.threshold_dose",
+                    ws.threshold_dose,
+                    100_000,
+                ));
+            }
+        }
+        if self.subspace_threshold_permille > 1000 {
+            return Err(bound(
+                "subspace_threshold_permille",
+                self.subspace_threshold_permille,
+                1000,
+            ));
+        }
+        if !(-200..=300).contains(&self.episode_trend_permille) {
+            return Err(Refusal::new(
+                "TG-ARO-BOUND",
+                format!(
+                    "episode_trend_permille {} outside -200..=300",
+                    self.episode_trend_permille
+                ),
+            ));
+        }
+        if !(500..=1500).contains(&self.refractory_depth_permille) {
+            return Err(bound(
+                "refractory_depth_permille",
+                self.refractory_depth_permille,
+                1500,
+            ));
+        }
+        if self.carry_scale_permille > 2000 {
+            return Err(bound(
+                "carry_scale_permille",
+                self.carry_scale_permille,
+                2000,
+            ));
+        }
         for (field, ticks) in [
             ("afterglow_ticks", self.afterglow_ticks),
             ("refractory_ticks", self.refractory_ticks),
@@ -632,6 +1088,31 @@ impl CharacterProfile {
             .copied()
             .unwrap_or(self.default_site_weight)
     }
+
+    /// The activity-class weight for `class` (D-238).
+    pub fn activity_weight(&self, class: &str) -> u32 {
+        self.activity_weights
+            .get(class)
+            .copied()
+            .unwrap_or(self.default_activity_weight)
+    }
+
+    /// Whether `class` is a submission-class trigger
+    /// for her (D-238).
+    pub fn is_submission_class(&self, class: &str) -> bool {
+        self.submission_classes.iter().any(|c| c == class)
+    }
+}
+
+/// D-238: the arc discount factor (permille) — full
+/// price at zero affinity, falling linearly to
+/// [`ARC_DISCOUNT_FLOOR_PERMILLE`] at full affinity.
+/// Applies to the weak-spot dose threshold and the
+/// sub-space entry requirement: surrender gets easier
+/// to reach as she discovers it.
+fn arc_discount_permille(arc_mp: i64) -> i64 {
+    let arc = permille_of(arc_mp.max(0)) as i64;
+    1000 - (1000 - ARC_DISCOUNT_FLOOR_PERMILLE) * arc / 1000
 }
 
 /// Non-device inputs for one tick (§5.3's other inputs,
@@ -710,6 +1191,39 @@ pub struct EffectsOutput {
     /// Addition G mapping; the engine never substitutes
     /// another character's recipe (§6.5).
     pub expression_key: &'static str,
+    /// The near band's register (D-237): `strained`
+    /// when she is at the ceiling (Q ≥ 900 — straining
+    /// against the leak/governor), `pleading` in the
+    /// rest of the near band, `none` outside it. The
+    /// face-state grammar's two near-threshold reads,
+    /// carried beside `expression_key` so §6.5's key
+    /// set (and every consumer of it) is unchanged.
+    pub expression_register: &'static str,
+    /// Reaction density for this tick, permille
+    /// (D-237): the density half of the level + density
+    /// law, for voice/reaction consumers (PM-1's cue
+    /// lane, torori). See `reaction_density_permille`.
+    pub reaction_density_permille: u32,
+    /// The lead channel for this tick (D-237):
+    /// `breath`, `blush`, `body`, `voice`, or `eyes`.
+    /// Exactly one channel leads; a change of lead is
+    /// an escalation event for presentation consumers.
+    pub lead_channel: &'static str,
+    /// The weak-spot switch state (D-238), mirrored
+    /// from the vector for per-tick consumers.
+    pub switch_state: SwitchState,
+    /// Whether sub-space is engaged this tick (D-238).
+    /// Sub-space carries its own output law (density
+    /// floor, surrendered register, voice lead); it is
+    /// a state beside the §5.5 phases, not a phase.
+    pub subspace: bool,
+    /// The culmination-coupled side channel (D-238):
+    /// true on ticks where a culmination-coupled
+    /// output fires for a character whose canon carries
+    /// one — the lactation channel (milk pulses, or
+    /// the culmination tick itself) when her profile's
+    /// lactation state is active.
+    pub lactation_coupled: bool,
     /// §5.7 performance envelope, while Culminating/Taper:
     /// channel peaks scaled by the envelope shape.
     pub performance: Option<PerformanceOutput>,
@@ -782,6 +1296,29 @@ pub struct ArousalVector {
     pub episode: u32,
     pub phase_ticks: u64,
     pub afterglow_level: u32,
+    /// The current charge surge (D-237), permille:
+    /// the jolt a positive input step leaves behind.
+    #[serde(default)]
+    pub charge_surge: u32,
+    /// The frozen sensitivity carry (D-237),
+    /// permille: sensitization a culmination leaves
+    /// for the next episode.
+    #[serde(default)]
+    pub sensitivity_carry: u32,
+    /// The arc term (D-238), permille: surrender
+    /// affinity grown across episodes. Slow, and it
+    /// never moves inside a single tick's other laws —
+    /// it only discounts the switch and sub-space
+    /// thresholds.
+    #[serde(default)]
+    pub arc_affinity: u32,
+    /// The weak-spot switch state (D-238) for this
+    /// snapshot.
+    #[serde(default)]
+    pub switch_state: SwitchState,
+    /// Whether sub-space is engaged (D-238).
+    #[serde(default)]
+    pub subspace: bool,
 }
 
 /// A worn item's runtime state (engine-adjacent, §5.2:
@@ -813,6 +1350,48 @@ pub struct ArousalEngine {
     episode: u32,
     phase_ticks: u64,
     afterglow_level_mp: i64,
+    // D-237 realism state (all micro-permille).
+    /// The charge surge left by the last positive
+    /// input step; decays τ 2.5 s.
+    surge_mp: i64,
+    /// The combined effective input of the previous
+    /// integrated tick (the surge's step detector).
+    prev_input_mp: i64,
+    /// D-237.1: a candidate surge step in flight — its
+    /// size (micro-permille), the level it stepped
+    /// from, and the ticks it has persisted. Zero
+    /// ticks = no candidate.
+    surge_pending_mp: i64,
+    surge_base_mp: i64,
+    surge_pending_ticks: u64,
+    /// The sensitization carry frozen at the last
+    /// firing; decays τ 240 s, snaps S at re-arm.
+    carry_mp: i64,
+    /// The §6.5 expression band under hysteresis
+    /// (0..=3; output state, recomputed on restore —
+    /// see `from_record`).
+    expression_band: u8,
+    // D-238 individuality state.
+    /// Sustained activity-class inputs (class →
+    /// intensity, permille), set through the activity
+    /// channel; the trigger map's activity half reads
+    /// these exactly as devices feed the zone half.
+    activities: BTreeMap<String, u32>,
+    /// Dose accumulated at the weak spot this episode,
+    /// micro-permille-seconds of effective input.
+    weak_dose_mp: i64,
+    /// The weak-spot switch state (flips once per
+    /// episode, at the arc-discounted dose threshold).
+    switch_state: SwitchState,
+    /// The arc term: surrender affinity, micro-permille.
+    /// Persists across resets and episodes (§5.8's
+    /// reset retains the episode audit; the arc is the
+    /// same class of record — who she is becoming).
+    arc_mp: i64,
+    /// Sustained qualifying ticks toward sub-space.
+    subspace_ticks: u64,
+    /// Whether sub-space is engaged.
+    subspace: bool,
     // Bookkeeping.
     tick: u64,
     tier: Option<u8>,
@@ -844,6 +1423,19 @@ impl ArousalEngine {
             episode: 1,
             phase_ticks: 0,
             afterglow_level_mp: 150 * MP_PER_PERMILLE,
+            surge_mp: 0,
+            prev_input_mp: 0,
+            surge_pending_mp: 0,
+            surge_base_mp: 0,
+            surge_pending_ticks: 0,
+            carry_mp: 0,
+            expression_band: 0,
+            activities: BTreeMap::new(),
+            weak_dose_mp: 0,
+            switch_state: SwitchState::None,
+            arc_mp: 0,
+            subspace_ticks: 0,
+            subspace: false,
             tick: 0,
             tier: None,
             culmination_count: 0,
@@ -893,7 +1485,37 @@ impl ArousalEngine {
             episode: self.episode,
             phase_ticks: self.phase_ticks,
             afterglow_level: permille_of(self.afterglow_level_mp),
+            charge_surge: permille_of(self.surge_mp),
+            sensitivity_carry: permille_of(self.carry_mp),
+            arc_affinity: permille_of(self.arc_mp),
+            switch_state: self.switch_state,
+            subspace: self.subspace,
         }
+    }
+
+    /// Sets a sustained activity-class input (D-238):
+    /// the trigger map's activity half. An intensity of
+    /// zero clears the class. Classes are data names
+    /// (e.g. `power_exchange`, `servitude`, `hypnosis`,
+    /// `outfit`); whether a class moves her at all is
+    /// her profile's `activity_weights`.
+    pub fn set_activity(&mut self, class: &str, intensity_permille: u32) {
+        if intensity_permille == 0 {
+            self.activities.remove(class);
+        } else {
+            self.activities
+                .insert(class.to_string(), intensity_permille.min(1000));
+        }
+    }
+
+    /// Clears one activity-class input (D-238).
+    pub fn clear_activity(&mut self, class: &str) {
+        self.activities.remove(class);
+    }
+
+    /// Clears every activity-class input (D-238).
+    pub fn clear_activities(&mut self) {
+        self.activities.clear();
     }
 
     /// Worn item ids, sorted (the canonical record's worn
@@ -1006,6 +1628,21 @@ impl ArousalEngine {
         self.latch = false;
         self.tier = None;
         self.afterglow_level_mp = 150 * MP_PER_PERMILLE;
+        self.surge_mp = 0;
+        self.prev_input_mp = 0;
+        self.surge_pending_mp = 0;
+        self.surge_base_mp = 0;
+        self.surge_pending_ticks = 0;
+        self.carry_mp = 0;
+        self.expression_band = 0;
+        // D-238: the switch un-flips and the dose and
+        // sub-space clear; the arc term and the activity
+        // inputs are retained (learning and context are
+        // not stimulation state).
+        self.weak_dose_mp = 0;
+        self.switch_state = SwitchState::None;
+        self.subspace_ticks = 0;
+        self.subspace = false;
         self.sweat_mp = 0;
         self.saliva_acc = 0;
         self.spray_acc = 0;
@@ -1030,6 +1667,7 @@ impl ArousalEngine {
             d.last_u = 0;
         }
         self.devices.clear();
+        self.activities.clear();
         self.recompute_floor();
         self.reset();
     }
@@ -1101,6 +1739,10 @@ impl ArousalEngine {
         // --- device samples + effective inputs (§5.3)
         let mut effective_list: Vec<i64> = Vec::with_capacity(self.devices.len() + 2);
         let mut drive: Vec<DriveSignal> = Vec::new();
+        // D-238: this tick's effective input at her weak
+        // spot (micro-permille), accumulated across the
+        // device and touch loops below.
+        let mut weak_effective_mp: i64 = 0;
         for d in &mut self.devices {
             let u = match (&d.spec.wave, d.on) {
                 (Some(wave), true) => wave.sample(d.phase),
@@ -1120,6 +1762,14 @@ impl ArousalEngine {
             d.last_effective = effective as u32;
             if effective > 0 {
                 effective_list.push(effective * MP_PER_PERMILLE);
+                if self
+                    .profile
+                    .weak_spot
+                    .as_ref()
+                    .is_some_and(|ws| ws.site == d.spec.site)
+                {
+                    weak_effective_mp += effective * MP_PER_PERMILLE;
+                }
             }
             if d.spec.is_vibratory() {
                 drive.push(DriveSignal {
@@ -1140,6 +1790,34 @@ impl ArousalEngine {
             ) as i64;
             if effective > 0 {
                 effective_list.push(effective * MP_PER_PERMILLE);
+                if self
+                    .profile
+                    .weak_spot
+                    .as_ref()
+                    .is_some_and(|ws| ws.site == *site)
+                {
+                    weak_effective_mp += effective * MP_PER_PERMILLE;
+                }
+            }
+        }
+        // Activity classes (D-238): sustained context
+        // inputs through the trigger map's activity half,
+        // in the same effective form as a device. The
+        // strongest submission-class effective input is
+        // tracked for the arc term and the sub-space gate.
+        let mut submission_effective_mp: i64 = 0;
+        for (class, intensity) in &self.activities {
+            let weight = self.profile.activity_weight(class);
+            let effective = div_round(
+                (i64::from(*intensity) as i128) * (i64::from(weight) as i128),
+                1000,
+            ) as i64;
+            if effective > 0 {
+                effective_list.push(effective * MP_PER_PERMILLE);
+                if self.profile.is_submission_class(class) {
+                    submission_effective_mp =
+                        submission_effective_mp.max(effective * MP_PER_PERMILLE);
+                }
             }
         }
         // A pending face fluid-contact input (§6.4) lands
@@ -1162,17 +1840,90 @@ impl ArousalEngine {
         };
         let i_permille = permille_of(combined_mp);
 
-        // --- sensitivity law (§5.3)
-        let (s_target, s_divisor) = if phase_at_start == Phase::Refractory {
-            (650 * MP_PER_PERMILLE, 20 * TICKS_PER_SECOND as i64)
+        // --- sensitivity law (§5.3; the refractory
+        // target carries her orgasm pattern's depth,
+        // D-238 — 650 at the default depth of 1000)
+        let (mut s_target, s_divisor) = if phase_at_start == Phase::Refractory {
+            (
+                650 * i64::from(self.profile.refractory_depth_permille) / 1000 * MP_PER_PERMILLE,
+                20 * TICKS_PER_SECOND as i64,
+            )
         } else if self.arousal_mp >= 400 * MP_PER_PERMILLE && combined_mp > 0 {
             (1350 * MP_PER_PERMILLE, 60 * TICKS_PER_SECOND as i64)
         } else {
             (1000 * MP_PER_PERMILLE, 120 * TICKS_PER_SECOND as i64)
         };
+        // D-238 BLANK law: while surrendered, sensitivity
+        // never rises above neutral — she stops leaning
+        // into it; accumulation is passive.
+        if self.switch_state == SwitchState::Blank {
+            s_target = s_target.min(MP_FULL);
+        }
         self.sensitivity_mp +=
             div_round_signed((s_target - self.sensitivity_mp) as i128, s_divisor as i128) as i64;
         self.sensitivity_mp = self.sensitivity_mp.clamp(S_MIN_MP, S_MAX_MP);
+        // D-237: the frozen sensitization carry decays
+        // while she rests (τ 240 s), in every phase.
+        if self.carry_mp > 0 {
+            self.carry_mp -= div_round(
+                self.carry_mp as i128,
+                (CARRY_TAU_S * TICKS_PER_SECOND as i64) as i128,
+            ) as i64;
+            if self.carry_mp < 0 {
+                self.carry_mp = 0;
+            }
+        }
+
+        // --- D-238 individuality state: weak-spot dose
+        // and switch, arc growth, sub-space. All of it
+        // is inert under the default profile (no weak
+        // spot, no submission classes, sub-space
+        // disabled), which is what keeps the §8 fixtures
+        // exactly the /1 character.
+        // The dose accrues only during the build phases:
+        // a switch is something she flips INTO during an
+        // episode's rise, never a counter that keeps
+        // running through the culmination it caused.
+        if weak_effective_mp > 0 && matches!(phase_at_start, Phase::Baseline | Phase::Stimulated) {
+            self.weak_dose_mp += weak_effective_mp / TICKS_PER_SECOND as i64;
+        }
+        if self.switch_state == SwitchState::None {
+            if let Some(ws) = &self.profile.weak_spot {
+                let threshold_mp = i64::from(ws.threshold_dose)
+                    * MP_PER_PERMILLE
+                    * arc_discount_permille(self.arc_mp)
+                    / 1000;
+                if self.weak_dose_mp >= threshold_mp {
+                    self.switch_state = match ws.mode {
+                        SwitchMode::Engage => SwitchState::Engage,
+                        SwitchMode::Blank => SwitchState::Blank,
+                    };
+                }
+            }
+        }
+        if submission_effective_mp >= 250 * MP_PER_PERMILLE
+            && self.arousal_mp >= 250 * MP_PER_PERMILLE
+        {
+            self.arc_mp = (self.arc_mp + ARC_GROWTH_MP_PER_TICK).min(MP_FULL);
+        }
+        {
+            let threshold = self.profile.subspace_threshold_permille;
+            let qualifying =
+                threshold > 0 && submission_effective_mp >= i64::from(threshold) * MP_PER_PERMILLE;
+            if qualifying {
+                self.subspace_ticks += 1;
+            } else {
+                self.subspace_ticks = self.subspace_ticks.saturating_sub(1);
+            }
+            let required =
+                (SUBSPACE_ENTER_TICKS * arc_discount_permille(self.arc_mp) as u64 / 1000).max(1);
+            if !self.subspace && self.subspace_ticks >= required {
+                self.subspace = true;
+            }
+            if self.subspace && self.subspace_ticks < required / SUBSPACE_EXIT_FRACTION {
+                self.subspace = false;
+            }
+        }
 
         // --- phase machinery
         if phase_at_start == Phase::Culminating || phase_at_start == Phase::Taper {
@@ -1200,20 +1951,77 @@ impl ArousalEngine {
                 self.set_phase(next, &mut events);
             }
         } else {
-            // --- charge (§5.3, D-211 constants)
+            // --- charge surge (D-237, deadband +
+            // persistence form D-237.1): a deliberate
+            // positive input step surges the charge
+            // rate; the surge decays with a 2.5 s time
+            // constant. The step must clear the
+            // deadband and persist — ripple (a Hold-
+            // capped touch, governor dither) is not a
+            // step, and the un-deadbanded form's PM-G6
+            // failure is the evidence. Updated here, in
+            // the integrating branch, as simulated
+            // (`sim_realism.py`).
+            if self.surge_pending_ticks == 0 {
+                if combined_mp - self.prev_input_mp >= SURGE_STEP_MIN_MP {
+                    self.surge_base_mp = self.prev_input_mp;
+                    self.surge_pending_mp = combined_mp - self.prev_input_mp;
+                    self.surge_pending_ticks = 1;
+                }
+            } else if combined_mp >= self.surge_base_mp + SURGE_STEP_MIN_MP {
+                self.surge_pending_ticks += 1;
+                self.surge_pending_mp = self.surge_pending_mp.max(combined_mp - self.surge_base_mp);
+                if self.surge_pending_ticks >= SURGE_PERSIST_TICKS {
+                    self.surge_mp = (self.surge_mp
+                        + div_round((self.surge_pending_mp as i128) * 3, 2) as i64)
+                        .min(SURGE_CAP_MP);
+                    self.surge_pending_ticks = 0;
+                    self.surge_pending_mp = 0;
+                }
+            } else {
+                self.surge_pending_ticks = 0;
+                self.surge_pending_mp = 0;
+            }
+            self.surge_mp -= div_round(self.surge_mp as i128, SURGE_DECAY_DIVISOR as i128) as i64;
+            if self.surge_mp < 0 {
+                self.surge_mp = 0;
+            }
+            self.prev_input_mp = combined_mp;
+            // --- charge (§5.3, D-211 constants; the leak
+            // time constant is the D-237 grown value at
+            // the current charge)
+            // D-238 BLANK law: surrendered, charge leaks
+            // at half rate — it holds and accumulates
+            // passively instead of draining.
+            let leak_divisor = leak_tau_s(permille_of(self.charge_mp))
+                * TICKS_PER_SECOND as i64
+                * if self.switch_state == SwitchState::Blank {
+                    BLANK_LEAK_DIVISOR_SCALE
+                } else {
+                    1
+                };
             if combined_mp > 0 {
                 let x_micro = combined_mp / 1000;
-                let charge_rate = div_round(
+                let base_rate = div_round(
                     (CHARGE_PERMILLE_PER_S as i128)
                         * (pow_3_2_micro(x_micro) as i128)
                         * (self.sensitivity_mp as i128),
                     1_000_000_000,
                 );
+                // D-238 ENGAGE law: flipped to ENGAGE,
+                // her charge slope steepens by the law's
+                // bonus — she is participating now.
+                let engage_mp = if self.switch_state == SwitchState::Engage {
+                    ENGAGE_CHARGE_BONUS_PERMILLE * MP_PER_PERMILLE
+                } else {
+                    0
+                };
+                let charge_rate = div_round(
+                    base_rate * (MP_FULL + self.surge_mp + engage_mp) as i128,
+                    MP_FULL as i128,
+                );
                 self.charge_mp += div_round(charge_rate, TICKS_PER_SECOND as i128) as i64;
-                self.charge_mp -= div_round(
-                    self.charge_mp as i128,
-                    (Q_LEAK_TAU_S as i128) * (TICKS_PER_SECOND as i128),
-                ) as i64;
+                self.charge_mp -= div_round(self.charge_mp as i128, leak_divisor as i128) as i64;
             } else if self.floor_mp > 0 {
                 // Passive presence: small charge rate, the
                 // 250 cap enforced as a clamp (§5.3).
@@ -1221,18 +2029,12 @@ impl ArousalEngine {
                     (PRESENCE_PERMILLE_PER_S * MP_PER_PERMILLE) as i128,
                     TICKS_PER_SECOND as i128,
                 ) as i64;
-                self.charge_mp -= div_round(
-                    self.charge_mp as i128,
-                    (Q_LEAK_TAU_S as i128) * (TICKS_PER_SECOND as i128),
-                ) as i64;
+                self.charge_mp -= div_round(self.charge_mp as i128, leak_divisor as i128) as i64;
                 if self.charge_mp > PRESENCE_CAP_MP {
                     self.charge_mp = PRESENCE_CAP_MP;
                 }
             } else {
-                self.charge_mp -= div_round(
-                    self.charge_mp as i128,
-                    (Q_LEAK_TAU_S as i128) * (TICKS_PER_SECOND as i128),
-                ) as i64;
+                self.charge_mp -= div_round(self.charge_mp as i128, leak_divisor as i128) as i64;
             }
             self.charge_mp = self.charge_mp.clamp(0, Q_MAX_MP);
             // --- dose (§5.3, D-211 law 140·I^2.5)
@@ -1295,6 +2097,17 @@ impl ArousalEngine {
                     // this tick (D-211 erratum).
                     if charge_at_start < REARM_Q_PERMILLE * MP_PER_PERMILLE && combined_mp > 0 {
                         self.latch = false;
+                        // D-238: the switch is per-episode —
+                        // the new episode starts un-flipped,
+                        // with a fresh weak-spot dose.
+                        self.switch_state = SwitchState::None;
+                        self.weak_dose_mp = 0;
+                        // D-237: the post-refractory rebound
+                        // — a surviving carry snaps S back
+                        // above baseline for the new episode.
+                        if i64::from(permille_of(self.carry_mp)) >= CARRY_SNAP_MIN_PERMILLE {
+                            self.sensitivity_mp = self.sensitivity_mp.max(MP_FULL + self.carry_mp);
+                        }
                         self.episode += 1;
                         self.dose_mp = 0;
                         self.peak_mp = 0;
@@ -1318,10 +2131,33 @@ impl ArousalEngine {
                     65 * (self.dose_mp as i128) + 35 * (self.peak_mp as i128),
                     100_000,
                 ) as i64;
+                // D-238 orgasm pattern: her strength
+                // trajectory across episodes scales P by
+                // the profile trend per elapsed episode
+                // (flat at the default trend of 0).
+                let trend_scale = (1000
+                    + i64::from(self.profile.episode_trend_permille) * i64::from(self.episode - 1))
+                .max(500);
+                let p = div_round(p as i128 * trend_scale as i128, 1000) as i64;
                 let p_permille = (p / 1000).clamp(0, 1000) as u32;
                 let tier = tier_of(p_permille);
                 self.tier = Some(tier);
                 self.latch = true;
+                // D-237: freeze the sensitization carry
+                // from this tick's S — two-thirds of the
+                // excess over neutral, capped.
+                self.carry_mp = if self.sensitivity_mp > MP_FULL {
+                    div_round((self.sensitivity_mp - MP_FULL) as i128 * 2, 3) as i64
+                } else {
+                    0
+                };
+                // D-238 orgasm pattern: her carry-over
+                // strength scales the frozen carry.
+                self.carry_mp = div_round(
+                    self.carry_mp as i128 * i64::from(self.profile.carry_scale_permille) as i128,
+                    1000,
+                ) as i64;
+                self.carry_mp = self.carry_mp.clamp(0, CARRY_CAP_MP);
                 self.culmination_count += 1;
                 self.afterglow_level_mp = if self.floor_mp > 0 {
                     self.floor_mp
@@ -1417,6 +2253,11 @@ impl ArousalEngine {
                 }
             }
         };
+        // D-237: humanized jitter on the tremble
+        // amplitude (output only; state stays exact).
+        let tremble_milli_px = (u64::from(tremble_milli_px)
+            * u64::from(tremble_jitter_permille(self.tick))
+            / 1000) as u32;
         // §6.4 fluids.
         let milk_pulses = if inputs.suction_peak && self.profile.lactation_active {
             1
@@ -1477,22 +2318,71 @@ impl ArousalEngine {
             self.fluid_contact_ticks = FLUID_CONTACT_TICKS;
         }
         // §6.5 expression selection (band, then resolved
-        // per character by the presentation).
+        // per character by the presentation). D-237: the
+        // band runs under hysteresis (`expression_band`),
+        // so a state hovering at a threshold no longer
+        // flickers between governed names tick to tick.
+        let q_permille = permille_of(self.charge_mp);
+        self.expression_band = expression_band_next(self.expression_band, a_permille, q_permille);
+        let band = self.expression_band;
+        let in_near = self.phase == Phase::Stimulated && band >= 3;
         let expression_key = if self.fluid_contact_ticks > 0 {
             "fluid-contact"
         } else if self.phase == Phase::Culminating {
             "peak"
         } else if self.phase == Phase::Taper || self.phase == Phase::Afterglow {
             "afterglow"
-        } else if self.phase == Phase::Stimulated && a_permille >= 800 {
+        } else if in_near {
             "near"
-        } else if a_permille >= 550 || permille_of(self.charge_mp) >= 700 {
+        } else if band >= 2 {
             "building"
-        } else if a_permille >= 250 {
+        } else if band >= 1 {
             "aroused"
         } else {
             "ambient"
         };
+        // D-237: the near band's two reads — strained at
+        // the ceiling, pleading below it. D-238: the
+        // individuality states outrank both — in
+        // sub-space she reads surrendered; flipped to
+        // BLANK she reads blank. (The §6.5 key set is
+        // unchanged; the register is the layered read.)
+        let expression_register = if in_near && self.subspace {
+            "surrendered"
+        } else if in_near && self.switch_state == SwitchState::Blank {
+            "blank"
+        } else if in_near {
+            if q_permille >= 900 {
+                "strained"
+            } else {
+                "pleading"
+            }
+        } else {
+            "none"
+        };
+        // D-238 output laws: sub-space holds a density
+        // floor while stimulated (her reactions keep
+        // coming, unguarded), and BLANK thins density
+        // (responsiveness drops). In sub-space at band
+        // ≥ 1 the voice leads — surrender is heard.
+        let mut density = reaction_density_permille(self.phase, band, self.tier, self.phase_ticks);
+        if self.subspace && self.phase == Phase::Stimulated {
+            density = density.max(500);
+        }
+        if self.switch_state == SwitchState::Blank && self.phase == Phase::Stimulated {
+            density = density * 3 / 5;
+        }
+        let lead = if self.subspace && band >= 1 && self.phase == Phase::Stimulated {
+            "voice"
+        } else {
+            lead_channel(self.phase, band)
+        };
+        // D-238: the culmination-coupled side channel —
+        // lactation fires with suction, and couples to
+        // the culmination itself, for profiles whose
+        // canon carries it.
+        let lactation_coupled =
+            self.profile.lactation_active && (milk_pulses > 0 || self.phase == Phase::Culminating);
         if self.fluid_contact_ticks > 0 {
             self.fluid_contact_ticks -= 1;
         }
@@ -1502,6 +2392,12 @@ impl ArousalEngine {
             tremble_milli_px,
             tremble_rate_millihz,
             expression_key,
+            expression_register,
+            reaction_density_permille: density,
+            lead_channel: lead,
+            switch_state: self.switch_state,
+            subspace: self.subspace,
+            lactation_coupled,
             performance,
             milk_pulses,
             saliva_strands,
@@ -1531,7 +2427,7 @@ impl ArousalEngine {
             })
             .collect();
         format!(
-            "t{}|A{}|Q{}|S{}|F{}|P{}|D{}|ph{}|L{}|E{}|W{}|V{}",
+            "t{}|A{}|Q{}|S{}|F{}|P{}|D{}|ph{}|L{}|E{}|W{}|V{}|G{}|C{}|R{}|X{}|U{}",
             self.tick,
             v.arousal,
             v.pleasure_charge,
@@ -1543,7 +2439,12 @@ impl ArousalEngine {
             u8::from(v.culmination_latch),
             v.episode,
             worn,
-            ev.join(",")
+            ev.join(","),
+            v.charge_surge,
+            v.sensitivity_carry,
+            v.arc_affinity,
+            v.switch_state.token(),
+            u8::from(v.subspace)
         )
     }
 
@@ -1568,7 +2469,21 @@ impl ArousalEngine {
             format!("cc{}", self.culmination_count),
             format!("mg{}", self.mirror_generation),
             format!("sw{}", self.sweat_mp),
+            format!("sg{}", self.surge_mp),
+            format!("pi{}", self.prev_input_mp),
+            format!("sp{}", self.surge_pending_mp),
+            format!("sb0{}", self.surge_base_mp),
+            format!("spt{}", self.surge_pending_ticks),
+            format!("cy{}", self.carry_mp),
+            format!("arc{}", self.arc_mp),
+            format!("wd{}", self.weak_dose_mp),
+            format!("xs{}", self.switch_state.token()),
+            format!("st{}", self.subspace_ticks),
+            format!("sb{}", u8::from(self.subspace)),
         ];
+        for (class, intensity) in &self.activities {
+            parts.push(format!("act{class}:{intensity}"));
+        }
         for d in &self.devices {
             parts.push(format!(
                 "dev{}:{}:{}:{}:{}",
@@ -1605,6 +2520,28 @@ struct PersistRecord {
     episode: u32,
     phase_ticks: u64,
     afterglow_level_mp: i64,
+    surge_mp: i64,
+    prev_input_mp: i64,
+    #[serde(default)]
+    surge_pending_mp: i64,
+    #[serde(default)]
+    surge_base_mp: i64,
+    #[serde(default)]
+    surge_pending_ticks: u64,
+    carry_mp: i64,
+    // D-238 individuality state.
+    #[serde(default)]
+    arc_mp: i64,
+    #[serde(default)]
+    weak_dose_mp: i64,
+    #[serde(default)]
+    switch_state: SwitchState,
+    #[serde(default)]
+    subspace_ticks: u64,
+    #[serde(default)]
+    subspace: bool,
+    #[serde(default)]
+    activities: Vec<(String, u32)>,
     tick: u64,
     tier: Option<u8>,
     culmination_count: u32,
@@ -1638,6 +2575,22 @@ impl ArousalEngine {
             episode: self.episode,
             phase_ticks: self.phase_ticks,
             afterglow_level_mp: self.afterglow_level_mp,
+            surge_mp: self.surge_mp,
+            prev_input_mp: self.prev_input_mp,
+            surge_pending_mp: self.surge_pending_mp,
+            surge_base_mp: self.surge_base_mp,
+            surge_pending_ticks: self.surge_pending_ticks,
+            carry_mp: self.carry_mp,
+            arc_mp: self.arc_mp,
+            weak_dose_mp: self.weak_dose_mp,
+            switch_state: self.switch_state,
+            subspace_ticks: self.subspace_ticks,
+            subspace: self.subspace,
+            activities: self
+                .activities
+                .iter()
+                .map(|(c, i)| (c.clone(), *i))
+                .collect(),
             tick: self.tick,
             tier: self.tier,
             culmination_count: self.culmination_count,
@@ -1672,6 +2625,13 @@ impl ArousalEngine {
             ("peak", rec.peak_mp, 0, MP_FULL),
             ("dose", rec.dose_mp, 0, MP_FULL),
             ("afterglow_level", rec.afterglow_level_mp, 0, MP_FULL),
+            ("surge", rec.surge_mp, 0, SURGE_CAP_MP),
+            ("prev_input", rec.prev_input_mp, 0, MP_FULL),
+            ("surge_pending", rec.surge_pending_mp, 0, MP_FULL),
+            ("surge_base", rec.surge_base_mp, 0, MP_FULL),
+            ("carry", rec.carry_mp, 0, CARRY_CAP_MP),
+            ("arc", rec.arc_mp, 0, MP_FULL),
+            ("weak_dose", rec.weak_dose_mp, 0, 200_000 * MP_PER_PERMILLE),
             ("sweat", rec.sweat_mp, 0, MP_FULL),
         ] {
             if !(lo..=hi).contains(&v) {
@@ -1710,6 +2670,26 @@ impl ArousalEngine {
             episode: rec.episode,
             phase_ticks: rec.phase_ticks,
             afterglow_level_mp: rec.afterglow_level_mp,
+            surge_mp: rec.surge_mp,
+            prev_input_mp: rec.prev_input_mp,
+            surge_pending_mp: rec.surge_pending_mp,
+            surge_base_mp: rec.surge_base_mp,
+            surge_pending_ticks: rec.surge_pending_ticks,
+            carry_mp: rec.carry_mp,
+            activities: rec.activities.iter().cloned().collect(),
+            weak_dose_mp: rec.weak_dose_mp,
+            switch_state: rec.switch_state,
+            arc_mp: rec.arc_mp,
+            subspace_ticks: rec.subspace_ticks,
+            subspace: rec.subspace,
+            // Output state, not persisted: recomputed from
+            // the restored state (a restore may re-enter a
+            // band one tick differently; the band drives
+            // no state, so no trajectory can diverge).
+            expression_band: raw_expression_band(
+                permille_of(rec.arousal_mp),
+                permille_of(rec.charge_mp),
+            ),
             tick: rec.tick,
             tier: rec.tier,
             culmination_count: rec.culmination_count,

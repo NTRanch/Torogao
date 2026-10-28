@@ -35,8 +35,21 @@ use torogao_session::{ArousalHost, Phase};
 /// (PM-G4): pinned from the first green run; the primo
 /// run must reproduce them bit-for-bit (cross-machine
 /// determinism is part of the gate).
-const GOLDEN_TRAJECTORY_HASH: u64 = 10566805004775308757;
-const GOLDEN_CUE_HASH: u64 = 9013338875949152787;
+/// D-237 re-baseline (arousal-engine/2): the /1
+/// trajectory golden was 10566805004775308757. The
+/// engine's canonical record gained the /2 fields and
+/// the Hold governor was re-derived (τ_eff + the
+/// combined-input budget), so the scripted session's
+/// trajectory moved by construction. The /2 value was
+/// measured on the sandbox, run-twice stable
+/// (2026-10-28); primo reproduction is a named
+/// follow-on in REALISM-OPT.md. The cue golden moved
+/// too (was 9013338875949152787): the re-derived
+/// governor changes the scripted session's capped
+/// touch strengths under Hold, and the cue stream
+/// follows the engine stream it is derived from.
+const GOLDEN_TRAJECTORY_HASH: u64 = 8347674612293529876;
+const GOLDEN_CUE_HASH: u64 = 3856369611957099866;
 
 const AREAS: [&str; 3] = ["body.lower", "fixture.seat", "floor.pool"];
 
@@ -689,6 +702,8 @@ fn p6_hold_governor() {
     literal.governor = GovernorData {
         charge_coeff: 110,
         leak_tau_s: 45,
+        leak_band_start_permille: 1000,
+        leak_tau_min_s: 0,
     };
     let (literal_culminations, ..) = hold_experiment(&literal);
     assert!(
