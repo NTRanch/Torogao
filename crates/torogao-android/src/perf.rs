@@ -142,4 +142,30 @@ mod tests {
         }
         assert_eq!(times.len(), SAMPLES_MAX);
     }
+
+    /// Adversarial (cure round): a NaN storm — broken
+    /// clock readings interleaved with valid frames, in
+    /// volume — can neither poison the summary nor evict
+    /// valid samples: refused samples never enter the
+    /// buffer, so they hold no capacity.
+    #[test]
+    fn nan_storm_cannot_poison_or_evict() {
+        let mut times = FrameTimes::new();
+        for _ in 0..10_000 {
+            times.push(f32::NAN);
+            times.push(f32::INFINITY);
+            times.push(f32::NEG_INFINITY);
+            times.push(-0.5);
+        }
+        assert!(times.is_empty());
+        assert!(times.summary().is_none());
+        for _ in 0..100 {
+            times.push(20.0);
+            times.push(f32::NAN);
+        }
+        let summary = times.summary().expect("summary over the valid frames");
+        assert_eq!(summary.frames, 100);
+        assert_eq!(summary.mean_ms, 20.0);
+        assert!(summary.mean_ms.is_finite() && summary.max_ms.is_finite());
+    }
 }

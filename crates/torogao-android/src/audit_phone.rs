@@ -20,8 +20,9 @@ use serde::Serialize;
 use torogao_app::persona::{self, Area, CommandKind, StageContext};
 
 use crate::layout::{
-    COMMAND_ROW_HEIGHT_DP, RAIL_HEIGHT_DP, REFERENCE_VIEWPORTS, STANDING_BAR_HEIGHT_DP,
-    TOUCH_TARGET_MIN_DP, frame_layout,
+    COMMAND_ROW_HEIGHT_DP, RAIL_HEIGHT_DP, REFERENCE_VIEWPORTS, STAGE_CHROME_DP,
+    STAGE_COLLAPSED_HEIGHT_DP, STAGE_IMAGE_MIN_DP, STAGE_PANEL_MARGIN_Y_DP, STAGE_ROW_GAP_DP,
+    STAGE_TITLE_ROW_DP, STANDING_BAR_HEIGHT_DP, TOUCH_TARGET_MIN_DP, frame_layout,
 };
 
 /// The areas this stage claims operable on phone. Every
@@ -83,6 +84,7 @@ pub fn phone_audit() -> Vec<PhoneAuditLine> {
     lines.push(audit_settings_enumeration());
     lines.push(audit_claim_honesty());
     lines.push(audit_touch_floor());
+    lines.push(audit_stage_header_budget());
     lines.push(audit_standing_controls());
     lines.push(audit_one_column());
     lines.push(audit_pinned_context());
@@ -159,6 +161,31 @@ fn audit_touch_floor() -> PhoneAuditLine {
         holds,
         format!(
             "floor {TOUCH_TARGET_MIN_DP} dp; standing {STANDING_BAR_HEIGHT_DP}, rail {RAIL_HEIGHT_DP}, row {COMMAND_ROW_HEIGHT_DP}"
+        ),
+    )
+}
+
+/// The stage header's row budget (the B1 defect's cure):
+/// on every reference viewport the expanded stage fits
+/// its full chrome plus the image floor, and the
+/// collapsed stage is exactly its title + transport
+/// budget — the header can never draw rows the panel
+/// has not reserved.
+fn audit_stage_header_budget() -> PhoneAuditLine {
+    let mut holds = true;
+    for viewport in REFERENCE_VIEWPORTS {
+        let expanded = frame_layout(viewport, false);
+        holds &= expanded.stage.height >= STAGE_CHROME_DP + STAGE_IMAGE_MIN_DP;
+        let collapsed = frame_layout(viewport, true);
+        holds &= collapsed.stage.height == STAGE_COLLAPSED_HEIGHT_DP;
+    }
+    holds &= STAGE_COLLAPSED_HEIGHT_DP
+        == STAGE_PANEL_MARGIN_Y_DP + STAGE_TITLE_ROW_DP + STAGE_ROW_GAP_DP + COMMAND_ROW_HEIGHT_DP;
+    line(
+        "stage header budget (B1 cure)",
+        holds,
+        format!(
+            "chrome {STAGE_CHROME_DP} dp + image floor {STAGE_IMAGE_MIN_DP} dp fit every expanded stage; collapsed stage == {STAGE_COLLAPSED_HEIGHT_DP} dp (title + transport) on 3 viewports"
         ),
     )
 }

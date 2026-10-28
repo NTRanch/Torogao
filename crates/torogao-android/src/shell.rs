@@ -40,7 +40,8 @@ use crate::audit_phone::phone_audit_json;
 use crate::evidence::{AUDIT_NAME, DETERMINISM_NAME, EvidenceLog, PERF_NAME, write_json_atomic};
 use crate::fixture::{PRIMA_REPERTOIRE_BYTES, run_greeting_stream};
 use crate::layout::{
-    COMMAND_ROW_HEIGHT_DP, FrameLayout, RAIL_CHIP_MIN_WIDTH_DP, ViewportDp, frame_layout,
+    COMMAND_ROW_HEIGHT_DP, FrameLayout, RAIL_CHIP_MIN_WIDTH_DP, STAGE_CHROME_DP,
+    STAGE_CONTEXT_ROW_DP, STAGE_ROW_GAP_DP, STAGE_TITLE_ROW_DP, ViewportDp, frame_layout,
 };
 use crate::perf::FrameTimes;
 use crate::settings::SettingsStore;
@@ -574,7 +575,15 @@ impl AndroidShell {
             _ => egui::RawInput::default(),
         };
         egui_ctx.run_ui(raw_input, |ui| {
-            draw_stage_header(ui, area, &context, viewport_id, &layout, actions);
+            draw_stage_header(
+                ui,
+                area,
+                &context,
+                viewport_id,
+                &layout,
+                self.stage_collapsed,
+                actions,
+            );
             draw_standing_bar(ui, area, nerd, &status, status_is_refusal, &layout, actions);
             draw_area_rail(ui, area, &layout, actions);
             egui::CentralPanel::default().show(ui, |ui| {
@@ -939,43 +948,86 @@ impl ApplicationHandler for AndroidShell {
 /// title and host slot, the pinned context, and the
 /// collapse + transport controls at or above the touch
 /// floor.
+///
+/// The header draws exactly the rows the layout model
+/// budgets (`layout::STAGE_CHROME_DP`): panel margin,
+/// title row, context row, transport row, at the model's
+/// row heights and gap. Gate B1's defect — rows
+/// overflowing a panel that had reserved 56 dp for them —
+/// was a budget the draw side invented instead of the
+/// model's; the frame margin and item spacing are now
+/// set from the model's constants so the two cannot
+/// drift apart. Collapsed, the header draws the title
+/// and transport rows only (the collapsed budget).
 fn draw_stage_header(
     ui: &mut egui::Ui,
     area: Area,
     pinned: &StageContext,
     viewport: Option<(egui::TextureId, [u32; 2])>,
     layout: &FrameLayout,
+    collapsed: bool,
     actions: &mut Vec<PhoneAction>,
 ) {
     let info = area.info();
+    let mut frame = egui::Frame::side_top_panel(ui.style());
+    frame.inner_margin = egui::Margin {
+        left: 8,
+        right: 8,
+        top: 6,
+        bottom: 6,
+    };
     egui::Panel::top("stage")
         .exact_size(layout.stage.height)
+        .frame(frame)
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.strong(info.title);
-                ui.label(format!(
-                    "host: {}",
-                    info.host_slot.unwrap_or("hostless — the meta register")
-                ));
-            });
-            if let Some((id, size)) = viewport {
-                let available = ui.available_size();
-                let image_height = (available.y - 56.0).max(1.0);
-                let aspect = size[0] as f32 / size[1].max(1) as f32;
-                let mut width = available.x;
-                let mut height = width / aspect;
-                if height > image_height {
-                    height = image_height;
-                    width = height * aspect;
+            ui.spacing_mut().item_spacing.y = STAGE_ROW_GAP_DP;
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), STAGE_TITLE_ROW_DP),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.strong(info.title);
+                    ui.label(format!(
+                        "host: {}",
+                        info.host_slot.unwrap_or("hostless — the meta register")
+                    ));
+                },
+            );
+            if !collapsed {
+                // The image gets exactly what the stage
+                // height leaves after the chrome — the
+                // model floors the expanded stage so this
+                // is never below STAGE_IMAGE_MIN_DP on a
+                // live surface.
+                let image_height = (layout.stage.height - STAGE_CHROME_DP).max(0.0);
+                if image_height > 0.0 {
+                    if let Some((id, size)) = viewport {
+                        let available_width = ui.available_width();
+                        let aspect = size[0] as f32 / size[1].max(1) as f32;
+                        let mut width = available_width;
+                        let mut height = width / aspect;
+                        if height > image_height {
+                            height = image_height;
+                            width = height * aspect;
+                        }
+                        ui.add(egui::Image::new((id, egui::vec2(width, height))));
+                    } else {
+                        ui.label("viewport warming up");
+                    }
                 }
-                ui.add(egui::Image::new((id, egui::vec2(width, height))));
-            } else {
-                ui.label("viewport warming up");
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), STAGE_CONTEXT_ROW_DP),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.label(format!(
+                            "{} · {} nodes · {} params · {}",
+                            pinned.model_label,
+                            pinned.node_count,
+                            pinned.param_count,
+                            pinned.play_state
+                        ));
+                    },
+                );
             }
-            ui.label(format!(
-                "{} · {} nodes · {} params · {}",
-                pinned.model_label, pinned.node_count, pinned.param_count, pinned.play_state
-            ));
             ui.horizontal(|ui| {
                 if ui
                     .add_sized(

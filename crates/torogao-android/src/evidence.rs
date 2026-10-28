@@ -117,4 +117,26 @@ mod tests {
         assert_eq!(parsed["hash"], 42);
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
+
+    /// Adversarial (cure round): the evidence directory
+    /// is deleted under a live shell (storage loss). The
+    /// contract is best-effort-with-a-record: writes
+    /// degrade to stderr, never panic, and never
+    /// resurrect the directory behind the storage
+    /// layer's back.
+    #[test]
+    fn writes_to_a_deleted_directory_degrade_without_panicking() {
+        let dir = std::env::temp_dir().join(format!(
+            "torogao-android-evidence-loss-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let log = EvidenceLog::new(&dir, "a1-boot.log");
+        log.line("before the loss");
+        std::fs::remove_dir_all(&dir).expect("delete evidence dir");
+        log.line("after the loss");
+        log.line("and again");
+        write_json_atomic(&dir.join("record.json"), &serde_json::json!({"hash": 1}));
+        assert!(!dir.exists(), "evidence writes must not resurrect the dir");
+    }
 }

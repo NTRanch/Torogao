@@ -118,6 +118,33 @@ mod tests {
         );
     }
 
+    /// Adversarial (cure round): a partially deleted
+    /// tree — the saves and evidence dirs removed under
+    /// a live shell — is restored whole by the next
+    /// create_dirs, with the surviving state dir's
+    /// contents untouched.
+    #[test]
+    fn create_dirs_recovers_a_partially_deleted_tree() {
+        let root = std::env::temp_dir().join(format!(
+            "torogao-android-storage-partial-{}",
+            std::process::id()
+        ));
+        let storage = Storage::new(root.clone());
+        storage.create_dirs().expect("first create");
+        let marker = storage.state_dir().join("marker.txt");
+        std::fs::write(&marker, "standing").expect("seed marker");
+        std::fs::remove_dir_all(storage.saves_dir()).expect("delete saves");
+        std::fs::remove_dir_all(storage.evidence_dir()).expect("delete evidence");
+        storage.create_dirs().expect("recovery create");
+        assert!(storage.saves_dir().is_dir());
+        assert!(storage.evidence_dir().is_dir());
+        assert_eq!(
+            std::fs::read_to_string(&marker).expect("marker survives"),
+            "standing"
+        );
+        std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+
     /// Creating the subtree is idempotent and lands every
     /// directory the shell writes to.
     #[test]

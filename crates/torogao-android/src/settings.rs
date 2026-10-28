@@ -318,6 +318,45 @@ mod tests {
         assert_eq!(validate_save_name(" session-1 ").ok(), Some("session-1"));
     }
 
+    /// Adversarial (cure round): IME-typed unicode names.
+    /// The bound counts characters, not bytes (a 64-char
+    /// multibyte name is legal, a 65-char one refuses);
+    /// unicode-whitespace-only names trim to empty and
+    /// refuse; a unicode-named save on disk lists back
+    /// byte-exact.
+    #[test]
+    fn unicode_save_names_validate_by_character_and_round_trip() {
+        assert_eq!(validate_save_name("セッション").ok(), Some("セッション"));
+        assert!(validate_save_name(&"あ".repeat(64)).is_ok());
+        assert!(validate_save_name(&"あ".repeat(65)).is_err());
+        // Non-breaking and ideographic spaces are Rust
+        // whitespace: a name of only those is empty.
+        assert!(validate_save_name("\u{00A0}\u{3000}").is_err());
+        // A combining sequence counts per character and
+        // is otherwise ordinary.
+        assert!(validate_save_name("e\u{0301}lan").is_ok());
+
+        let (store, root) = temp_store("unicode");
+        let path = store.save_path("セッション①").expect("path resolves");
+        std::fs::write(&path, "{}").expect("seed save file");
+        assert_eq!(store.list_saves(), vec!["セッション①".to_string()]);
+        std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    /// Adversarial (cure round): the saves directory
+    /// disappearing mid-run (the storage half of a
+    /// surface-loss event) reads as an empty picker, not
+    /// an error — and the store still resolves new save
+    /// paths against the same root.
+    #[test]
+    fn missing_saves_dir_reads_empty() {
+        let (store, root) = temp_store("missing-saves");
+        std::fs::remove_dir_all(root.join("saves")).expect("remove saves dir");
+        assert!(store.list_saves().is_empty());
+        assert!(store.save_path("after-loss").is_ok());
+        std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+
     /// Save → load restores the session and lands on the
     /// same evaluated state the capture recorded; a second
     /// save under the same name refuses (never forced).

@@ -43,18 +43,62 @@ pub const RAIL_HEIGHT_DP: f32 = 56.0;
 pub const RAIL_CHIP_MIN_WIDTH_DP: f32 = 88.0;
 /// A command row's height in the content column.
 pub const COMMAND_ROW_HEIGHT_DP: f32 = 56.0;
-/// The collapsed stage header's height (title + transport
-/// row only).
-pub const STAGE_COLLAPSED_HEIGHT_DP: f32 = 64.0;
+/// The stage header's title row height (area title +
+/// host slot), in dp.
+pub const STAGE_TITLE_ROW_DP: f32 = 28.0;
+/// The stage header's pinned-context row height (model
+/// label + counts + play state), in dp.
+pub const STAGE_CONTEXT_ROW_DP: f32 = 28.0;
+/// The gap between two stage header rows, in dp. The
+/// shell sets the panel's item spacing to exactly this,
+/// so the drawn stack and this budget cannot drift apart.
+pub const STAGE_ROW_GAP_DP: f32 = 4.0;
+/// The stage panel's total vertical frame margin, in dp
+/// (the shell applies it as the panel frame's top +
+/// bottom inner margin).
+pub const STAGE_PANEL_MARGIN_Y_DP: f32 = 12.0;
+/// The expanded stage header's chrome: every row the
+/// header draws except the stage image itself — panel
+/// margin + title + gap + gap + context + gap +
+/// transport row (the transport row is a command row;
+/// three gaps because the image sits between the title
+/// and context rows). The image gets what the stage
+/// height leaves after this, never less than
+/// `STAGE_IMAGE_MIN_DP` (the floor below enforces it).
+/// Gate B1's defect was this budget's absence: the
+/// header reserved 56 dp for ~136 dp of rows, so the
+/// transport buttons clipped at the panel edge and the
+/// image undersized.
+pub const STAGE_CHROME_DP: f32 = STAGE_PANEL_MARGIN_Y_DP
+    + STAGE_TITLE_ROW_DP
+    + STAGE_ROW_GAP_DP
+    + STAGE_ROW_GAP_DP
+    + STAGE_CONTEXT_ROW_DP
+    + STAGE_ROW_GAP_DP
+    + COMMAND_ROW_HEIGHT_DP;
+/// The stage image's height floor in the expanded
+/// header, in dp.
+pub const STAGE_IMAGE_MIN_DP: f32 = 60.0;
+/// The collapsed stage header's height: panel margin +
+/// title + gap + transport row — exactly the rows the
+/// collapsed header draws (no image, no context row).
+/// The A-1 constant (64) was under this budget, which
+/// clipped the transport row whenever the stage was
+/// collapsed.
+pub const STAGE_COLLAPSED_HEIGHT_DP: f32 =
+    STAGE_PANEL_MARGIN_Y_DP + STAGE_TITLE_ROW_DP + STAGE_ROW_GAP_DP + COMMAND_ROW_HEIGHT_DP;
 /// The expanded stage's height as a fraction of the
 /// viewport height (capped by `STAGE_HEIGHT_MAX_DP`).
 pub const STAGE_HEIGHT_FRACTION: f32 = 0.36;
 /// The expanded stage's height cap, in dp.
 pub const STAGE_HEIGHT_MAX_DP: f32 = 340.0;
-/// The expanded stage's height floor, in dp (below this
-/// the face leaves the readability class — PROGRAM §3.2's
-/// floor is a render concern; this is the header's).
-pub const STAGE_HEIGHT_MIN_DP: f32 = 180.0;
+/// The expanded stage's height floor, in dp: chrome plus
+/// the image floor, by construction — an expanded stage
+/// always fits its rows and a readable image (below
+/// this the face leaves the readability class — PROGRAM
+/// §3.2's floor is a render concern; this is the
+/// header's).
+pub const STAGE_HEIGHT_MIN_DP: f32 = STAGE_CHROME_DP + STAGE_IMAGE_MIN_DP;
 
 /// A viewport in dp.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -219,7 +263,9 @@ pub const REFERENCE_VIEWPORTS: [ViewportDp; 3] = [
 #[cfg(test)]
 mod tests {
     use super::{
-        REFERENCE_VIEWPORTS, STANDING_BAR_HEIGHT_DP, TOUCH_TARGET_MIN_DP, ViewportDp, frame_layout,
+        COMMAND_ROW_HEIGHT_DP, RAIL_HEIGHT_DP, REFERENCE_VIEWPORTS, STAGE_CHROME_DP,
+        STAGE_COLLAPSED_HEIGHT_DP, STAGE_IMAGE_MIN_DP, STAGE_PANEL_MARGIN_Y_DP, STAGE_ROW_GAP_DP,
+        STAGE_TITLE_ROW_DP, STANDING_BAR_HEIGHT_DP, TOUCH_TARGET_MIN_DP, ViewportDp, frame_layout,
     };
 
     /// Rule 5: the standing bar is pinned to the bottom
@@ -283,6 +329,93 @@ mod tests {
         assert_eq!(layout.content.height, 0.0);
         assert_eq!(layout.stage.height, 0.0);
         assert!(!layout.content.overlaps(&layout.standing_bar));
+    }
+
+    /// The B1 defect's regression test: an expanded stage
+    /// always reserves the full header chrome plus the
+    /// image floor — the rows the header draws can never
+    /// exceed the panel the model budgets for them.
+    #[test]
+    fn expanded_stage_always_fits_its_chrome_and_image_floor() {
+        for viewport in REFERENCE_VIEWPORTS {
+            let layout = frame_layout(viewport, false);
+            assert!(
+                layout.stage.height >= STAGE_CHROME_DP + STAGE_IMAGE_MIN_DP,
+                "stage {} < chrome {} + image floor {} on {viewport:?}",
+                layout.stage.height,
+                STAGE_CHROME_DP,
+                STAGE_IMAGE_MIN_DP
+            );
+        }
+    }
+
+    /// The collapsed header draws title + transport only,
+    /// and its height is exactly that budget: both rows
+    /// fit at the touch floor, with nothing left over for
+    /// an image the collapsed header must not draw.
+    #[test]
+    fn collapsed_stage_is_exactly_its_row_budget() {
+        assert_eq!(
+            STAGE_COLLAPSED_HEIGHT_DP,
+            STAGE_PANEL_MARGIN_Y_DP + STAGE_TITLE_ROW_DP + STAGE_ROW_GAP_DP + COMMAND_ROW_HEIGHT_DP
+        );
+        assert!(STAGE_COLLAPSED_HEIGHT_DP >= COMMAND_ROW_HEIGHT_DP + STAGE_TITLE_ROW_DP);
+        for viewport in REFERENCE_VIEWPORTS {
+            let layout = frame_layout(viewport, true);
+            assert_eq!(layout.stage.height, STAGE_COLLAPSED_HEIGHT_DP);
+        }
+    }
+
+    /// Adversarial: a viewport whose height is exactly
+    /// the pinned furniture (rail + standing bar) leaves
+    /// a zero-height stage and content — clamped, never
+    /// negative, never overlapping the pinned regions.
+    #[test]
+    fn furniture_height_viewport_clamps_stage_and_content() {
+        let viewport = ViewportDp {
+            width: 360.0,
+            height: RAIL_HEIGHT_DP + STANDING_BAR_HEIGHT_DP,
+        };
+        for collapsed in [false, true] {
+            let layout = frame_layout(viewport, collapsed);
+            assert_eq!(layout.stage.height, 0.0);
+            assert_eq!(layout.content.height, 0.0);
+            assert!(!layout.content.overlaps(&layout.standing_bar));
+            assert_eq!(layout.standing_bar.bottom(), viewport.height);
+        }
+    }
+
+    /// Adversarial (cure round): a surface-loss sequence
+    /// — live viewport, torn down to zero mid-teardown, a
+    /// transient tiny surface, then the original surface
+    /// restored — returns to the original geometry
+    /// exactly. The model is pure, so the shell's
+    /// suspend/resume cycle can never inherit poisoned
+    /// geometry from the lost surface.
+    #[test]
+    fn surface_loss_sequence_returns_to_exact_geometry() {
+        let home = REFERENCE_VIEWPORTS[1];
+        let first = frame_layout(home, false);
+        for viewport in [
+            ViewportDp {
+                width: 0.0,
+                height: 0.0,
+            },
+            ViewportDp {
+                width: 320.0,
+                height: 90.0,
+            },
+            ViewportDp {
+                width: home.width,
+                height: 90.0,
+            },
+        ] {
+            let layout = frame_layout(viewport, false);
+            assert!(layout.stage.height >= 0.0 && layout.content.height >= 0.0);
+            assert!(!layout.content.overlaps(&layout.standing_bar));
+        }
+        assert_eq!(frame_layout(home, false), first);
+        assert_eq!(frame_layout(home, true), frame_layout(home, true),);
     }
 
     /// Adversarial: a viewport shorter than the frame's
