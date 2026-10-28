@@ -5,3 +5,24 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 description = "The Torogao graphical application: the Persona-style stage and the traditional panel mode over the engine."
+
+[dependencies]
+bytemuck = { version = "1", features = ["derive"] }
+egui = "0.35"
+egui-wgpu = "0.35"
+egui-winit = "0.35"
+png = "0.18"
+pollster = "0.4"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+torogao = { path = "../torogao-cli" }
+torogao-engine = { path = "../torogao-engine" }
+torogao-format = { path = "../torogao-format" }
+torogao-session = { path = "../torogao-session" }
+wgpu = "29"
+winit = "0.30"
+
+[[bin]]
+name = "torogao-app"
+path = "src/main.rs"
