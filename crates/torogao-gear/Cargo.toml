@@ -1,0 +1,12 @@
+[package]
+name = "torogao-gear"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Torogao T4.1: the torogao-gear/1 document model, ordered validator, deterministic pack format, attachment/contact solve, and gear surfaces."
+publish = false
+
+[dependencies]
+sha2 = "0.10"
+torogao-author = { path = "../torogao-author" }

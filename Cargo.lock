@@ -2901,6 +2901,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "torogao-gear"
+version = "0.1.0"
+dependencies = [
+ "sha2",
+ "torogao-author",
+]
+
+[[package]]
 name = "torogao-session"
 version = "0.1.0"
 dependencies = [
