@@ -26,6 +26,7 @@ pub mod examples;
 pub mod extract;
 pub mod pack;
 pub mod payloads;
+pub mod playtime_pack;
 pub mod refusal;
 pub mod solve;
 pub mod surfaces;
