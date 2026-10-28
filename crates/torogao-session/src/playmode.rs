@@ -1257,13 +1257,17 @@ impl Ejection {
         } else {
             // build = 90 · (Q/1000) · (0.4 + 0.6·I) ·
             // (1000/threshold) permille/s, in
-            // micro-permille per tick.
+            // micro-permille per tick. Unit check: the
+            // (400_000 + 600·I) term is (0.4 + 0.6·I)
+            // scaled by 1e6, and the result is scaled
+            // by MP = 1e6 — the two cancel, leaving one
+            // /1000 (for Q) and the ×1000/threshold.
             let build = div_round(
                 (data.build_rate as i128)
                     * (q_permille as i128)
                     * (400_000 + 600 * (i_permille as i128))
                     * 1000,
-                1000 * 1000 * (threshold_permille as i128) * (TICKS_PER_SECOND as i128),
+                1000 * (threshold_permille as i128) * (TICKS_PER_SECOND as i128),
             ) as i64;
             let decay = self.pressure_mp / (data.decay_tau_s * (TICKS_PER_SECOND as i64));
             self.pressure_mp = (self.pressure_mp + build - decay).clamp(0, MP_FULL);
@@ -1573,8 +1577,12 @@ impl Wetness {
 
     /// Deposit landed volume into an area (§6.2).
     fn deposit(&mut self, data: &WetnessData, area: &str, volume_micro: i64) {
+        // Permille per volume unit landed, expressed in
+        // the field's micro-permille: units ×
+        // (permille / unit) × MP. (MP == UV, so this is
+        // exactly volume_micro × the calibration.)
         let add = div_round(
-            (volume_micro as i128) * (data.deposit_permille_per_unit as i128),
+            (volume_micro as i128) * (data.deposit_permille_per_unit as i128) * (MP as i128),
             UV as i128,
         ) as i64;
         if let Some(w) = self.areas_mp.get_mut(area) {
@@ -1584,13 +1592,24 @@ impl Wetness {
 
     /// Applies a drip transfer at landing (§6.2):
     /// source falls by the share, target rises by the
-    /// share — volume conserved exactly.
+    /// share — volume conserved exactly. Only what the
+    /// target can hold actually moves: a saturated
+    /// target takes nothing and the un-moved share
+    /// stays at the source. (Clamping the gain alone
+    /// would silently destroy the difference — the
+    /// field's total must never change here.)
     fn transfer(&mut self, from: &str, to: &str, share_mp: i64) {
+        let from_w = self.areas_mp.get(from).copied().unwrap_or(0);
+        let to_w = self.areas_mp.get(to).copied().unwrap_or(0);
+        let moved = share_mp.min(from_w).min((MP_FULL - to_w).max(0));
+        if moved <= 0 {
+            return;
+        }
         if let Some(w) = self.areas_mp.get_mut(from) {
-            *w = (*w - share_mp).max(0);
+            *w -= moved;
         }
         if let Some(w) = self.areas_mp.get_mut(to) {
-            *w = (*w + share_mp).min(MP_FULL);
+            *w += moved;
         }
     }
 
@@ -2065,6 +2084,60 @@ impl PlaytimeMode {
         Ok(self.log.last().expect("just pushed").clone())
     }
 
+    /// Fires any pending op-cues into the cue track
+    /// NOW, at the engine's current tick. Terminal ops
+    /// (exit, remove-all) end entry, so no later step
+    /// exists to drain their cues — and §9.1 has op cues
+    /// fire on the op itself. Without this, D-OFF and
+    /// U-RESET could never reach the track at all.
+    fn fire_pending_now(&mut self, host: &ArousalHost, character: &str) {
+        if self.pending_cues.is_empty() {
+            return;
+        }
+        let Ok(data) = self.definition.character(character) else {
+            return;
+        };
+        let data = data.clone();
+        let (tick, episode, phase) = host.get(character).map_or((0, 0, Phase::Baseline), |e| {
+            let v = e.vector();
+            (e.tick(), v.episode, v.phase)
+        });
+        let facts = CueFacts {
+            tick,
+            a: 0,
+            phase,
+            stage: self.stage,
+            pulses: &[],
+            bursts: &[],
+            deposits: &[],
+            drips: &[],
+            latched: false,
+            afterglow_entered: false,
+            face_contact_event: false,
+            first_leak: false,
+            leak_droplets: 0,
+            touch_input: None,
+            drive_strength: 0,
+            device_displaced: false,
+            device_contact_quality: self.device_contact_quality,
+            tremble_milli_px: 0,
+            episode,
+            final_release_fired_now: false,
+        };
+        let pending: Vec<(String, String)> = std::mem::take(&mut self.pending_cues);
+        for (cue_id, edge) in pending {
+            if let Some(def) = self.definition.cues.iter().find(|c| c.id == cue_id) {
+                let asset_id = self.resolve_asset(def, &data, character, &facts);
+                self.cue_track.push(CueRecord {
+                    tick,
+                    cue_id,
+                    asset_id,
+                    edge,
+                });
+            }
+        }
+    }
+
     /// Mode exit (session end for the composition): the
     /// device and fixture are removed as session
     /// operations and the wetness field ends with the
@@ -2092,6 +2165,7 @@ impl PlaytimeMode {
         self.queue_cue("U-CONFIRM", "fire");
         let op = ModeOp::Exit;
         self.record_op(host, &character, &op);
+        self.fire_pending_now(host, &character);
         Ok(self.log.last().expect("just pushed").clone())
     }
 
@@ -2248,6 +2322,7 @@ impl PlaytimeMode {
         self.queue_cue("U-RESET", "fire");
         let op = ModeOp::RemoveAllAndReset;
         self.record_op(host, &character, &op);
+        self.fire_pending_now(host, &character);
         Ok(self.log.last().expect("just pushed").clone())
     }
 
@@ -3265,7 +3340,36 @@ impl PlaytimeMode {
             self.user_amplitude,
             self.rec_on,
         );
-        let text = serde_json::to_string_pretty(&settings)
+        // The file is a settings *document* (§2.2): the
+        // nested form §8.4's pipeline admits (emitter /
+        // characters / pulse blocks), NOT the admitted
+        // struct's flat field layout — the loader
+        // validates through the pipeline, so writer and
+        // reader must agree on the document form.
+        let mut characters = serde_json::Map::new();
+        for (name, (threshold, volume)) in &settings.characters {
+            characters.insert(
+                name.clone(),
+                serde_json::json!({
+                    "eject_threshold_permille": threshold,
+                    "eject_volume_scale_permille": volume,
+                }),
+            );
+        }
+        let document = serde_json::json!({
+            "format": settings.format,
+            "setting": settings.setting,
+            "emitter": { "anchor": settings.emitter_anchor },
+            "characters": characters,
+            "pulse": {
+                "max_rate_millihz": settings.pulse_max_rate_millihz,
+                "max_depth_permille": settings.pulse_max_depth_permille,
+                "lobe_gap_ticks": settings.pulse_lobe_gap_ticks,
+            },
+            "device_amplitude_permille": settings.device_amplitude_permille,
+            "rec_skin": settings.rec_skin,
+        });
+        let text = serde_json::to_string_pretty(&document)
             .map_err(|e| Refusal::new("TG-PM-STATE", format!("serialise settings: {e}")))?;
         let playroom = dir.join("playroom");
         std::fs::create_dir_all(&playroom).map_err(|e| {
