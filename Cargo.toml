@@ -1,9 +1,11 @@
 [workspace]
 members = [
     "crates/torogao-app",
+    "crates/torogao-author",
     "crates/torogao-cli",
     "crates/torogao-engine",
     "crates/torogao-format",
+    "crates/torogao-session",
 ]
 resolver = "3"
 
