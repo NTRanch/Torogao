@@ -18,7 +18,7 @@ pub mod physics;
 pub mod puppet;
 pub mod transform;
 
-pub use animation::Animation;
+pub use animation::{Animation, AnimationLane, AnimationPlayback, AnimationPlayer, Keyframe};
 pub use automation::Automation;
 pub use math::{Mat3, Mat4, Vec2, Vec3, Vec4};
 pub use node::{MeshData, Node, NodeArena, SimplePhysicsState};

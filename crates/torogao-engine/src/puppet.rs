@@ -102,6 +102,15 @@ pub struct Puppet {
     pub enable_drivers: bool,
     /// The engine clock.
     pub clock: Clock,
+    /// Whether the node tree's global transforms have not
+    /// yet been through an update pass since load. In the
+    /// reference, a node's stored global transform is only
+    /// composed during update passes, so a physics reset
+    /// issued before the first update reads the anchor from
+    /// the parent's global transform (the node's own local
+    /// transform not yet composed in). Cleared by the first
+    /// update pass, at its transform refresh.
+    pub transforms_stale: bool,
 }
 
 fn malformed(detail: &str) -> TorogaoError {
@@ -291,8 +300,12 @@ fn build_node(
             }
         }
         NodeKind::Composite => {
+            // The reference deserializer falls back to the
+            // legacy default when the key is absent: only an
+            // explicit true enables propagation (the field's
+            // own initializer is overridden on load).
             node.propagate_mesh_group =
-                !matches!(jget(raw, "propagate_meshgroup"), Value::Bool(false));
+                matches!(jget(raw, "propagate_meshgroup"), Value::Bool(true));
             node.opacity = jnum(raw, "opacity", 1.0) as f32;
             node.comp_threshold = jnum(raw, "threshold", 0.5) as f32;
             node.tint = vec3_of(jget(raw, "tint"), Vec3::ONE);
@@ -412,6 +425,7 @@ impl Puppet {
             render_parameters: true,
             enable_drivers: true,
             clock: Clock::default(),
+            transforms_stale: true,
         };
         puppet.finalize()?;
         Ok(puppet)
@@ -569,6 +583,7 @@ impl Puppet {
             }
         }
         self.nodes.transform_changed(root);
+        self.transforms_stale = false;
         if self.render_parameters && self.enable_drivers {
             let drivers = self.drivers.clone();
             for driver in drivers {
@@ -629,11 +644,36 @@ impl Puppet {
         }
     }
 
+    /// The anchor a physics reset reads: before the first
+    /// update pass, the reference's stored global transform
+    /// for the node does not yet include the node's own
+    /// local transform, so the anchor is the parent's global
+    /// position (the origin for a parentless node); after an
+    /// update pass it is the node's composed global position.
+    /// Local-only drivers always read their local translation.
+    fn physics_reset_anchor(&mut self, idx: usize) -> Vec2 {
+        let local_only = self.nodes.nodes[idx]
+            .physics
+            .as_ref()
+            .map(|s| s.local_only)
+            .unwrap_or(false);
+        if local_only || !self.transforms_stale {
+            return self.physics_anchor(idx);
+        }
+        match self.nodes.nodes[idx].parent {
+            Some(parent) => {
+                let global = self.nodes.transform(parent);
+                (global.trs * Vec4::new(0.0, 0.0, 0.0, 1.0)).xy()
+            }
+            None => Vec2::ZERO,
+        }
+    }
+
     /// Resets one physics driver: refresh the anchor, build
     /// a fresh system hanging below it (the reference
     /// `SimplePhysics.reset`).
     pub fn physics_reset(&mut self, idx: usize) {
-        let anchor = self.physics_anchor(idx);
+        let anchor = self.physics_reset_anchor(idx);
         let node = &mut self.nodes.nodes[idx];
         let Some(state) = node.physics.as_mut() else {
             return;
@@ -671,28 +711,43 @@ impl Puppet {
             let (gravity, ppm) = (self.gravity, self.pixels_per_meter);
             let node = &mut self.nodes.nodes[idx];
             let state = node.physics.as_mut().expect("physics");
-            let io = TickIo {
-                angle_damping: state.eff_angle_damping(),
-                frequency: state.eff_frequency(),
-                gravity: state.eff_gravity(gravity, ppm),
-                length: state.eff_length(),
-                length_damping: state.eff_length_damping(),
+            // The raw driver fields + offsets, snapshotted
+            // once: the per-stage providers below recompute
+            // the EFFECTIVE inputs from them on every stage
+            // evaluation (gap G-8 — the reference `eval`
+            // calls the effective-value getters per stage).
+            // The snapshot cannot go stale mid-tick: offsets
+            // change only in parameter updates, which never
+            // run inside a driver tick.
+            let raw = TickInputs {
+                angle_damping: state.angle_damping,
+                frequency: state.frequency,
+                gravity: state.gravity,
+                length: state.length,
+                length_damping: state.length_damping,
+                offset_angle_damping: state.offset_angle_damping,
+                offset_frequency: state.offset_frequency,
+                offset_gravity: state.offset_gravity,
+                offset_length: state.offset_length,
+                offset_length_damping: state.offset_length_damping,
+                pixels_per_meter: ppm,
+                puppet_gravity: gravity,
             };
             let anchor = state.anchor;
             let fixed = state.fixed_step;
             if fixed {
                 state.fixed_remainder += h;
                 while state.fixed_remainder >= 0.01 {
-                    tick_system(state, anchor, &io, 0.01);
+                    tick_system(state, anchor, &raw, 0.01);
                     state.fixed_remainder -= 0.01;
                 }
             } else {
                 let mut rest = h;
                 while rest > 0.01 {
-                    tick_system(state, anchor, &io, 0.01);
+                    tick_system(state, anchor, &raw, 0.01);
                     rest -= 0.01;
                 }
-                tick_system(state, anchor, &io, rest);
+                tick_system(state, anchor, &raw, rest);
             }
         }
         // updateOutputs
@@ -734,6 +789,15 @@ impl Puppet {
         let mut local_angle = local_pos.xy();
         local_angle.normalize();
         let rel_length = output.distance(anchor) / length;
+        // The division by pi is deliberately done in f64.
+        // The reference stores the quotient in an f32, but
+        // its pi constant is extended precision, so the
+        // division itself is evaluated above f32 precision
+        // and rounded once on store. Measured on the RP2
+        // corpus: an f32-pi quotient disagrees with the
+        // reference on about 35% of inputs (by 1 ulp),
+        // while this f64 path matches; see the G-17 section
+        // of GATE-REPORT-RP2.md.
         let angle = (-local_angle.x).atan2(local_angle.y) as f64 / std::f64::consts::PI;
         let p = match map_mode {
             1 => {
@@ -754,6 +818,56 @@ impl Puppet {
         let push = Vec2::new(p.x * oscale.x, p.y * oscale.y);
         self.params[param_idx].push_offset(push, crate::param::MergeMode::Forced, 1.0);
         self.update_param(param_idx)
+    }
+
+    /// Refreshes one driver's anchor (the reference
+    /// `SimplePhysics.updateAnchors`): the system's bob is
+    /// re-hung below the driver's stored anchor at the
+    /// effective length; velocity state is kept (spec
+    /// P-11 / P-17; gap G-9).
+    pub fn physics_update_anchor(&mut self, idx: usize) {
+        let Some(state) = self.nodes.nodes[idx].physics.as_mut() else {
+            return;
+        };
+        let anchor = state.anchor;
+        let length = state.eff_length();
+        if let Some(system) = state.system.as_mut() {
+            match system {
+                PhysicsState::Pendulum(pendulum) => pendulum.update_anchor(anchor, length),
+                PhysicsState::Spring(spring) => spring.update_anchor(anchor, length),
+            }
+        }
+    }
+
+    /// Refreshes every driver's anchor (see
+    /// `physics_update_anchor`).
+    pub fn update_anchors(&mut self) {
+        let drivers = self.drivers.clone();
+        for driver in drivers {
+            self.physics_update_anchor(driver);
+        }
+    }
+
+    /// The physics debug-draw segments (spec P-32): one
+    /// anchor → bob line per driver that has a running
+    /// system, in driver scan order. The engine owns the
+    /// geometry; drawing the lines (magenta, width 3 in the
+    /// reference) is the render side's work.
+    pub fn physics_debug_segments(&self) -> Vec<(Vec2, Vec2)> {
+        let mut segments = Vec::new();
+        for &idx in &self.drivers {
+            let Some(state) = self.nodes.nodes[idx].physics.as_ref() else {
+                continue;
+            };
+            let Some(system) = state.system.as_ref() else {
+                continue;
+            };
+            segments.push(match system {
+                PhysicsState::Pendulum(pendulum) => pendulum.debug_segment(state.anchor),
+                PhysicsState::Spring(spring) => spring.debug_segment(state.anchor),
+            });
+        }
+        segments
     }
 
     /// Finds a parameter's index by name (first match).
@@ -777,39 +891,63 @@ impl Puppet {
     }
 }
 
-/// The effective per-driver physics inputs for one tick.
-struct TickIo {
+/// One driver's raw physics fields + offsets for a tick,
+/// plus the puppet-level gravity scale. Effective inputs
+/// are recomputed from these on every provider call (see
+/// the integration block in `update_driver`).
+struct TickInputs {
     angle_damping: f32,
     frequency: f32,
     gravity: f32,
     length: f32,
     length_damping: f32,
+    offset_angle_damping: f32,
+    offset_frequency: f32,
+    offset_gravity: f32,
+    offset_length: f32,
+    offset_length_damping: f32,
+    pixels_per_meter: f32,
+    puppet_gravity: f32,
 }
 
-fn tick_system(state: &mut SimplePhysicsState, anchor: Vec2, io: &TickIo, h: f32) {
+impl TickInputs {
+    fn pendulum_io(&self, anchor: Vec2) -> PendulumIo {
+        PendulumIo {
+            anchor,
+            gravity: self.gravity
+                * self.offset_gravity
+                * self.puppet_gravity
+                * self.pixels_per_meter,
+            length: self.length + self.offset_length,
+            angle_damping: self.angle_damping * self.offset_angle_damping,
+        }
+    }
+
+    fn spring_io(&self, anchor: Vec2) -> SpringIo {
+        SpringIo {
+            anchor,
+            gravity: self.gravity
+                * self.offset_gravity
+                * self.puppet_gravity
+                * self.pixels_per_meter,
+            length: self.length + self.offset_length,
+            frequency: self.frequency * self.offset_frequency,
+            angle_damping: self.angle_damping * self.offset_angle_damping,
+            length_damping: self.length_damping * self.offset_length_damping,
+        }
+    }
+}
+
+fn tick_system(state: &mut SimplePhysicsState, anchor: Vec2, raw: &TickInputs, h: f32) {
     let Some(system) = state.system.as_mut() else {
         return;
     };
     match system {
         PhysicsState::Pendulum(pendulum) => {
-            let pio = PendulumIo {
-                anchor,
-                gravity: io.gravity,
-                length: io.length,
-                angle_damping: io.angle_damping,
-            };
-            pendulum.tick(h, &pio);
+            pendulum.tick(h, &|| raw.pendulum_io(anchor));
         }
         PhysicsState::Spring(spring) => {
-            let sio = SpringIo {
-                anchor,
-                gravity: io.gravity,
-                length: io.length,
-                frequency: io.frequency,
-                angle_damping: io.angle_damping,
-                length_damping: io.length_damping,
-            };
-            spring.tick(h, &sio);
+            spring.tick(h, &|| raw.spring_io(anchor));
         }
     }
 }
