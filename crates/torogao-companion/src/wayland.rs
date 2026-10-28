@@ -1092,9 +1092,16 @@ pub fn run(options: RunOptions) -> CompanionResult<RunSummary> {
     let loop_handle = event_loop.handle();
     state.loop_signal = Some(event_loop.get_signal());
     loop_handle
-        .insert_source(WaylandSource::new(conn.clone(), event_queue), |_, _, _| {
-            Ok(0)
-        })
+        .insert_source(
+            WaylandSource::new(conn.clone(), event_queue),
+            // calloop-wayland-source 0.4 hands the queue to
+            // the callback: dispatching pending events is
+            // the callback's job. Returning without
+            // dispatching leaves every compositor event
+            // (configure included) stranded in the queue —
+            // the loop idles and no frame is ever presented.
+            |_, queue, state| queue.dispatch_pending(state),
+        )
         .map_err(|err| {
             CompanionError::new("TG-COMP-EVENT-LOOP", format!("wayland source: {err}"))
         })?;
