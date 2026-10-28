@@ -19,6 +19,7 @@ sha2 = "0.10"
 torogao = { path = "../torogao-cli" }
 torogao-engine = { path = "../torogao-engine" }
 torogao-format = { path = "../torogao-format" }
+torogao-gear = { path = "../torogao-gear" }
 torogao-session = { path = "../torogao-session" }
 wgpu = "29"
 winit = "0.30"
