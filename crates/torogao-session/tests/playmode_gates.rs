@@ -66,8 +66,6 @@ struct TickFact {
     body_excursion: u32,
     alive: usize,
     bulk_spawned: u32,
-    wet: [u32; 3],
-    expression: String,
 }
 
 /// Everything the gates read from one canonical run.
@@ -82,7 +80,6 @@ struct CanonicalRun {
     wet_first_afterglow: [u32; 3],
     wet_last_afterglow: [u32; 3],
     wet_first_refractory: [u32; 3],
-    episode_volume_micro: i64,
     take: TakeRecord,
     trajectory_hash: u64,
     cue_hash: u64,
@@ -200,16 +197,13 @@ fn run_canonical(character: &str) -> CanonicalRun {
         }
         match out.stage {
             Stage::Taper => wet_last_taper = wet,
-            Stage::Afterglow => {
-                if prev_stage != Stage::Afterglow {
-                    wet_first_afterglow = wet;
-                }
+            Stage::Afterglow if prev_stage != Stage::Afterglow => {
+                wet_first_afterglow = wet;
                 wet_last_afterglow = wet;
             }
-            Stage::Refractory => {
-                if prev_stage != Stage::Refractory {
-                    wet_first_refractory = wet;
-                }
+            Stage::Afterglow => wet_last_afterglow = wet,
+            Stage::Refractory if prev_stage != Stage::Refractory => {
+                wet_first_refractory = wet;
             }
             _ => {}
         }
@@ -223,8 +217,6 @@ fn run_canonical(character: &str) -> CanonicalRun {
             body_excursion: out.body_cycle.amplitude_excursion_permille,
             alive: mode.alive_droplets(),
             bulk_spawned: out.bursts.iter().map(|b| b.droplets).sum::<u32>() + out.leak_droplets,
-            wet,
-            expression: out.expression_recipe_id.clone(),
         });
         // State-triggered script ops (recorded in the
         // take at the engine tick they land on).
@@ -273,14 +265,11 @@ fn run_canonical(character: &str) -> CanonicalRun {
                     alive: mode.alive_droplets(),
                     bulk_spawned: out.bursts.iter().map(|b| b.droplets).sum::<u32>()
                         + out.leak_droplets,
-                    wet: wet_of(&mode),
-                    expression: out.expression_recipe_id.clone(),
                 });
             }
             break;
         }
     }
-    let episode_volume_micro = mode.episode_volume_micro();
     let take = mode.stop_take(&mut host).unwrap();
     // Epilogue (outside the take): the refused op, its
     // drain steps, then the §6.3 reset act.
@@ -310,7 +299,6 @@ fn run_canonical(character: &str) -> CanonicalRun {
         wet_first_afterglow,
         wet_last_afterglow,
         wet_first_refractory,
-        episode_volume_micro,
         take,
         trajectory_hash: mode.trajectory_hash(),
         cue_hash: mode.cue_track_hash(),
@@ -406,11 +394,11 @@ fn p3_wetness_lifecycle() {
     assert_eq!(run.stage_after_reset, Stage::Setup);
 }
 
-/// P4 (PM-G4): the canonical trajectory — engine vector
-/// + pulses + pressure + volume + wetness + cues —
-/// hashes identically across two runs, and matches the
-/// pinned golden (the primo run reproducing the same
-/// constants is the cross-machine half of the gate).
+/// P4 (PM-G4): the canonical trajectory (engine vector,
+/// pulses, pressure, volume, wetness, cues) hashes
+/// identically across two runs, and matches the pinned
+/// golden (the primo run reproducing the same constants
+/// is the cross-machine half of the gate).
 #[test]
 fn p4_determinism_and_golden() {
     let a = run_canonical("prima");
@@ -433,14 +421,14 @@ fn p4_determinism_and_golden() {
 /// in the scripted session's track, or is a listed
 /// deliberate silence / not-applicable with a reason.
 /// Fired here: 30 of 32. The two listed exceptions:
-/// - V-REFR: deliberate silence by design (its table
-///   trigger IS `DeliberateSilence`, §9.5).
-/// - B-CLAMP: not applicable to the scripted session —
-///   its trigger is clamp application/removal operations
-///   from T4 gear play interleaved with the mode; the
-///   canonical mode script performs none (the starter
-///   pack carries no clamps). The cue def + trigger
-///   contract are frozen for PM-1S to bind.
+/// V-REFR is a deliberate silence by design (its table
+/// trigger IS `DeliberateSilence`, §9.5); B-CLAMP is
+/// not applicable to the scripted session — its
+/// trigger is clamp application/removal operations
+/// from T4 gear play interleaved with the mode; the
+/// canonical mode script performs none (the starter
+/// pack carries no clamps). The cue def + trigger
+/// contract are frozen for PM-1S to bind.
 #[test]
 fn p9_cue_census() {
     let run = run_canonical("prima");

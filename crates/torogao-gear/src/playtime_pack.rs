@@ -231,29 +231,32 @@ pub fn blossom_mount_document(amplitude_permille: i64) -> GearDocument {
     }
 }
 
-fn apparel_document(
-    id: &str,
-    display_name: &str,
-    part_name: &str,
-    bytes: &[u8],
-    covers: &[&str],
+/// One sample-apparel item's authoring parameters.
+struct ApparelSpec {
+    id: &'static str,
+    display_name: &'static str,
+    part_name: &'static str,
+    bytes: &'static [u8],
+    covers: &'static [&'static str],
     transmission_permille: i64,
-    layer: &str,
-    draw_target: &str,
-) -> GearDocument {
+    layer: &'static str,
+    draw_target: &'static str,
+}
+
+fn apparel_document(spec: ApparelSpec) -> GearDocument {
     GearDocument {
         format: crate::document::GEAR_FORMAT.to_string(),
-        id: id.to_string(),
+        id: spec.id.to_string(),
         version: 1,
-        display_name: display_name.to_string(),
+        display_name: spec.display_name.to_string(),
         class: GearClass::Apparel,
-        anchors: vec![attachment(covers[0], 60)],
-        parts: vec![part(part_name, bytes, (512, 512))],
+        anchors: vec![attachment(spec.covers[0], 60)],
+        parts: vec![part(spec.part_name, spec.bytes, (512, 512))],
         materials: vec!["cloth".to_string()],
         draw_order: vec![DrawOrderEntry {
-            layer: layer.to_string(),
+            layer: spec.layer.to_string(),
             relation: DrawRelation::Above,
-            target: draw_target.to_string(),
+            target: spec.draw_target.to_string(),
         }],
         state_variants: vec![
             StateVariant::Worn,
@@ -271,8 +274,8 @@ fn apparel_document(
         sensation: None,
         device: None,
         apparel: Some(ApparelBlock {
-            covers: covers.iter().map(|s| s.to_string()).collect(),
-            transmission_permille,
+            covers: spec.covers.iter().map(|s| s.to_string()).collect(),
+            transmission_permille: spec.transmission_permille,
         }),
         fixture: None,
         effect: None,
@@ -286,16 +289,16 @@ fn apparel_document(
 /// never any girl's canonical wardrobe.
 pub fn sample_apparel_documents() -> Vec<GearDocument> {
     vec![
-        apparel_document(
-            "apparel.sample-cropped-top",
-            "Sample Cropped Top (placeholder parts)",
-            "top.placeholder",
-            TOP_BYTES,
-            &["body.chest"],
-            0,
-            "top",
-            "chest",
-        ),
+        apparel_document(ApparelSpec {
+            id: "apparel.sample-cropped-top",
+            display_name: "Sample Cropped Top (placeholder parts)",
+            part_name: "top.placeholder",
+            bytes: TOP_BYTES,
+            covers: &["body.chest"],
+            transmission_permille: 0,
+            layer: "top",
+            draw_target: "chest",
+        }),
         // The underwear authors its coverage over the
         // perineum opaque (transmission 0): §7.3's
         // mechanism — the mode stages it in the
@@ -304,39 +307,39 @@ pub fn sample_apparel_documents() -> Vec<GearDocument> {
         // contact model reads. Left worn and opaque over
         // the site, a set gets q = 0 by §4.3/§4.4 — the
         // mode does not override the contact model.
-        apparel_document(
-            "apparel.sample-underwear",
-            "Sample Glossy Underwear (placeholder parts)",
-            "underwear.placeholder",
-            UNDERWEAR_BYTES,
-            &["body.perineum"],
-            0,
-            "underwear",
-            "pelvis",
-        ),
-        apparel_document(
-            "apparel.sample-stockings",
-            "Sample Thigh-High Stockings (placeholder parts)",
-            "stockings.placeholder",
-            STOCKINGS_BYTES,
-            &["body.ankle.left", "body.ankle.right"],
-            0,
-            "stockings",
-            "legs",
-        ),
+        apparel_document(ApparelSpec {
+            id: "apparel.sample-underwear",
+            display_name: "Sample Glossy Underwear (placeholder parts)",
+            part_name: "underwear.placeholder",
+            bytes: UNDERWEAR_BYTES,
+            covers: &["body.perineum"],
+            transmission_permille: 0,
+            layer: "underwear",
+            draw_target: "pelvis",
+        }),
+        apparel_document(ApparelSpec {
+            id: "apparel.sample-stockings",
+            display_name: "Sample Thigh-High Stockings (placeholder parts)",
+            part_name: "stockings.placeholder",
+            bytes: STOCKINGS_BYTES,
+            covers: &["body.ankle.left", "body.ankle.right"],
+            transmission_permille: 0,
+            layer: "stockings",
+            draw_target: "legs",
+        }),
         // The visor is an apparel example only (§7.3):
         // the cast rigs' eye performance is never
         // occluded by mode data.
-        apparel_document(
-            "apparel.sample-visor",
-            "Sample Glowing Visor (placeholder parts)",
-            "visor.placeholder",
-            VISOR_BYTES,
-            &["body.head"],
-            0,
-            "visor",
-            "head",
-        ),
+        apparel_document(ApparelSpec {
+            id: "apparel.sample-visor",
+            display_name: "Sample Glowing Visor (placeholder parts)",
+            part_name: "visor.placeholder",
+            bytes: VISOR_BYTES,
+            covers: &["body.head"],
+            transmission_permille: 0,
+            layer: "visor",
+            draw_target: "head",
+        }),
     ]
 }
 
