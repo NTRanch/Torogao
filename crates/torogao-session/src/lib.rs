@@ -27,6 +27,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod arousal;
 pub mod canon;
 pub mod dispatch;
 pub mod gate;
@@ -41,6 +42,11 @@ pub mod state;
 pub mod transport;
 pub mod ws_stream;
 
+pub use arousal::{
+    ArousalEngine, ArousalEvent, ArousalHost, ArousalLogEntry, ArousalOp, ArousalVector,
+    CharacterProfile, DeviceOutput, DeviceSpec, DriveSignal, EffectsOutput, EngineOutput,
+    PerformanceOutput, Phase, TIERS, TickInputs, TierSpec, WaveKind, WaveSpec, tier_of,
+};
 pub use canon::{from_canon_ron, state_hash, to_canon_ron};
 pub use dispatch::{DispatchHandle, SessionInfo};
 pub use gate::{GateMirror, GateVerdict};
