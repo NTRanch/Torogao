@@ -35,6 +35,7 @@ pub mod host;
 pub mod mcp_guard;
 pub mod mcp_server;
 pub mod op;
+pub mod playmode;
 pub mod refusal;
 pub mod registry;
 pub mod session;
@@ -52,6 +53,13 @@ pub use dispatch::{DispatchHandle, SessionInfo};
 pub use gate::{GateMirror, GateVerdict};
 pub use host::{Host, LiveBridge, NoLiveBridge, PlaySnapshot};
 pub use op::Op;
+pub use playmode::{
+    BLOSSOM_SETTING_ID, BodyCycleMod, BurstEvent, CharacterModeData, CueDef, CueRecord,
+    CueTrigger, DepositEvent, DripEvent, EjectionData, GovernorData, Lobe, ModeLogEntry, ModeOp,
+    ModeOutput, ModeRefusal, ModeSettings, ModeTickInput, PlaytimeDefinition, PlaytimeMode,
+    PulseEvent, PulseGen, PulseInput, PulseLawData, ReplayOutcome, Stage, TakeRecord, VocalSet,
+    Wetness, WetnessData, replay_take, validate_mode_profile, validate_settings_document,
+};
 pub use refusal::{R, Refusal};
 pub use registry::{agent_card, registry, tool_json};
 pub use session::{Admission, CompileOutcome, LogEntry, Session, compile_session, replay_record};
