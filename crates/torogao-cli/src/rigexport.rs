@@ -58,6 +58,10 @@ impl ConvEntry {
 pub struct ExportResult {
     /// The rig model document.
     pub model: Value,
+    /// The motion asset documents (SPEC section 4), as
+    /// (file name suffix, document) pairs — a separate
+    /// asset kind from the model, written beside it.
+    pub motions: Vec<(String, Value)>,
     /// The conversion entries, in note order.
     pub entries: Vec<ConvEntry>,
 }
@@ -139,6 +143,8 @@ pub struct RigExporter<'a> {
     draw_rank: HashMap<u32, usize>,
     anchor_point: HashMap<u32, [f32; 2]>,
     param_array: Value,
+    motions: Vec<(String, Value)>,
+    physics_outputs: HashSet<String>,
 }
 
 impl<'a> RigExporter<'a> {
@@ -160,6 +166,13 @@ impl<'a> RigExporter<'a> {
             draw_rank: HashMap::new(),
             anchor_point: HashMap::new(),
             param_array: Value::Null,
+            motions: Vec::new(),
+            physics_outputs: HashSet::new(),
+        };
+        let model_name = if puppet.meta.name.is_empty() {
+            "model".to_string()
+        } else {
+            slugify(&puppet.meta.name, 48)
         };
         exporter.emit_parameters();
         exporter.assign_draw_ranks();
@@ -168,14 +181,9 @@ impl<'a> RigExporter<'a> {
         let textures = exporter.emit_textures();
         let meshes = exporter.emit_meshes();
         let physics = exporter.emit_physics();
+        exporter.emit_motions(&model_name);
         exporter.account_bindings();
         exporter.account_whole_constructs();
-
-        let model_name = if puppet.meta.name.is_empty() {
-            "model".to_string()
-        } else {
-            slugify(&puppet.meta.name, 48)
-        };
         let model = serde_json::json!({
             "deformers": deformers,
             "format": MODEL_FORMAT_TOKEN,
@@ -190,6 +198,7 @@ impl<'a> RigExporter<'a> {
         });
         Ok(ExportResult {
             model,
+            motions: exporter.motions,
             entries: exporter.entries,
         })
     }
@@ -1309,6 +1318,7 @@ impl<'a> RigExporter<'a> {
                     };
                     if let Some(out_id) = out_id {
                         if written_outputs.insert(out_id.clone()) {
+                            self.physics_outputs.insert(out_id.clone());
                             let scale = (if use_y {
                                 state.output_scale.y
                             } else {
@@ -1341,6 +1351,250 @@ impl<'a> RigExporter<'a> {
         Value::Array(arr)
     }
 
+    // ------------------------------------------------ motions (SPEC section 4)
+
+    /// Converts the puppet's animations into lumen motion
+    /// assets (SPEC section 4) — the torogao-side bridge
+    /// for the lumen rig-core animation leg. Motions are a
+    /// separate asset kind from the model: one document
+    /// per animation, written beside the model by
+    /// `export_rig_files`. Every lane is converted with
+    /// its fidelity stated in the report (mapped /
+    /// approximated / dropped-with-reason); nothing is
+    /// silently carried and nothing silently lost. Each
+    /// emitted document is validated against section 4's
+    /// rules before it is kept. The lumen-side parser and
+    /// evaluator are R2 work in lumen's own tree (the
+    /// Phase F handoff); this side emits, validates, and
+    /// accounts.
+    fn emit_motions(&mut self, model_id: &str) {
+        // Parameter ranges by lumen id, for LRF-303.
+        let mut ranges: HashMap<String, (f64, f64)> = HashMap::new();
+        for (param_idx, param) in self.puppet.params.iter().enumerate() {
+            if let Some(id) = self.param_x_id.get(&param_idx) {
+                ranges.insert(id.clone(), (f64::from(param.min.x), f64::from(param.max.x)));
+            }
+            if let Some(id) = self.param_y_id.get(&param_idx) {
+                ranges.insert(id.clone(), (f64::from(param.min.y), f64::from(param.max.y)));
+            }
+        }
+        let mut used_motion_ids: HashSet<String> = HashSet::new();
+        for (name, animation) in &self.puppet.animations {
+            let construct = format!("animation '{name}'");
+            if !animation.timestep.is_finite() || animation.timestep <= 0.0 {
+                self.note(
+                    "dropped",
+                    construct,
+                    format!(
+                        "timestep {} is not positive and finite; frame times cannot be expressed in seconds (SPEC section 4 requires duration_seconds > 0 and frames_per_second in 1..=240)",
+                        animation.timestep
+                    ),
+                );
+                continue;
+            }
+            if animation.length <= 0 {
+                self.note(
+                    "dropped",
+                    construct,
+                    format!(
+                        "length {} is not positive; duration_seconds must be > 0 (SPEC section 4)",
+                        animation.length
+                    ),
+                );
+                continue;
+            }
+            let duration = f64::from(animation.length) * f64::from(animation.timestep);
+            let fps = (1.0 / f64::from(animation.timestep))
+                .round()
+                .clamp(1.0, 240.0) as u32;
+            if animation.lead_in >= 0 || animation.lead_out >= 0 {
+                self.note(
+                    "approximated",
+                    format!("animation '{name}' lead-in/out"),
+                    "leadIn/leadOut are playback segmentation in the reference player; the motion asset has no field for them and the full span is carried".to_string(),
+                );
+            }
+            if animation.additive || animation.animation_weight != 1.0 {
+                self.note(
+                    "approximated",
+                    format!("animation '{name}' additive/weight"),
+                    "the additive flag and animation weight are payload metadata the reference player does not consume; they are not carried into the motion asset".to_string(),
+                );
+            }
+            let mut curves: Vec<Value> = Vec::new();
+            let mut used_params: HashSet<String> = HashSet::new();
+            let mut approximated: Vec<String> = Vec::new();
+            for lane in &animation.lanes {
+                let Some(param_idx) = self
+                    .puppet
+                    .params
+                    .iter()
+                    .position(|param| param.uuid == lane.param_uuid)
+                else {
+                    self.note(
+                        "dropped",
+                        format!(
+                            "animation '{name}' lane (parameter uuid {})",
+                            lane.param_uuid
+                        ),
+                        "the lane's parameter uuid does not resolve in this puppet".to_string(),
+                    );
+                    continue;
+                };
+                if self.param_dropped.contains(&param_idx) {
+                    self.note(
+                        "dropped",
+                        format!(
+                            "animation '{name}' lane (parameter uuid {})",
+                            lane.param_uuid
+                        ),
+                        "the lane's parameter was dropped during parameter conversion".to_string(),
+                    );
+                    continue;
+                }
+                let param = &self.puppet.params[param_idx];
+                let (param_id, min, max) = match lane.axis {
+                    0 => match self.param_x_id.get(&param_idx) {
+                        Some(id) => (id.clone(), param.min.x, param.max.x),
+                        None => {
+                            self.note(
+                                "dropped",
+                                format!("animation '{name}' lane (parameter '{}')", param.name),
+                                "the parameter has no lumen x channel".to_string(),
+                            );
+                            continue;
+                        }
+                    },
+                    1 => match self.param_y_id.get(&param_idx) {
+                        Some(id) => (id.clone(), param.min.y, param.max.y),
+                        None => {
+                            self.note(
+                                "dropped",
+                                format!("animation '{name}' lane (parameter '{}')", param.name),
+                                "the parameter is scalar; the lane's y axis has no lumen channel"
+                                    .to_string(),
+                            );
+                            continue;
+                        }
+                    },
+                    other => {
+                        self.note(
+                            "dropped",
+                            format!("animation '{name}' lane (parameter '{}')", param.name),
+                            format!("axis {other} is not an INP parameter axis"),
+                        );
+                        continue;
+                    }
+                };
+                if self.physics_outputs.contains(&param_id) {
+                    self.note(
+                        "dropped",
+                        format!("animation '{name}' lane (parameter '{param_id}')"),
+                        "the parameter is a physics output; a motion curve must not target it (LRF-602, one-writer rule)".to_string(),
+                    );
+                    continue;
+                }
+                if !used_params.insert(param_id.clone()) {
+                    self.note(
+                        "dropped",
+                        format!("animation '{name}' lane (parameter '{param_id}')"),
+                        "a second curve for the same parameter is not representable (LRF-202: at most one curve per parameter per motion)".to_string(),
+                    );
+                    continue;
+                }
+                if !matches!(lane.merge_mode, torogao_engine::MergeMode::Forced) {
+                    approximated.push(format!(
+                        "lane '{param_id}' merges with mode {}; lumen curves replace the parameter's motion contribution, so the merge rule is not carried",
+                        merge_mode_name(lane.merge_mode)
+                    ));
+                }
+                match convert_lane_curve(lane, &param_id, min, max, animation.timestep) {
+                    Ok((curve, notes)) => {
+                        approximated.extend(notes);
+                        curves.push(curve);
+                    }
+                    Err(reason) => {
+                        self.note(
+                            "dropped",
+                            format!("animation '{name}' lane (parameter '{param_id}')"),
+                            reason,
+                        );
+                    }
+                }
+            }
+            if curves.is_empty() {
+                self.note(
+                    "dropped",
+                    construct,
+                    format!(
+                        "{} lane(s), {} keyframes: no lane survived conversion (see the lane entries)",
+                        animation.lanes.len(),
+                        animation.keyframe_count()
+                    ),
+                );
+                continue;
+            }
+            let mut motion_id = slugify(name, 48);
+            if motion_id.is_empty() {
+                motion_id = "motion".to_string();
+            }
+            if !used_motion_ids.insert(motion_id.clone()) {
+                let mut suffix = 2;
+                loop {
+                    let candidate = format!("{motion_id}-{suffix}");
+                    if used_motion_ids.insert(candidate.clone()) {
+                        motion_id = candidate;
+                        break;
+                    }
+                    suffix += 1;
+                }
+            }
+            let document = serde_json::json!({
+                "curves": curves,
+                "duration_seconds": duration,
+                "format": "lumen-rig-motion",
+                "format_version": 1,
+                "frames_per_second": fps,
+                "id": motion_id,
+                "loop": false,
+                "model": model_id,
+            });
+            if let Err(reason) = validate_motion(&document, &ranges, &self.physics_outputs) {
+                self.note(
+                    "dropped",
+                    construct,
+                    format!("the converted motion failed SPEC section 4 validation: {reason}"),
+                );
+                continue;
+            }
+            let file_name = format!("motion-{motion_id}.json");
+            let keyframes: usize = animation.keyframe_count();
+            if approximated.is_empty() {
+                self.note(
+                    "mapped",
+                    construct,
+                    format!(
+                        "{} lane(s), {} keyframes -> motion asset '{file_name}' (loop is a player argument in the reference player; the asset carries loop: false)",
+                        animation.lanes.len(),
+                        keyframes
+                    ),
+                );
+            } else {
+                self.note(
+                    "approximated",
+                    construct,
+                    format!(
+                        "{} lane(s), {} keyframes -> motion asset '{file_name}'; {}",
+                        animation.lanes.len(),
+                        keyframes,
+                        approximated.join("; ")
+                    ),
+                );
+            }
+            self.motions.push((file_name, document));
+        }
+    }
+
     // ------------------------------------------------ accounting
     fn account_bindings(&mut self) {
         for (param_idx, param) in self.puppet.params.iter().enumerate() {
@@ -1365,17 +1619,8 @@ impl<'a> RigExporter<'a> {
     }
 
     fn account_whole_constructs(&mut self) {
-        for (name, animation) in &self.puppet.animations {
-            self.note(
-                "dropped",
-                format!("animation '{name}'"),
-                format!(
-                    "{} lane(s), {} keyframes: lumen motion assets are a separate asset kind (SPEC section 4) with no parser in lumen-rig-core R1; animations are not part of the model asset",
-                    animation.lanes.len(),
-                    animation.keyframe_count()
-                ),
-            );
-        }
+        // Animations are accounted by `emit_motions` (they
+        // leave as motion assets, SPEC section 4).
         for automation in &self.puppet.automations {
             self.note(
                 "dropped",
@@ -1391,6 +1636,474 @@ impl<'a> RigExporter<'a> {
             );
         }
     }
+}
+
+/// One section 4 keyframe document.
+fn key_json(
+    time: f64,
+    value: f64,
+    interpolation: &str,
+    tangent_in: Option<(f64, f64)>,
+    tangent_out: Option<(f64, f64)>,
+) -> Value {
+    let mut key = serde_json::json!({
+        "interpolation": interpolation,
+        "time": time,
+        "value": value,
+    });
+    if let Some((dt, dv)) = tangent_in {
+        key["tangent_in"] = serde_json::json!([dt, dv]);
+    }
+    if let Some((dt, dv)) = tangent_out {
+        key["tangent_out"] = serde_json::json!([dt, dv]);
+    }
+    key
+}
+
+/// Keyframes with no tangents, all in one mode.
+fn plain_keys(times: &[f64], values: &[f64], mode: &str) -> Vec<Value> {
+    times
+        .iter()
+        .zip(values.iter())
+        .map(|(time, value)| key_json(*time, *value, mode, None, None))
+        .collect()
+}
+
+/// Whether the reference Bezier lane's hermite fraction
+/// `f(t) = (-2t^3 + 3t^2) + 2*tau*(2t^3 - 3t^2 + t)`
+/// stays within [0, 1] on [0, 1] — the exactness
+/// condition for the cubic conversion (outside it, the
+/// engine clamps the fraction and the clamp has no
+/// section 4 representation). Checked exactly, via the
+/// roots of f' inside the interval.
+fn hermite_fraction_in_unit(tau: f64) -> bool {
+    let fraction =
+        |t: f64| (-2.0 * t * t * t + 3.0 * t * t) + 2.0 * tau * (2.0 * t * t * t - 3.0 * t * t + t);
+    let a = -6.0 + 12.0 * tau;
+    let b = 6.0 - 12.0 * tau;
+    let c = 2.0 * tau;
+    let mut roots: Vec<f64> = Vec::new();
+    if a.abs() <= 1e-15 {
+        if b.abs() > 1e-15 {
+            roots.push(-c / b);
+        }
+    } else {
+        let discriminant = b * b - 4.0 * a * c;
+        if discriminant >= 0.0 {
+            let root = discriminant.sqrt();
+            roots.push((-b + root) / (2.0 * a));
+            roots.push((-b - root) / (2.0 * a));
+        }
+    }
+    roots.iter().filter(|t| **t > 0.0 && **t < 1.0).all(|t| {
+        let value = fraction(*t);
+        (-1e-12..=1.0 + 1e-12).contains(&value)
+    })
+}
+
+/// Converts one engine lane into a SPEC section 4 curve
+/// for `param_id` (range [`min`, `max`], step `timestep`
+/// seconds). On success returns the curve plus fidelity
+/// notes (empty = exact); on failure the drop reason.
+///
+/// Interpolation fidelity, by engine mode:
+/// - Linear -> "linear", exact. Stepped -> "stepped",
+///   exact.
+/// - Cubic (the reference Catmull-Rom over values) ->
+///   "cubic", exact: with tangents dt = segment/3 and dv
+///   from the Catmull-Rom control values, the (time,
+///   value) Bezier of SPEC 4.2 coincides with the
+///   reference polynomial (equal time spacing of the
+///   Bezier controls makes its time component linear in
+///   the segment parameter, and the value controls are
+///   the Catmull-Rom-to-Bezier conversion).
+/// - Bezier (hermite ease keyed by the closing key's
+///   tension): tension 0.5 is exactly linear; any other
+///   tension becomes "cubic" with dv = span * 2*tau/3 —
+///   exact while the hermite fraction stays within
+///   [0, 1] (`hermite_fraction_in_unit`), approximated
+///   where the engine's clamp would bite.
+/// - Nearest -> "stepped" with an inserted midpoint key
+///   per segment: exact except at the midpoint instants
+///   themselves, which the next segment owns under SPEC
+///   4.2 — noted approximated.
+fn convert_lane_curve(
+    lane: &torogao_engine::AnimationLane,
+    param_id: &str,
+    min: f32,
+    max: f32,
+    timestep: f32,
+) -> Result<(Value, Vec<String>), String> {
+    use torogao_engine::param::InterpolateMode;
+    if lane.frames.is_empty() {
+        return Err("the lane has no keyframes".to_string());
+    }
+    for pair in lane.frames.windows(2) {
+        if pair[1].frame <= pair[0].frame {
+            return Err(
+                "keyframe frames are not strictly increasing; duplicate times are not representable (LRF-501)"
+                    .to_string(),
+            );
+        }
+    }
+    for key in &lane.frames {
+        if !key.value.is_finite() || key.value < min || key.value > max {
+            return Err(format!(
+                "keyframe value {} at frame {} lies outside the parameter range [{}, {}]; motion values must lie in range (LRF-303)",
+                key.value, key.frame, min, max
+            ));
+        }
+    }
+    let ts = f64::from(timestep);
+    let times: Vec<f64> = lane
+        .frames
+        .iter()
+        .map(|key| f64::from(key.frame) * ts)
+        .collect();
+    let values: Vec<f64> = lane.frames.iter().map(|key| f64::from(key.value)).collect();
+    let n = lane.frames.len();
+    let mut notes: Vec<String> = Vec::new();
+    let keyframes: Vec<Value> = match lane.interpolation {
+        InterpolateMode::Linear => plain_keys(&times, &values, "linear"),
+        InterpolateMode::Stepped => plain_keys(&times, &values, "stepped"),
+        InterpolateMode::Nearest => {
+            notes.push(
+                "Nearest becomes stepped with an inserted midpoint key per segment: exact except at the midpoint instants, which the next segment owns under SPEC 4.2"
+                    .to_string(),
+            );
+            let mut keys = Vec::new();
+            for j in 0..n {
+                keys.push(key_json(times[j], values[j], "stepped", None, None));
+                if j + 1 < n {
+                    keys.push(key_json(
+                        (times[j] + times[j + 1]) / 2.0,
+                        values[j + 1],
+                        "stepped",
+                        None,
+                        None,
+                    ));
+                }
+            }
+            keys
+        }
+        InterpolateMode::Cubic | InterpolateMode::Bezier => {
+            // Per segment: (dt, dv_out, dv_in).
+            struct Segment {
+                dt: f64,
+                dv_out: f64,
+                dv_in: f64,
+            }
+            let mut segments: Vec<Segment> = Vec::new();
+            let mut any_cubic = false;
+            let mut overshoot = false;
+            for j in 0..n.saturating_sub(1) {
+                let dt_seg = times[j + 1] - times[j];
+                let span = values[j + 1] - values[j];
+                match lane.interpolation {
+                    InterpolateMode::Cubic => {
+                        // The sampler's neighbor indices:
+                        // prev = frames[i-2] for the closing
+                        // key i = j+1 (saturating), next2 =
+                        // frames[i+1] (clamped to the last).
+                        let prev = values[j.saturating_sub(1)];
+                        let next2 = values[(j + 2).min(n - 1)];
+                        segments.push(Segment {
+                            dt: dt_seg / 3.0,
+                            dv_out: (values[j + 1] - prev) / 6.0,
+                            dv_in: (next2 - values[j]) / 6.0,
+                        });
+                        any_cubic = true;
+                    }
+                    InterpolateMode::Bezier => {
+                        let tau = f64::from(lane.frames[j + 1].tension);
+                        if (tau - 0.5).abs() <= f64::EPSILON {
+                            // The hermite fraction is t
+                            // itself: exactly linear.
+                            segments.push(Segment {
+                                dt: dt_seg / 3.0,
+                                dv_out: span / 3.0,
+                                dv_in: span / 3.0,
+                            });
+                        } else {
+                            if !hermite_fraction_in_unit(tau) {
+                                overshoot = true;
+                            }
+                            segments.push(Segment {
+                                dt: dt_seg / 3.0,
+                                dv_out: span * 2.0 * tau / 3.0,
+                                dv_in: span * 2.0 * tau / 3.0,
+                            });
+                            any_cubic = true;
+                        }
+                    }
+                    _ => unreachable!("the outer match fixed the mode"),
+                }
+            }
+            if overshoot {
+                notes.push(
+                    "a Bezier segment's hermite fraction overshoots [0, 1]; the engine clamps the fraction and the clamp is not representable, so the cubic carries the unclamped polynomial"
+                        .to_string(),
+                );
+            }
+            if !any_cubic {
+                plain_keys(&times, &values, "linear")
+            } else {
+                // Every key is cubic; segments that are
+                // linear carry the collinear tangents,
+                // which reproduce them exactly.
+                let mut keys = Vec::new();
+                for j in 0..n {
+                    let tangent_out = if j + 1 < n {
+                        Some((segments[j].dt, segments[j].dv_out))
+                    } else {
+                        None
+                    };
+                    let tangent_in = if j > 0 {
+                        Some((segments[j - 1].dt, segments[j - 1].dv_in))
+                    } else {
+                        None
+                    };
+                    keys.push(key_json(
+                        times[j],
+                        values[j],
+                        "cubic",
+                        tangent_in,
+                        tangent_out,
+                    ));
+                }
+                keys
+            }
+        }
+    };
+    Ok((
+        serde_json::json!({
+            "keyframes": keyframes,
+            "parameter": param_id,
+        }),
+        notes,
+    ))
+}
+
+/// Validates a motion document against SPEC section 4's
+/// rules (field sets per 1.1, LRF-202/203/303/501/502/
+/// 602) before it is written. `ranges` maps lumen
+/// parameter ids to [min, max]; `physics_outputs` is
+/// the model's physics-output parameter set.
+fn validate_motion(
+    document: &Value,
+    ranges: &HashMap<String, (f64, f64)>,
+    physics_outputs: &HashSet<String>,
+) -> Result<(), String> {
+    let obj = document
+        .as_object()
+        .ok_or_else(|| "the motion is not an object".to_string())?;
+    let top_fields: HashSet<&str> = [
+        "curves",
+        "duration_seconds",
+        "format",
+        "format_version",
+        "frames_per_second",
+        "id",
+        "loop",
+        "model",
+    ]
+    .into_iter()
+    .collect();
+    for key in obj.keys() {
+        if !top_fields.contains(key.as_str()) {
+            return Err(format!("unknown top-level field '{key}' (SPEC 1.1)"));
+        }
+    }
+    if obj.get("format").and_then(Value::as_str) != Some("lumen-rig-motion") {
+        return Err("format is not 'lumen-rig-motion'".to_string());
+    }
+    if obj.get("format_version").and_then(Value::as_u64) != Some(1) {
+        return Err("format_version is not 1".to_string());
+    }
+    let id = obj
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "id is missing".to_string())?;
+    if id.is_empty()
+        || id.len() > 64
+        || !id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err(format!(
+            "id '{id}' is outside [A-Za-z0-9_-]{{1,64}} (SPEC 1.1)"
+        ));
+    }
+    if obj
+        .get("model")
+        .and_then(Value::as_str)
+        .is_none_or(|model| model.is_empty())
+    {
+        return Err("model is missing (LRF-203 binds the motion to its model)".to_string());
+    }
+    let duration = obj
+        .get("duration_seconds")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| "duration_seconds is missing".to_string())?;
+    if !duration.is_finite() || duration <= 0.0 {
+        return Err("duration_seconds must be finite and > 0".to_string());
+    }
+    let fps = obj
+        .get("frames_per_second")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "frames_per_second is missing".to_string())?;
+    if !(1..=240).contains(&fps) {
+        return Err("frames_per_second is outside 1..=240".to_string());
+    }
+    let curves = obj
+        .get("curves")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "curves is missing".to_string())?;
+    if curves.is_empty() {
+        return Err("the motion carries no curves".to_string());
+    }
+    let mut seen_params: HashSet<&str> = HashSet::new();
+    for curve in curves {
+        let curve_obj = curve
+            .as_object()
+            .ok_or_else(|| "a curve is not an object".to_string())?;
+        for key in curve_obj.keys() {
+            if ![
+                "parameter",
+                "keyframes",
+                "fade_in_seconds",
+                "fade_out_seconds",
+            ]
+            .contains(&key.as_str())
+            {
+                return Err(format!("unknown curve field '{key}' (SPEC 1.1)"));
+            }
+        }
+        let param_id = curve_obj
+            .get("parameter")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "a curve has no parameter".to_string())?;
+        let Some(&(min, max)) = ranges.get(param_id) else {
+            return Err(format!(
+                "curve parameter '{param_id}' is not in the model (LRF-203)"
+            ));
+        };
+        if physics_outputs.contains(param_id) {
+            return Err(format!(
+                "curve parameter '{param_id}' is a physics output (LRF-602)"
+            ));
+        }
+        if !seen_params.insert(param_id) {
+            return Err(format!("a second curve targets '{param_id}' (LRF-202)"));
+        }
+        let keyframes = curve_obj
+            .get("keyframes")
+            .and_then(Value::as_array)
+            .ok_or_else(|| format!("curve '{param_id}' has no keyframes"))?;
+        if keyframes.is_empty() {
+            return Err(format!("curve '{param_id}' has no keyframes"));
+        }
+        // Collect the keys first: tangent bounds are
+        // pairwise (LRF-502).
+        struct Key {
+            time: f64,
+            tangent_in: Option<(f64, f64)>,
+            tangent_out: Option<(f64, f64)>,
+        }
+        let mut keys: Vec<Key> = Vec::new();
+        for keyframe in keyframes {
+            let key_obj = keyframe
+                .as_object()
+                .ok_or_else(|| "a keyframe is not an object".to_string())?;
+            for field in key_obj.keys() {
+                if ![
+                    "time",
+                    "value",
+                    "interpolation",
+                    "tangent_in",
+                    "tangent_out",
+                ]
+                .contains(&field.as_str())
+                {
+                    return Err(format!("unknown keyframe field '{field}' (SPEC 1.1)"));
+                }
+            }
+            let time = key_obj
+                .get("time")
+                .and_then(Value::as_f64)
+                .ok_or_else(|| "a keyframe has no time".to_string())?;
+            let value = key_obj
+                .get("value")
+                .and_then(Value::as_f64)
+                .ok_or_else(|| "a keyframe has no value".to_string())?;
+            if !time.is_finite() || !value.is_finite() {
+                return Err("keyframe numbers must be finite (SPEC 1.1)".to_string());
+            }
+            if value < min || value > max {
+                return Err(format!(
+                    "keyframe value {value} lies outside [{min}, {max}] for '{param_id}' (LRF-303)"
+                ));
+            }
+            let interpolation = key_obj
+                .get("interpolation")
+                .and_then(Value::as_str)
+                .unwrap_or("linear");
+            if !["linear", "stepped", "cubic"].contains(&interpolation) {
+                return Err(format!("unknown interpolation '{interpolation}'"));
+            }
+            let tangent = |name: &str| -> Result<Option<(f64, f64)>, String> {
+                match key_obj.get(name) {
+                    None => Ok(None),
+                    Some(raw) => {
+                        let pair = raw
+                            .as_array()
+                            .ok_or_else(|| format!("{name} is not a [dt, dv] pair"))?;
+                        if pair.len() != 2 {
+                            return Err(format!("{name} is not a [dt, dv] pair"));
+                        }
+                        let dt = pair[0].as_f64().ok_or_else(|| format!("{name} dt"))?;
+                        let dv = pair[1].as_f64().ok_or_else(|| format!("{name} dv"))?;
+                        if !dt.is_finite() || !dv.is_finite() || dt < 0.0 {
+                            return Err(format!("{name} has dt < 0 or non-finite parts (LRF-502)"));
+                        }
+                        Ok(Some((dt, dv)))
+                    }
+                }
+            };
+            let tangent_in = tangent("tangent_in")?;
+            let tangent_out = tangent("tangent_out")?;
+            if interpolation != "cubic" && (tangent_in.is_some() || tangent_out.is_some()) {
+                return Err("tangents on a non-cubic key are invalid (LRF-502)".to_string());
+            }
+            keys.push(Key {
+                time,
+                tangent_in,
+                tangent_out,
+            });
+        }
+        if keys[0].time < 0.0 {
+            return Err("the first keyframe time is negative (LRF-501)".to_string());
+        }
+        for pair in keys.windows(2) {
+            if pair[1].time <= pair[0].time {
+                return Err("keyframe times are not strictly increasing (LRF-501)".to_string());
+            }
+            if let Some((dt, _)) = pair[0].tangent_out {
+                if pair[0].time + dt > pair[1].time {
+                    return Err("tangent_out overruns the segment (LRF-502)".to_string());
+                }
+            }
+            if let Some((dt, _)) = pair[1].tangent_in {
+                if pair[1].time - dt < pair[0].time {
+                    return Err("tangent_in overruns the segment (LRF-502)".to_string());
+                }
+            }
+        }
+        if keys[keys.len() - 1].time > duration {
+            return Err("the last keyframe lies past duration_seconds (LRF-501)".to_string());
+        }
+    }
+    Ok(())
 }
 
 /// Runs the export: builds the model, writes the model,
@@ -1415,6 +2128,14 @@ pub fn export_rig_files(
     let stamp_path = join_path(out_dir, &format!("{base}.stamp.json"));
     let model_text = format!("{}\n", torogao_format::jsonfmt::to_d_json(&result.model));
     std::fs::write(&model_path, model_text).map_err(|err| ExportError::Io(err.to_string()))?;
+    for (file_name, motion) in &result.motions {
+        let motion_path = join_path(out_dir, &format!("{base}.{file_name}"));
+        std::fs::write(
+            &motion_path,
+            format!("{}\n", torogao_format::jsonfmt::to_d_json(motion)),
+        )
+        .map_err(|err| ExportError::Io(err.to_string()))?;
+    }
     let stamp = stamp_doc(&load.path, &model_path, &ext_view.doc);
     std::fs::write(
         &stamp_path,
@@ -1446,5 +2167,324 @@ pub fn export_rig(load: &ToolLoad, out_dir: &str, base: &str, ext_view: &ExtView
         Ok(report) => ToolResult::ok(report),
         Err(ExportError::Build(message)) => ToolResult::fail("export_failed", &message),
         Err(ExportError::Io(message)) => ToolResult::fail("io_error", &message),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use torogao_engine::param::{InterpolateMode, MergeMode};
+    use torogao_engine::{AnimationLane, Keyframe};
+
+    fn lane(mode: InterpolateMode, frames: &[(i32, f32, f32)]) -> AnimationLane {
+        AnimationLane {
+            param_uuid: 7,
+            axis: 0,
+            interpolation: mode,
+            merge_mode: MergeMode::Forced,
+            frames: frames
+                .iter()
+                .map(|(frame, value, tension)| Keyframe {
+                    frame: *frame,
+                    value: *value,
+                    tension: *tension,
+                })
+                .collect(),
+        }
+    }
+
+    /// A SPEC section 4.2 evaluator over an emitted curve,
+    /// written from the SPEC text (Newton-Raphson at most
+    /// 8 iterations from the segment fraction, tolerance
+    /// 1e-6 s, then bisection for exactly 24 iterations) —
+    /// the fidelity reference the conversions are measured
+    /// against.
+    fn spec_evaluate(curve: &Value, t: f64) -> f64 {
+        let keys = curve["keyframes"].as_array().expect("keyframes");
+        let read = |key: &Value| {
+            (
+                key["time"].as_f64().expect("time"),
+                key["value"].as_f64().expect("value"),
+            )
+        };
+        let tangent = |key: &Value, name: &str| -> (f64, f64) {
+            match key.get(name) {
+                Some(pair) => (pair[0].as_f64().expect("dt"), pair[1].as_f64().expect("dv")),
+                None => (0.0, 0.0),
+            }
+        };
+        let last = keys.len() - 1;
+        if t <= read(&keys[0]).0 {
+            return read(&keys[0]).1;
+        }
+        if t >= read(&keys[last]).0 {
+            return read(&keys[last]).1;
+        }
+        for i in 0..last {
+            let (t0, v0) = read(&keys[i]);
+            let (t1, v1) = read(&keys[i + 1]);
+            if t >= t1 {
+                continue;
+            }
+            return match keys[i]["interpolation"].as_str().unwrap_or("linear") {
+                "stepped" => v0,
+                "linear" => v0 + (v1 - v0) * (t - t0) / (t1 - t0),
+                "cubic" => {
+                    let (dt_out, dv_out) = tangent(&keys[i], "tangent_out");
+                    let (dt_in, dv_in) = tangent(&keys[i + 1], "tangent_in");
+                    let px = [t0, t0 + dt_out, t1 - dt_in, t1];
+                    let py = [v0, v0 + dv_out, v1 - dv_in, v1];
+                    let bezier = |p: [f64; 4], u: f64| {
+                        let w = 1.0 - u;
+                        w * w * w * p[0]
+                            + 3.0 * w * w * u * p[1]
+                            + 3.0 * w * u * u * p[2]
+                            + u * u * u * p[3]
+                    };
+                    let bezier_dx = |u: f64| {
+                        let w = 1.0 - u;
+                        3.0 * w * w * (px[1] - px[0])
+                            + 6.0 * w * u * (px[2] - px[1])
+                            + 3.0 * u * u * (px[3] - px[2])
+                    };
+                    let mut u = (t - t0) / (t1 - t0);
+                    let mut converged = false;
+                    for _ in 0..8 {
+                        let err = bezier(px, u) - t;
+                        if err.abs() <= 1e-6 {
+                            converged = true;
+                            break;
+                        }
+                        let derivative = bezier_dx(u);
+                        if derivative.abs() <= f64::EPSILON {
+                            break;
+                        }
+                        u -= err / derivative;
+                    }
+                    if !converged {
+                        let (mut lo, mut hi) = (0.0_f64, 1.0_f64);
+                        for _ in 0..24 {
+                            u = (lo + hi) / 2.0;
+                            if bezier(px, u) < t {
+                                lo = u;
+                            } else {
+                                hi = u;
+                            }
+                        }
+                        u = (lo + hi) / 2.0;
+                    }
+                    bezier(py, u)
+                }
+                other => unreachable!("emitted mode {other}"),
+            };
+        }
+        read(&keys[last]).1
+    }
+
+    /// The worst |engine - SPEC| over a dense frame sweep.
+    fn max_deviation(lane: &AnimationLane, curve: &Value, timestep: f32) -> f64 {
+        let last_frame = lane.frames[lane.frames.len() - 1].frame as f32;
+        let mut worst = 0.0_f64;
+        let mut frame = 0.0_f32;
+        while frame <= last_frame {
+            let engine = f64::from(lane.sample(frame, false));
+            let spec = spec_evaluate(curve, f64::from(frame) * f64::from(timestep));
+            worst = worst.max((engine - spec).abs());
+            frame += 0.37;
+        }
+        worst
+    }
+
+    #[test]
+    fn cubic_conversion_is_exact_against_the_spec_evaluator() {
+        // Uneven spacing and clamped ends: the cases where
+        // a naive conversion drifts.
+        let source = lane(
+            InterpolateMode::Cubic,
+            &[
+                (0, 0.0, 0.0),
+                (10, 1.0, 0.0),
+                (25, -0.5, 0.0),
+                (40, 0.25, 0.0),
+            ],
+        );
+        let (curve, notes) =
+            convert_lane_curve(&source, "p_7_x", -1.0, 1.0, 0.05).expect("conversion succeeds");
+        assert!(
+            notes.is_empty(),
+            "cubic conversion must be exact: {notes:?}"
+        );
+        let deviation = max_deviation(&source, &curve, 0.05);
+        assert!(deviation < 2e-3, "cubic deviation {deviation}");
+    }
+
+    #[test]
+    fn bezier_half_tension_is_linear_and_mild_tension_is_exact() {
+        let half = lane(
+            InterpolateMode::Bezier,
+            &[(0, 0.0, 0.0), (20, 0.8, 0.5), (40, -0.4, 0.5)],
+        );
+        let (curve, notes) =
+            convert_lane_curve(&half, "p_7_x", -1.0, 1.0, 0.05).expect("conversion succeeds");
+        assert!(notes.is_empty());
+        assert_eq!(curve["keyframes"][0]["interpolation"], "linear");
+        assert!(max_deviation(&half, &curve, 0.05) < 2e-3);
+
+        let mild = lane(
+            InterpolateMode::Bezier,
+            &[(0, 0.0, 0.0), (20, 0.8, 0.3), (40, -0.4, 0.3)],
+        );
+        let (curve, notes) =
+            convert_lane_curve(&mild, "p_7_x", -1.0, 1.0, 0.05).expect("conversion succeeds");
+        assert!(notes.is_empty(), "tau 0.3 stays in [0, 1]: {notes:?}");
+        assert_eq!(curve["keyframes"][0]["interpolation"], "cubic");
+        assert!(max_deviation(&mild, &curve, 0.05) < 2e-3);
+    }
+
+    #[test]
+    fn bezier_wild_tension_reports_the_clamp_gap() {
+        assert!(hermite_fraction_in_unit(0.3));
+        assert!(!hermite_fraction_in_unit(6.0));
+        let wild = lane(InterpolateMode::Bezier, &[(0, 0.0, 0.0), (20, 0.8, 6.0)]);
+        let (_, notes) =
+            convert_lane_curve(&wild, "p_7_x", -1.0, 1.0, 0.05).expect("conversion succeeds");
+        assert_eq!(notes.len(), 1, "the clamp gap must be noted: {notes:?}");
+        assert!(notes[0].contains("clamp"));
+    }
+
+    #[test]
+    fn nearest_matches_except_at_midpoint_instants() {
+        let source = lane(
+            InterpolateMode::Nearest,
+            &[(0, 0.25, 0.0), (20, 0.75, 0.0), (40, -0.5, 0.0)],
+        );
+        let (curve, notes) =
+            convert_lane_curve(&source, "p_7_x", -1.0, 1.0, 0.05).expect("conversion succeeds");
+        assert_eq!(notes.len(), 1);
+        // The inserted midpoint keys are present.
+        assert_eq!(curve["keyframes"].as_array().map(Vec::len), Some(5));
+        // Away from the exact midpoints (frames 10 and 30)
+        // the two samplers agree exactly.
+        for frame in [0.0_f32, 5.0, 9.9, 10.1, 19.0, 25.0, 29.9, 30.1, 40.0] {
+            let engine = f64::from(source.sample(frame, false));
+            let spec = spec_evaluate(&curve, f64::from(frame) * 0.05);
+            assert!(
+                (engine - spec).abs() < 1e-6,
+                "frame {frame}: {engine} vs {spec}"
+            );
+        }
+    }
+
+    #[test]
+    fn linear_and_stepped_are_exact() {
+        for mode in [InterpolateMode::Linear, InterpolateMode::Stepped] {
+            let source = lane(mode, &[(0, 0.1, 0.0), (13, 0.9, 0.0), (40, -0.2, 0.0)]);
+            let (curve, notes) =
+                convert_lane_curve(&source, "p_7_x", -1.0, 1.0, 0.05).expect("conversion succeeds");
+            assert!(notes.is_empty());
+            assert!(max_deviation(&source, &curve, 0.05) < 1e-6, "mode {mode:?}");
+        }
+    }
+
+    #[test]
+    fn conversion_refuses_unrepresentable_lanes() {
+        let duplicate = lane(InterpolateMode::Linear, &[(0, 0.0, 0.0), (0, 1.0, 0.0)]);
+        assert!(
+            convert_lane_curve(&duplicate, "p_7_x", -1.0, 1.0, 0.05)
+                .expect_err("duplicate times")
+                .contains("LRF-501")
+        );
+        let out_of_range = lane(InterpolateMode::Linear, &[(0, 0.0, 0.0), (10, 1.5, 0.0)]);
+        assert!(
+            convert_lane_curve(&out_of_range, "p_7_x", -1.0, 1.0, 0.05)
+                .expect_err("out of range")
+                .contains("LRF-303")
+        );
+        let empty = lane(InterpolateMode::Linear, &[]);
+        assert!(convert_lane_curve(&empty, "p_7_x", -1.0, 1.0, 0.05).is_err());
+    }
+
+    fn valid_motion() -> Value {
+        serde_json::json!({
+            "curves": [{
+                "keyframes": [
+                    {"interpolation": "linear", "time": 0.0, "value": 0.0},
+                    {"interpolation": "linear", "time": 1.0, "value": 0.5}
+                ],
+                "parameter": "p_7_x"
+            }],
+            "duration_seconds": 1.0,
+            "format": "lumen-rig-motion",
+            "format_version": 1,
+            "frames_per_second": 60,
+            "id": "greeting",
+            "loop": false,
+            "model": "prima"
+        })
+    }
+
+    fn ranges() -> HashMap<String, (f64, f64)> {
+        let mut ranges = HashMap::new();
+        ranges.insert("p_7_x".to_string(), (-1.0, 1.0));
+        ranges.insert("phys_9_x".to_string(), (-1.0, 1.0));
+        ranges
+    }
+
+    #[test]
+    fn validator_accepts_a_valid_motion_and_refuses_each_rule_breach() {
+        let physics: HashSet<String> = ["phys_9_x".to_string()].into_iter().collect();
+        assert!(validate_motion(&valid_motion(), &ranges(), &physics).is_ok());
+
+        let mut doc = valid_motion();
+        doc["bogus"] = serde_json::json!(1);
+        assert!(
+            validate_motion(&doc, &ranges(), &physics)
+                .expect_err("unknown field")
+                .contains("SPEC 1.1")
+        );
+
+        let mut doc = valid_motion();
+        doc["curves"] = serde_json::json!([doc["curves"][0].clone(), doc["curves"][0].clone()]);
+        assert!(
+            validate_motion(&doc, &ranges(), &physics)
+                .expect_err("second curve")
+                .contains("LRF-202")
+        );
+
+        let mut doc = valid_motion();
+        doc["curves"][0]["parameter"] = serde_json::json!("phys_9_x");
+        assert!(
+            validate_motion(&doc, &ranges(), &physics)
+                .expect_err("physics target")
+                .contains("LRF-602")
+        );
+
+        let mut doc = valid_motion();
+        doc["curves"][0]["keyframes"][1]["value"] = serde_json::json!(2.0);
+        assert!(
+            validate_motion(&doc, &ranges(), &physics)
+                .expect_err("out of range")
+                .contains("LRF-303")
+        );
+
+        let mut doc = valid_motion();
+        doc["curves"][0]["keyframes"][0]["tangent_out"] = serde_json::json!([0.1, 0.0]);
+        assert!(
+            validate_motion(&doc, &ranges(), &physics)
+                .expect_err("tangent on a linear key")
+                .contains("LRF-502")
+        );
+
+        let mut doc = valid_motion();
+        doc["curves"][0]["keyframes"][1]["time"] = serde_json::json!(0.0);
+        assert!(
+            validate_motion(&doc, &ranges(), &physics)
+                .expect_err("non-increasing times")
+                .contains("LRF-501")
+        );
+
+        let mut doc = valid_motion();
+        doc["frames_per_second"] = serde_json::json!(0);
+        assert!(validate_motion(&doc, &ranges(), &physics).is_err());
     }
 }

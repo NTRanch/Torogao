@@ -26,6 +26,8 @@ pub mod handlers;
 pub mod inspect;
 pub mod lipsync;
 pub mod mcp;
+pub mod mcp_guard;
+pub mod mcp_server;
 pub mod packs;
 pub mod paths;
 pub mod playroom;

@@ -11,6 +11,13 @@ serde_json = { workspace = true }
 sha2 = "0.10"
 torogao-engine = { path = "../torogao-engine" }
 torogao-format = { path = "../torogao-format" }
+# WS2-W5 (D-113): the `mcp` mode's framing moves to the official
+# Rust MCP SDK, modern era only (2026-07-28). The version pin is
+# the fleet pin — one rmcp version across every estate server;
+# bumps are single fleet events. The rest of this CLI stays
+# synchronous; tokio exists only inside the mcp mode.
+rmcp = { version = "=3.8.0", default-features = false, features = ["server"] }
+tokio = { version = "1", features = ["io-std", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
 
 [lib]
 name = "torogao_cli"

@@ -1,318 +1,106 @@
-//! The MCP server mode (mcp/server.d): the tool registry
-//! over stdio as newline-delimited JSON-RPC 2.0 frames —
-//! a hard frame size cap, typed protocol errors, and no
-//! input that can crash or hang the server. Transport
-//! only; every tool call delegates to the one registry.
+//! The MCP server mode (`torogao-cli mcp`): the tool registry
+//! over stdio, modern protocol era only (2026-07-28).
 //!
-//! Error model: transport/protocol problems (unparseable
-//! frame, frame over the cap, unknown method, client-
-//! caused argument problems) are JSON-RPC error responses
-//! with the stable machine code in error.data.code. Tool
-//! execution failures are normal tool results with
-//! isError set.
+//! As of WS2-W5 (MCP standardization program, decision D-113)
+//! the framing is rmcp 3.8.0 behind a byte-level era guard
+//! (`mcp_guard`); the handler (`mcp_server`) delegates every
+//! call to the one registry, exactly as the hand-rolled
+//! NDJSON server did. There is no `initialize` handshake:
+//! sessions open with `server/discover`, every request carries
+//! its protocol version in `_meta`, and legacy contact is
+//! refused by the guard with the typed `-32022` error. Tool
+//! execution failures remain normal tool results with
+//! `isError` set; protocol problems remain JSON-RPC errors
+//! with the stable machine code in `error.data.code`.
 
-use crate::registry;
-use serde_json::Value;
-use std::io::{Read, Write};
-use torogao_format::jsonfmt::to_d_json;
+use std::sync::Arc;
 
-/// Hard cap on one input frame, in bytes (1 MiB).
-const MAX_FRAME_BYTES: usize = 1_048_576;
-/// MCP protocol version this server answers with.
-const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
+use rmcp::ServiceExt;
+use rmcp::transport::async_rw::AsyncRwTransport;
+use tokio::sync::Mutex;
 
-/// Reads newline-terminated frames from stdin, enforcing
-/// the size cap while reading: an over-cap frame is
-/// consumed through its newline (so the stream resyncs)
-/// and reported as oversized instead of buffered whole.
-struct FrameReader {
-    pending: Vec<u8>,
-    eof: bool,
-    source: std::io::StdinLock<'static>,
-}
+use crate::mcp_guard;
+use crate::mcp_server::CliServer;
 
-impl FrameReader {
-    fn new() -> FrameReader {
-        FrameReader {
-            pending: Vec::new(),
-            eof: false,
-            source: std::io::stdin().lock(),
+/// Duplex buffer between the era guard and the SDK service.
+/// Request lines can reach the 4 MiB line bound; the SDK
+/// consumes incrementally, so this only needs to cover
+/// response bursts.
+const DUPLEX_BUFFER_BYTES: usize = 1024 * 1024;
+
+/// Wire the pieces together: the guard owns stdio, the SDK
+/// service sits behind an in-process duplex, and a pump copies
+/// its responses back to stdout through the same lock the
+/// guard writes with.
+async fn serve() -> std::io::Result<()> {
+    let (client_side, server_side) = tokio::io::duplex(DUPLEX_BUFFER_BYTES);
+    let (server_read, server_write) = tokio::io::split(server_side);
+    let (client_read, client_write) = tokio::io::split(client_side);
+    let stdout: mcp_guard::SharedStdout = Arc::new(Mutex::new(tokio::io::stdout()));
+
+    let ordering = mcp_guard::Ordering::new();
+    let handler = CliServer;
+    let serve = tokio::spawn(async move {
+        let transport = AsyncRwTransport::new_server(server_read, server_write);
+        match handler.serve(transport).await {
+            Ok(running) => running
+                .waiting()
+                .await
+                .map(|_| ())
+                .map_err(|e| std::io::Error::other(e.to_string())),
+            // The client closed the connection before selecting a
+            // lifecycle (a probe, a spawn check, a client that only
+            // ever wanted the refusal): the baseline treated bare
+            // EOF as a clean end of session, and so do we.
+            Err(rmcp::service::ServerInitializeError::ConnectionClosed(_)) => Ok(()),
+            Err(e) => Err(std::io::Error::other(e.to_string())),
         }
-    }
-
-    /// Returns (frame, oversized); None at end of stream
-    /// with no partial frame delivered.
-    fn read_frame(&mut self) -> Option<(Vec<u8>, bool)> {
-        let mut overflow = false;
-        let mut scanned = 0usize;
-        loop {
-            if let Some(pos) = self.pending[scanned..].iter().position(|b| *b == b'\n') {
-                let end = scanned + pos;
-                let oversized = overflow || end > MAX_FRAME_BYTES;
-                let frame = if oversized {
-                    Vec::new()
-                } else {
-                    self.pending[..end].to_vec()
-                };
-                self.pending.drain(..=end);
-                return Some((frame, oversized));
-            }
-            scanned = self.pending.len();
-            if scanned > MAX_FRAME_BYTES {
-                overflow = true;
-            }
-            if overflow {
-                self.pending.clear();
-                scanned = 0;
-            }
-            if self.eof && self.pending.is_empty() {
-                return None;
-            }
-            if self.eof {
-                let frame = if overflow {
-                    Vec::new()
-                } else {
-                    std::mem::take(&mut self.pending)
-                };
-                return Some((frame, overflow));
-            }
-            let mut chunk = [0u8; 8192];
-            match self.source.read(&mut chunk) {
-                Ok(0) | Err(_) => self.eof = true,
-                Ok(n) => self.pending.extend_from_slice(&chunk[..n]),
-            }
-        }
-    }
-}
-
-fn rpc_error(id: Value, code: i64, data_code: &str, message: &str) -> Value {
-    serde_json::json!({
-        "error": {
-            "code": code,
-            "data": {"code": data_code},
-            "message": message,
-        },
-        "id": id,
-        "jsonrpc": "2.0",
-    })
-}
-
-fn rpc_result(id: Value, result: Value) -> Value {
-    serde_json::json!({
-        "id": id,
-        "jsonrpc": "2.0",
-        "result": result,
-    })
-}
-
-/// MCP tool description, generated from the registry spec.
-fn tool_json(tool: &crate::registry_data::ToolMeta) -> Value {
-    let mut annotations = serde_json::json!({
-        "destructiveHint": false,
-        "idempotentHint": tool.posture != "export",
-        "openWorldHint": false,
-        "readOnlyHint": tool.posture == "read-only",
-        "torogao:namespace": tool.namespace,
-        "torogao:posture": tool.posture,
     });
-    if tool.posture == "disabled" {
-        annotations["torogao:gate"] = Value::String(tool.gate.to_string());
+    let mut pump = tokio::spawn(mcp_guard::pump(
+        client_read,
+        Arc::clone(&stdout),
+        Arc::clone(&ordering),
+    ));
+
+    // When stdin reaches EOF the guard shuts the duplex write
+    // side down, which ends the SDK service; the pump ends when
+    // the service's transport drops. The pump wait is bounded
+    // as a backstop: a response still in flight when the service
+    // ends gets its chance to drain, but a wedged pump cannot
+    // hang exit.
+    let guard_result = mcp_guard::run(tokio::io::stdin(), client_write, stdout, ordering).await;
+    let serve_result = match serve.await {
+        Ok(result) => result,
+        Err(e) => Err(std::io::Error::other(e.to_string())),
+    };
+    if tokio::time::timeout(std::time::Duration::from_secs(2), &mut pump)
+        .await
+        .is_err()
+    {
+        pump.abort();
     }
-    serde_json::json!({
-        "annotations": annotations,
-        "description": tool.description,
-        "inputSchema": serde_json::from_str::<Value>(tool.input_schema_json)
-            .unwrap_or(Value::Null),
-        "name": tool.name,
-        "title": tool.title,
-    })
+    guard_result.and(serve_result)
 }
 
-/// Handles one frame. Returns Some(response) when a
-/// response must be written; notifications return None.
-fn handle_frame(frame: &[u8]) -> Option<Value> {
-    let text = match std::str::from_utf8(frame) {
-        Ok(text) => text,
-        Err(err) => {
-            return Some(rpc_error(
-                Value::Null,
-                -32700,
-                "parse_error",
-                &format!("frame is not valid JSON: {err}"),
-            ));
-        }
-    };
-    let msg: Value = match serde_json::from_str(text) {
-        Ok(msg) => msg,
-        Err(err) => {
-            return Some(rpc_error(
-                Value::Null,
-                -32700,
-                "parse_error",
-                &format!("frame is not valid JSON: {err}"),
-            ));
-        }
-    };
-    if !msg.is_object() {
-        return Some(rpc_error(
-            Value::Null,
-            -32600,
-            "invalid_request",
-            "frame must be a JSON object",
-        ));
-    }
-    let method = match msg.get("method") {
-        Some(Value::String(method)) => method.clone(),
-        _ => {
-            return Some(rpc_error(
-                Value::Null,
-                -32600,
-                "invalid_request",
-                "frame has no string method",
-            ));
-        }
-    };
-    let id_value = msg.get("id");
-    let is_notification = id_value.is_none() || id_value == Some(&Value::Null);
-    let id = if is_notification {
-        Value::Null
-    } else {
-        id_value.cloned().unwrap_or(Value::Null)
-    };
-
-    match method.as_str() {
-        "initialize" => {
-            let result = serde_json::json!({
-                "capabilities": {"tools": {"listChanged": false}},
-                "protocolVersion": MCP_PROTOCOL_VERSION,
-                "serverInfo": {
-                    "name": "torogao",
-                    "title": "Torogao",
-                    "version": registry::REGISTRY_VERSION,
-                },
-            });
-            Some(rpc_result(id, result))
-        }
-        "ping" => Some(rpc_result(id, Value::Object(serde_json::Map::new()))),
-        "tools/list" => {
-            let tools: Vec<Value> = registry::list_tools()
-                .iter()
-                .map(|tool| tool_json(tool))
-                .collect();
-            Some(rpc_result(id, serde_json::json!({"tools": tools})))
-        }
-        "tools/call" => {
-            let params = match msg.get("params") {
-                Some(params) if params.is_object() => params.clone(),
-                _ => {
-                    return Some(rpc_error(
-                        id,
-                        -32602,
-                        "invalid_arguments",
-                        "tools/call requires a params object",
-                    ));
-                }
-            };
-            let name = match params.get("name") {
-                Some(Value::String(name)) => name.clone(),
-                _ => {
-                    return Some(rpc_error(
-                        id,
-                        -32602,
-                        "invalid_arguments",
-                        "tools/call requires a tool name",
-                    ));
-                }
-            };
-            let arguments = match params.get("arguments") {
-                Some(arguments) => {
-                    if !arguments.is_object() {
-                        return Some(rpc_error(
-                            id,
-                            -32602,
-                            "invalid_arguments",
-                            "tool arguments must be a JSON object",
-                        ));
-                    }
-                    arguments.clone()
-                }
-                None => Value::Object(serde_json::Map::new()),
-            };
-            let result = registry::call_tool(&name, &arguments);
-            if result.is_error {
-                if ["unknown_tool", "tool_disabled", "invalid_arguments"]
-                    .contains(&result.error_code.as_str())
-                {
-                    return Some(rpc_error(
-                        id,
-                        -32602,
-                        &result.error_code,
-                        &result.error_message,
-                    ));
-                }
-                let tool_result = serde_json::json!({
-                    "content": [{
-                        "text": to_d_json(&result.error_json()),
-                        "type": "text",
-                    }],
-                    "isError": true,
-                });
-                return Some(rpc_result(id, tool_result));
-            }
-            let tool_result = serde_json::json!({
-                "content": [{
-                    "text": to_d_json(&result.payload),
-                    "type": "text",
-                }],
-                "isError": false,
-                "structuredContent": result.payload,
-            });
-            Some(rpc_result(id, tool_result))
-        }
-        _ => {
-            if is_notification {
-                return None;
-            }
-            // The reference's prefix test compares a 12-byte
-            // slice against the 13-byte literal, so it never
-            // fires; replicated verbatim for parity.
-            if method.len() > 12 && method.get(..12) == Some("notifications") {
-                return None;
-            }
-            Some(rpc_error(
-                id,
-                -32601,
-                "method_not_found",
-                &format!("unknown method: {method}"),
-            ))
-        }
-    }
-}
-
-/// Runs the MCP server on stdio until the input reaches
-/// EOF; returns 0.
+/// Runs the MCP server on stdio until the input reaches EOF;
+/// returns 0, or 1 if the runtime or serve loop failed.
 pub fn run_mcp_server() -> i32 {
-    let mut reader = FrameReader::new();
-    let mut stdout = std::io::stdout().lock();
-    while let Some((frame, oversized)) = reader.read_frame() {
-        if oversized {
-            let response = rpc_error(
-                Value::Null,
-                -32600,
-                "frame_too_large",
-                &format!("frame exceeds the {MAX_FRAME_BYTES}-byte cap"),
-            );
-            let _ = writeln!(stdout, "{}", to_d_json(&response));
-            let _ = stdout.flush();
-            continue;
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            eprintln!("torogao mcp: cannot start runtime: {e}");
+            return 1;
         }
-        if frame.is_empty() {
-            continue;
-        }
-        if let Some(response) = handle_frame(&frame) {
-            let _ = writeln!(stdout, "{}", to_d_json(&response));
-            let _ = stdout.flush();
+    };
+    match runtime.block_on(serve()) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("torogao mcp: serve loop ended: {e}");
+            1
         }
     }
-    0
 }

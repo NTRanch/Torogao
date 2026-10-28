@@ -103,6 +103,12 @@ impl CurveSet {
 /// Fixed six-decimal float formatting; -0 collapses to 0.
 /// Mirrors C `%.6f` rounding on the f64 value.
 pub fn format_float(value: f64) -> String {
+    if value.is_nan() {
+        // The reference writer prints lowercase `nan`
+        // (measured against the oracle, G-22); Rust's
+        // float formatting prints `NaN`.
+        return "nan".to_string();
+    }
     if value == 0.0 {
         return "0.000000".to_string();
     }
