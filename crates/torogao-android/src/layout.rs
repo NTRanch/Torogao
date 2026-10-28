@@ -87,6 +87,16 @@ pub const STAGE_IMAGE_MIN_DP: f32 = 60.0;
 /// collapsed.
 pub const STAGE_COLLAPSED_HEIGHT_DP: f32 =
     STAGE_PANEL_MARGIN_Y_DP + STAGE_TITLE_ROW_DP + STAGE_ROW_GAP_DP + COMMAND_ROW_HEIGHT_DP;
+
+/// Compile-time guard: the collapsed budget must always
+/// fit the two rows it exists to hold, and the expanded
+/// chrome must never be smaller than the collapsed
+/// stage (a future edit shrinking a constant below the
+/// floor fails the build here, not on a phone).
+const _: () = assert!(
+    STAGE_COLLAPSED_HEIGHT_DP >= STAGE_TITLE_ROW_DP + COMMAND_ROW_HEIGHT_DP
+        && STAGE_CHROME_DP >= STAGE_COLLAPSED_HEIGHT_DP
+);
 /// The expanded stage's height as a fraction of the
 /// viewport height (capped by `STAGE_HEIGHT_MAX_DP`).
 pub const STAGE_HEIGHT_FRACTION: f32 = 0.36;
@@ -264,8 +274,8 @@ pub const REFERENCE_VIEWPORTS: [ViewportDp; 3] = [
 mod tests {
     use super::{
         COMMAND_ROW_HEIGHT_DP, RAIL_HEIGHT_DP, REFERENCE_VIEWPORTS, STAGE_CHROME_DP,
-        STAGE_COLLAPSED_HEIGHT_DP, STAGE_IMAGE_MIN_DP, STAGE_PANEL_MARGIN_Y_DP, STAGE_ROW_GAP_DP,
-        STAGE_TITLE_ROW_DP, STANDING_BAR_HEIGHT_DP, TOUCH_TARGET_MIN_DP, ViewportDp, frame_layout,
+        STAGE_COLLAPSED_HEIGHT_DP, STAGE_IMAGE_MIN_DP, STAGE_TITLE_ROW_DP, STANDING_BAR_HEIGHT_DP,
+        TOUCH_TARGET_MIN_DP, ViewportDp, frame_layout,
     };
 
     /// Rule 5: the standing bar is pinned to the bottom
@@ -355,14 +365,10 @@ mod tests {
     /// an image the collapsed header must not draw.
     #[test]
     fn collapsed_stage_is_exactly_its_row_budget() {
-        assert_eq!(
-            STAGE_COLLAPSED_HEIGHT_DP,
-            STAGE_PANEL_MARGIN_Y_DP + STAGE_TITLE_ROW_DP + STAGE_ROW_GAP_DP + COMMAND_ROW_HEIGHT_DP
-        );
-        assert!(STAGE_COLLAPSED_HEIGHT_DP >= COMMAND_ROW_HEIGHT_DP + STAGE_TITLE_ROW_DP);
         for viewport in REFERENCE_VIEWPORTS {
             let layout = frame_layout(viewport, true);
             assert_eq!(layout.stage.height, STAGE_COLLAPSED_HEIGHT_DP);
+            assert!(layout.stage.height >= COMMAND_ROW_HEIGHT_DP + STAGE_TITLE_ROW_DP);
         }
     }
 
@@ -396,6 +402,7 @@ mod tests {
     fn surface_loss_sequence_returns_to_exact_geometry() {
         let home = REFERENCE_VIEWPORTS[1];
         let first = frame_layout(home, false);
+        let first_collapsed = frame_layout(home, true);
         for viewport in [
             ViewportDp {
                 width: 0.0,
@@ -415,7 +422,7 @@ mod tests {
             assert!(!layout.content.overlaps(&layout.standing_bar));
         }
         assert_eq!(frame_layout(home, false), first);
-        assert_eq!(frame_layout(home, true), frame_layout(home, true),);
+        assert_eq!(frame_layout(home, true), first_collapsed);
     }
 
     /// Adversarial: a viewport shorter than the frame's
