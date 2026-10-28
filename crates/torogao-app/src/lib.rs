@@ -17,6 +17,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod arousal;
 pub mod error;
 pub mod font;
 pub mod headless;
