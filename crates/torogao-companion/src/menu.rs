@@ -136,7 +136,18 @@ impl MenuUi {
             focused: self.pointer_pos.is_some(),
             ..Default::default()
         };
-        let anchor = egui::pos2(self.open_pos.0 as f32, self.open_pos.1 as f32);
+        // The anchor is the pointer position in surface
+        // coordinates — which a compositor may report in a
+        // shifted frame (primo's Hyprland offsets x by the
+        // output's layout position). Clamp the menu into
+        // the surface so it always opens on her, next to
+        // the grab point as far as the frame allows.
+        let max_x = (surface_size.0 as f64 - f64::from(MENU_SIZE.0)).max(0.0);
+        let max_y = (surface_size.1 as f64 - f64::from(MENU_SIZE.1)).max(0.0);
+        let anchor = egui::pos2(
+            self.open_pos.0.clamp(0.0, max_x) as f32,
+            self.open_pos.1.clamp(0.0, max_y) as f32,
+        );
         let full = self.ctx.run_ui(raw, |root_ui| {
             let ctx = root_ui.ctx();
             egui::Window::new("companion-menu")

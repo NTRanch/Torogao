@@ -180,8 +180,13 @@ impl HasDisplayHandle for LayerHandles {
 }
 
 struct DragState {
-    start_pos: (f64, f64),
     start_margins: (i32, i32),
+    /// The last motion position seen, in whatever frame
+    /// the compositor is currently reporting (see
+    /// `on_motion` for why only segments are trusted).
+    last_pos: Option<(f64, f64)>,
+    /// Accumulated motion segments since the press.
+    accumulated: (f64, f64),
     moved: bool,
 }
 
@@ -557,8 +562,9 @@ impl Presentation {
         match button {
             BTN_LEFT => {
                 self.drag = Some(DragState {
-                    start_pos: self.pointer_pos,
                     start_margins: (self.placement.margin_side, self.placement.margin_edge),
+                    last_pos: None,
+                    accumulated: (0.0, 0.0),
                     moved: false,
                 });
             }
@@ -575,27 +581,33 @@ impl Presentation {
         let Some(drag) = &mut self.drag else {
             return;
         };
-        let delta = (
-            self.pointer_pos.0 - drag.start_pos.0,
-            self.pointer_pos.1 - drag.start_pos.1,
-        );
-        if delta.0.abs() > DRAG_THRESHOLD_PX || delta.1.abs() > DRAG_THRESHOLD_PX {
-            drag.moved = true;
-        }
-        if drag.moved {
-            if let Some((width, height)) = self.configured_size {
-                let (side, edge) = drag_margins(
-                    &self.placement,
-                    drag.start_margins,
-                    delta,
-                    (width, height),
-                    KEEP_VISIBLE_PX,
-                );
-                self.placement.margin_side = side;
-                self.placement.margin_edge = edge;
-                self.apply_layer_placement();
-                self.layer().commit();
+        // Drag deltas accumulate motion-to-motion segments
+        // only, and the surface does not move until the
+        // release. Two compositor behaviours force this
+        // (both measured on primo's Hyprland, mixed-scale
+        // three-output layout, gate report §findings):
+        // the press event's surface-local coordinates sit
+        // in a different frame than the motion events'
+        // (they differ by exactly the output's layout
+        // offset), so a press-relative delta starts with a
+        // phantom leap; and moving the surface mid-drag
+        // re-bases every later local coordinate, compounding
+        // the error. Segments are also capped: any single
+        // segment longer than the cap is a frame flip, not
+        // a hand movement, and is dropped.
+        const SEGMENT_CAP_PX: f64 = 64.0;
+        if let Some(last) = drag.last_pos {
+            let segment = (self.pointer_pos.0 - last.0, self.pointer_pos.1 - last.1);
+            if segment.0.abs() <= SEGMENT_CAP_PX && segment.1.abs() <= SEGMENT_CAP_PX {
+                drag.accumulated.0 += segment.0;
+                drag.accumulated.1 += segment.1;
             }
+        }
+        drag.last_pos = Some(self.pointer_pos);
+        if drag.accumulated.0.abs() > DRAG_THRESHOLD_PX
+            || drag.accumulated.1.abs() > DRAG_THRESHOLD_PX
+        {
+            drag.moved = true;
         }
     }
 
@@ -611,6 +623,21 @@ impl Presentation {
         }
         if let Some(drag) = self.drag.take() {
             if drag.moved {
+                // The surface moves once, now: margins from
+                // the accumulated drag (see `on_motion`).
+                if let Some((width, height)) = self.configured_size {
+                    let (side, edge) = drag_margins(
+                        &self.placement,
+                        drag.start_margins,
+                        drag.accumulated,
+                        (width, height),
+                        KEEP_VISIBLE_PX,
+                    );
+                    self.placement.margin_side = side;
+                    self.placement.margin_edge = edge;
+                    self.apply_layer_placement();
+                    self.layer().commit();
+                }
                 self.placement_dirty = true;
                 self.persist_placement();
             } else if let Err(err) = self.core.play(CLICK_ANIMATION, false) {
