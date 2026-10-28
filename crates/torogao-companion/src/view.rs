@@ -34,13 +34,30 @@ pub fn fit_view(canvas: &Canvas, surface_w: u32, surface_h: u32) -> [f32; 16] {
 /// (premultiplied alpha where the platform offers it) and
 /// returns the format in use. Both presentations configure
 /// identically, so the policy lives here once.
+///
+/// Format choice is constrained by the app crate: its
+/// render pipelines are built for `Rgba8UnormSrgb`
+/// targets. The renderer's own `surface_format` picks the
+/// first sRGB format offered, which on a Wayland Vulkan
+/// swapchain is `Bgra8UnormSrgb` — drawing into that with
+/// the app's pipelines is a wgpu validation error. So:
+/// prefer `Rgba8UnormSrgb` when the surface offers it
+/// (the usual case), and only fall back to the renderer's
+/// choice when it does not.
 pub fn configure_surface(
     renderer: &torogao_app::render::Renderer,
     surface: &wgpu::Surface<'_>,
     size: (u32, u32),
 ) -> wgpu::TextureFormat {
-    let format = renderer.surface_format(surface);
     let capabilities = surface.get_capabilities(renderer.adapter());
+    let format = if capabilities
+        .formats
+        .contains(&wgpu::TextureFormat::Rgba8UnormSrgb)
+    {
+        wgpu::TextureFormat::Rgba8UnormSrgb
+    } else {
+        renderer.surface_format(surface)
+    };
     let alpha_mode = capabilities
         .alpha_modes
         .iter()

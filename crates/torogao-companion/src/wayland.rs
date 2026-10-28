@@ -391,7 +391,11 @@ impl Presentation {
         else {
             return;
         };
-        crate::view::configure_surface(renderer, surface, (width, height));
+        self.surface_format = Some(crate::view::configure_surface(
+            renderer,
+            surface,
+            (width, height),
+        ));
         self.gpu_configured_size = Some((width, height));
     }
 
