@@ -6,6 +6,7 @@ members = [
     "crates/torogao-engine",
     "crates/torogao-format",
     "crates/torogao-session",
+    "crates/torogao-voice",
 ]
 resolver = "3"
 

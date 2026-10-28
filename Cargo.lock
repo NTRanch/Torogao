@@ -2914,6 +2914,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "torogao-voice"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "torogao",
+]
+
+[[package]]
 name = "tracing"
 version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
