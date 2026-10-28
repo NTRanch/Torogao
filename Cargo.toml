@@ -5,6 +5,7 @@ members = [
     "crates/torogao-cli",
     "crates/torogao-engine",
     "crates/torogao-format",
+    "crates/torogao-gear",
     "crates/torogao-session",
 ]
 resolver = "3"
