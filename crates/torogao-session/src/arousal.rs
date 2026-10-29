@@ -2000,7 +2000,19 @@ impl ArousalEngine {
                 } else {
                     1
                 };
-            if combined_mp > 0 {
+            // D-275 latch law: while latched (Afterglow
+            // or Refractory), incoming dose does not
+            // integrate into charge — Q only leaks, so
+            // the §5.6 re-arm floor (Q < 150) is always
+            // reached even under sustained input. (The
+            // pre-fix integration saturated Q through
+            // the latch and wedged re-arm: GAP-D273-5.)
+            // Dose and peak below still track input
+            // exactly as before; only the charge
+            // integration — input and passive presence
+            // alike — is gated on the latch.
+            let latched = matches!(phase_at_start, Phase::Afterglow | Phase::Refractory);
+            if combined_mp > 0 && !latched {
                 let x_micro = combined_mp / 1000;
                 let base_rate = div_round(
                     (CHARGE_PERMILLE_PER_S as i128)
@@ -2022,7 +2034,7 @@ impl ArousalEngine {
                 );
                 self.charge_mp += div_round(charge_rate, TICKS_PER_SECOND as i128) as i64;
                 self.charge_mp -= div_round(self.charge_mp as i128, leak_divisor as i128) as i64;
-            } else if self.floor_mp > 0 {
+            } else if self.floor_mp > 0 && !latched {
                 // Passive presence: small charge rate, the
                 // 250 cap enforced as a clamp (§5.3).
                 self.charge_mp += div_round(

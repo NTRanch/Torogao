@@ -187,10 +187,24 @@ fn f_vibe_high_fixture() {
     let mut engine = ArousalEngine::new(CharacterProfile::default());
     engine.apply_item(vibrator(1000));
     let obs = run_engine(&mut engine, 320 * 60);
+    // D-275: the pre-fix engine wedged in Refractory
+    // under sustained input (charge integrated through
+    // the latch and saturated above the §5.6 floor), so
+    // this run culminated exactly once. With charge
+    // frozen while latched, Q leaks to the floor and
+    // re-arm fires: the 320 s window now holds three
+    // culminations (ticks 385, 10056, 18217), each
+    // Tier 4. The §8 fixture claim itself — first fire
+    // Tier 4 within 30 s — is unchanged, asserted below.
     assert_eq!(
         obs.culminations.len(),
-        1,
-        "exactly once: {:?}",
+        3,
+        "three episodes under sustained input (D-275): {:?}",
+        obs.culminations
+    );
+    assert!(
+        obs.culminations.iter().all(|c| c.1 == 4),
+        "every episode Tier 4: {:?}",
         obs.culminations
     );
     let (tick, tier, _p) = obs.culminations[0];
@@ -201,17 +215,28 @@ fn f_vibe_high_fixture() {
         "peak body amplitude >= 0.90 (got {})",
         obs.max_body_amp
     );
-    assert_eq!(
-        obs.phase_seq,
-        vec![
-            Phase::Baseline,
-            Phase::Stimulated,
-            Phase::Culminating,
-            Phase::Taper,
-            Phase::Afterglow,
-            Phase::Refractory
-        ]
-    );
+    // §5.5 phase order: the first cycle is the
+    // fixture's exact sequence; under D-275 the cycle
+    // then repeats via re-arm (Refractory → Stimulated,
+    // never re-entering Baseline).
+    const CYCLE: [Phase; 6] = [
+        Phase::Baseline,
+        Phase::Stimulated,
+        Phase::Culminating,
+        Phase::Taper,
+        Phase::Afterglow,
+        Phase::Refractory,
+    ];
+    assert_eq!(&obs.phase_seq[..6], &CYCLE[..], "first cycle exact");
+    for pair in obs.phase_seq.windows(2) {
+        let idx = CYCLE.iter().position(|p| *p == pair[0]).unwrap();
+        let want = if pair[0] == Phase::Refractory {
+            Phase::Stimulated
+        } else {
+            CYCLE[idx + 1]
+        };
+        assert_eq!(pair[1], want, "legal phase advance");
+    }
 }
 
 #[test]
@@ -228,12 +253,28 @@ fn f_vibe_scaling_ratio() {
 
 #[test]
 fn tier_monotonicity_four_builds() {
+    // D-275: culmination counts per 200 s window. The
+    // pre-fix wedge held every build to one; with
+    // charge frozen while latched, the 1000 build
+    // re-arms and completes a second episode inside
+    // the window (the lower builds do not). The
+    // monotonicity claim — each build's FIRST-fire
+    // tier — is unchanged.
     let mut peaks: Vec<(u32, u32, u32, u32, u32, u32)> = Vec::new(); // body, posture, breath, roll, cross, secondary
-    for (amp, want_tier) in [(250u32, 1u8), (500, 2), (700, 3), (1000, 4)] {
+    for (amp, want_tier, want_count) in [
+        (250u32, 1u8, 1usize),
+        (500, 2, 1),
+        (700, 3, 1),
+        (1000, 4, 2),
+    ] {
         let mut engine = ArousalEngine::new(CharacterProfile::default());
         engine.apply_item(vibrator(amp));
         let obs = run_engine(&mut engine, 200 * 60);
-        assert_eq!(obs.culminations.len(), 1, "amp {amp}: one culmination");
+        assert_eq!(
+            obs.culminations.len(),
+            want_count,
+            "amp {amp}: {want_count} culmination(s) (D-275)"
+        );
         assert_eq!(
             obs.culminations[0].1, want_tier,
             "amp {amp}: tier {want_tier}"
@@ -694,7 +735,15 @@ fn trajectory_determinism_36000_mixed() {
 // run-twice stable (2026-10-28); the primo mirror
 // reproduction is a named follow-on in
 // REALISM-OPT.md, not claimed here.
-const GOLDEN_TRAJECTORY_HASH: u64 = 9_799_619_064_544_636_570;
+// D-275 re-pin (2026-10-28): the mixed stream's
+// device stays applied through every latch, so the
+// canonical record's latched-phase charge values now
+// leak instead of integrating — the hash moved from
+// the first post-fire tick onward, by the latch
+// freeze alone. Determinism (run A == run B above)
+// is untouched. New value measured on the sandbox,
+// run-twice stable.
+const GOLDEN_TRAJECTORY_HASH: u64 = 1_905_784_555_486_641_290;
 
 // ------------------------------------------------------------------ §6 effects
 

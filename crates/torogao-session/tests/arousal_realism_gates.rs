@@ -1275,16 +1275,18 @@ struct SixOutcome {
     hash: u64,
 }
 
-/// One run of the union script: two episodes with a
-/// full rest between, the R-G10 shape widened. The
-/// episode-2 wait is harness plumbing, uniform for
-/// all six: the script is re-applied only once the
-/// refractory has fully elapsed with inputs off —
-/// two profiles' refractory durations exceed the
-/// window in which a no-input rest leaves Q < 150
-/// while the phase clock is still running, and with
-/// input applied during that wait Q saturates and
-/// re-arm becomes unreachable (filed gap, D-273).
+/// One run of the union script: two episodes under
+/// SUSTAINED input, the R-G10 shape widened. The
+/// script is never lifted between episodes: it rides
+/// through Afterglow and Refractory, and episode 2
+/// begins at the re-arm the D-275 latch law makes
+/// reachable (charge frozen while latched, so Q
+/// leaks below the §5.6 floor with the scene still
+/// running). The D-273 harness waited the refractory
+/// out with inputs off because the pre-fix engine
+/// wedged under sustained input (GAP-D273-5); that
+/// plumbing is retired — R-G14 below is the
+/// regression gate for the wedge itself.
 fn run_six_script(profile: CharacterProfile) -> SixOutcome {
     let mut engine = ArousalEngine::new(profile);
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
@@ -1321,29 +1323,10 @@ fn run_six_script(profile: CharacterProfile) -> SixOutcome {
     let arc1 = engine.vector().arc_affinity;
     let (mut s_at_rearm, mut ttc2, mut p2) = (None, None, None);
     if fire1.is_some() {
-        // Rest: everything off until Q < 150.
-        engine.remove_item("vibe");
-        engine.remove_item("plug");
-        engine.clear_activities();
-        let mut guard = 0u64;
-        while engine.vector().pleasure_charge >= 150 {
-            engine.step(&NONE);
-            fold_tick(&mut hash, &engine);
-            guard += 1;
-            assert!(guard < 900 * 60, "rest completes");
-        }
-        // Wait out the refractory with inputs off (see
-        // the fn comment), then re-apply the script.
-        let mut guard = 0u64;
-        while !(engine.vector().phase == Phase::Refractory
-            && engine.vector().phase_ticks >= 600 * 60)
-        {
-            engine.step(&NONE);
-            fold_tick(&mut hash, &engine);
-            guard += 1;
-            assert!(guard < 1800 * 60, "the refractory elapses");
-        }
-        apply_six_script(&mut engine);
+        // Episode 2 under sustained input (D-275):
+        // the script stays applied through the latch;
+        // re-arm fires when the frozen charge leaks
+        // below the §5.6 floor.
         let mut rearm_tick = None;
         for _ in 0..600 * 60 {
             let input = six_touch(&engine);
@@ -1479,5 +1462,97 @@ fn r_g13_six_profile_distinctness() {
     assert!(get("Alma").lactation_coupled);
     for name in ["Prima", "Yui", "Sloane", "Lux", "Piper"] {
         assert!(!get(name).lactation_coupled, "{name} has no side channel");
+    }
+}
+
+// ---------------------------------------------------------------- R-G14
+//
+// D-275 regression gate for GAP-D273-5. Pre-fix,
+// charge integrated through Afterglow and Refractory,
+// so under SUSTAINED input Q saturated at or above
+// the §5.6 re-arm floor (Q < 150) and re-arm never
+// fired: the engine wedged in Refractory and no
+// profile could culminate twice while the scene kept
+// running. The D-275 law freezes charge integration
+// while latched — dose still feeds the dose/peak
+// machinery, but Q only leaks — so the floor is
+// always reached and re-arm fires. This gate drives
+// the union script CONTINUOUSLY (never lifted, no
+// rest, no inputs-off wait) and requires, for every
+// profile: culmination 1, a Rearmed event for
+// episode 2, and an episode-2 culmination.
+
+struct SustainedOutcome {
+    ttc1: Option<u64>,
+    rearm_tick: Option<u64>,
+    ttc2: Option<u64>,
+    p2: Option<u32>,
+}
+
+fn run_sustained(profile: CharacterProfile) -> SustainedOutcome {
+    let mut engine = ArousalEngine::new(profile);
+    apply_six_script(&mut engine);
+    let start = engine.tick();
+    let (mut fire1, mut rearm, mut fire2, mut p2) = (None, None, None, None);
+    for _ in 0..2400 * 60 {
+        let input = six_touch(&engine);
+        let out = engine.step(&input);
+        for e in &out.events {
+            match e {
+                ArousalEvent::Culmination { episode, .. } if *episode == 1 && fire1.is_none() => {
+                    fire1 = Some(engine.tick() - start);
+                }
+                ArousalEvent::Rearmed { episode } if *episode == 2 && rearm.is_none() => {
+                    rearm = Some(engine.tick() - start);
+                }
+                ArousalEvent::Culmination {
+                    episode,
+                    p_permille,
+                    ..
+                } if *episode == 2 && fire2.is_none() => {
+                    fire2 = Some(engine.tick() - start);
+                    p2 = Some(*p_permille);
+                }
+                _ => {}
+            }
+        }
+        if fire2.is_some() {
+            break;
+        }
+    }
+    SustainedOutcome {
+        ttc1: fire1,
+        rearm_tick: rearm,
+        ttc2: rearm.zip(fire2).map(|(r, f)| f - r),
+        p2,
+    }
+}
+
+#[test]
+fn r_g14_sustained_input_rearm() {
+    let outcomes = [
+        ("Prima", run_sustained(prima_profile())),
+        ("Yui", run_sustained(yui_profile())),
+        ("Alma", run_sustained(alma_profile())),
+        ("Sloane", run_sustained(sloane_profile())),
+        ("Lux", run_sustained(lux_profile())),
+        ("Piper", run_sustained(piper_profile())),
+    ];
+    for (name, o) in &outcomes {
+        println!(
+            "{name}: ttc1 {:?}, rearm at {:?}, ttc2 {:?}, P2 {:?}",
+            o.ttc1, o.rearm_tick, o.ttc2, o.p2
+        );
+    }
+    for (name, o) in &outcomes {
+        assert!(o.ttc1.is_some(), "{name} culminates under sustained input");
+        assert!(
+            o.rearm_tick.is_some(),
+            "{name} re-arms under sustained input (GAP-D273-5)"
+        );
+        assert!(
+            o.ttc2.is_some(),
+            "{name} culminates a second time under sustained input"
+        );
     }
 }

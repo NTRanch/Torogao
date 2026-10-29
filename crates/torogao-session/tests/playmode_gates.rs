@@ -48,8 +48,21 @@ use torogao_session::{ArousalHost, Phase};
 /// governor changes the scripted session's capped
 /// touch strengths under Hold, and the cue stream
 /// follows the engine stream it is derived from.
-const GOLDEN_TRAJECTORY_HASH: u64 = 8347674612293529876;
-const GOLDEN_CUE_HASH: u64 = 3856369611957099866;
+/// D-275 re-pin (2026-10-28): the canonical session
+/// culminates with the device still applied and runs
+/// uninterrupted through Afterglow → Refractory, so
+/// the trajectory's latched-phase charge values now
+/// leak instead of integrating (charge frozen while
+/// latched) and the trajectory hash moved from the
+/// first afterglow tick onward, by the latch freeze
+/// alone. The cue golden moved with it: the cue
+/// track folds engine-stream values (the D-237
+/// re-baseline above records the same dependency),
+/// so the latched-phase charge change propagates
+/// into the cue records. New values measured on the
+/// sandbox, run-twice stable.
+const GOLDEN_TRAJECTORY_HASH: u64 = 10989038124597558032;
+const GOLDEN_CUE_HASH: u64 = 10195872129422069001;
 
 const AREAS: [&str; 3] = ["body.lower", "fixture.seat", "floor.pool"];
 
