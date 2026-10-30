@@ -7,7 +7,18 @@
 //!
 //! Orientation: INP space is y-down, lumen model space is
 //! y-up. All baked positions flip y; rotation angles flip
-//! sign. The model document is a lumen-rig model — the
+//! sign.
+//!
+//! Mesh keyform lattices run to four axes (the lumen SPEC
+//! section 3.7 extension), and a mesh form carries an
+//! absolute `opacity` when an INP opacity binding drives
+//! the mesh — the D-4 E1 gaze/blush extension: iris meshes
+//! take the gaze pair as their third and fourth axes, and
+//! blush meshes take the cheek parameter as an opacity
+//! lattice. Deformer lattices keep the two-axis shape
+//! their form builders have always emitted.
+//!
+//! The model document is a lumen-rig model — the
 //! format is lumen-rig-core's SPEC — so it carries lumen's
 //! format token (`lumen-rig-model`): the one-token law
 //! (Pax ruling 2026-10-29, superseding RP1-D1 for this
@@ -355,7 +366,7 @@ impl<'a> RigExporter<'a> {
     }
 
     // ------------------------------------------------ lattices
-    fn collect_axes(&self, bindings: &[BindingRef]) -> Result<Vec<AxisSrc>, String> {
+    fn collect_axes(&self, bindings: &[BindingRef], max_axes: usize) -> Result<Vec<AxisSrc>, String> {
         let mut axes: Vec<AxisSrc> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
         for &(param_idx, _) in bindings {
@@ -382,9 +393,9 @@ impl<'a> RigExporter<'a> {
         if axes.is_empty() {
             return Err("no usable parameter axes".to_string());
         }
-        if axes.len() > 2 {
+        if axes.len() > max_axes {
             return Err(format!(
-                "bindings span {} parameter axes; a lumen lattice has at most 2",
+                "bindings span {} parameter axes; this lattice has at most {max_axes}",
                 axes.len()
             ));
         }
@@ -431,14 +442,29 @@ impl<'a> RigExporter<'a> {
         i: usize,
         j: usize,
     ) -> (usize, usize) {
+        self.binding_grid(binding, axes, &[i, j])
+    }
+
+    /// The binding's own grid coordinates for one lattice
+    /// point: `combo` holds the point's index along each axis
+    /// of `axes`; a binding reads the axes belonging to its
+    /// parameter (x channel into `bx`, y channel into `by`)
+    /// and defaults the rest to zero. Works for any axis
+    /// count; the two-axis callers go through
+    /// `binding_indices`.
+    fn binding_grid(
+        &self,
+        binding: BindingRef,
+        axes: &[AxisSrc],
+        combo: &[usize],
+    ) -> (usize, usize) {
         let (mut bx, mut by) = (0usize, 0usize);
         for (ai, axis) in axes.iter().enumerate() {
-            let idx = if ai == 0 { i } else { j };
             if axis.param == binding.0 {
                 if axis.axis == 0 {
-                    bx = idx;
+                    bx = combo[ai];
                 } else {
-                    by = idx;
+                    by = combo[ai];
                 }
             }
         }
@@ -684,7 +710,7 @@ impl<'a> RigExporter<'a> {
             .chain(sy.iter())
             .copied()
             .collect();
-        let axes = match self.collect_axes(&all) {
+        let axes = match self.collect_axes(&all, 2) {
             Ok(axes) => axes,
             Err(reason) => {
                 for binding in &all {
@@ -836,7 +862,7 @@ impl<'a> RigExporter<'a> {
         let defs = self.deform_bindings_of(node_idx);
         let mut keyforms = Value::Null;
         if !defs.is_empty() {
-            match self.collect_axes(&defs) {
+            match self.collect_axes(&defs, 2) {
                 Err(reason) => {
                     for binding in &defs {
                         self.consumed.insert(*binding);
@@ -1176,58 +1202,83 @@ impl<'a> RigExporter<'a> {
                 model_mesh["clipping_mask_ids"] = Value::Array(mask_ids);
             }
 
-            // Keyforms from deformation bindings.
+            // Keyforms from deformation bindings, plus any
+            // opacity bindings: the D-4 E1 extension lets a
+            // mesh lattice run to four axes, and a form carries
+            // an absolute `opacity` when an opacity binding
+            // drives the mesh (the blush channel). Opacity
+            // bindings multiply the mesh's static opacity,
+            // exactly as the INP engine multiplies them.
             let node_idx = self.walk.nodes[walk_idx].node;
             let defs = self.deform_bindings_of(node_idx);
-            if !defs.is_empty() {
-                match self.collect_axes(&defs) {
+            let opacity_bindings = self.channel_bindings(node_idx, "opacity");
+            if !defs.is_empty() || !opacity_bindings.is_empty() {
+                let all: Vec<BindingRef> = defs
+                    .iter()
+                    .chain(opacity_bindings.iter())
+                    .copied()
+                    .collect();
+                match self.collect_axes(&all, 4) {
                     Err(reason) => {
-                        for binding in &defs {
+                        for binding in &all {
                             self.consumed.insert(*binding);
                             let construct = self.binding_construct(*binding);
                             self.note(
                                 "dropped",
                                 construct,
-                                format!("mesh deformation cannot form a lumen lattice: {reason}"),
+                                format!("mesh keyforms cannot form a lumen lattice: {reason}"),
                             );
                         }
                     }
                     Ok(axes) => {
-                        let nx = axes[0].keys.len();
-                        let ny = if axes.len() > 1 {
-                            axes[1].keys.len()
-                        } else {
-                            1
-                        };
-                        let mut forms = Vec::new();
-                        for i in 0..nx {
-                            for j in 0..ny {
-                                let mut verts = Vec::new();
-                                for (vi, vertex) in mesh.vertices.iter().enumerate() {
-                                    let mut point =
-                                        self.walk.to_world(walk_idx, *vertex, mesh.origin);
-                                    for binding in &defs {
-                                        let (bx, by) = self.binding_indices(*binding, &axes, i, j);
-                                        let delta = self.walk.delta_to_world(
-                                            walk_idx,
-                                            self.deform_offset_at(*binding, bx, by, vi),
-                                        );
-                                        point[0] += delta[0];
-                                        point[1] += delta[1];
-                                    }
-                                    verts.push(jv2f(point));
+                        let counts: Vec<usize> =
+                            axes.iter().map(|axis| axis.keys.len()).collect();
+                        let total: usize = counts.iter().product();
+                        let mut forms = Vec::with_capacity(total);
+                        let mut combo = vec![0usize; axes.len()];
+                        for _ in 0..total {
+                            let mut verts = Vec::new();
+                            for (vi, vertex) in mesh.vertices.iter().enumerate() {
+                                let mut point =
+                                    self.walk.to_world(walk_idx, *vertex, mesh.origin);
+                                for binding in &defs {
+                                    let (bx, by) = self.binding_grid(*binding, &axes, &combo);
+                                    let delta = self.walk.delta_to_world(
+                                        walk_idx,
+                                        self.deform_offset_at(*binding, bx, by, vi),
+                                    );
+                                    point[0] += delta[0];
+                                    point[1] += delta[1];
                                 }
-                                let mut at = vec![Value::from(i as u64)];
-                                if axes.len() > 1 {
-                                    at.push(Value::from(j as u64));
+                                verts.push(jv2f(point));
+                            }
+                            let at: Vec<Value> =
+                                combo.iter().map(|index| Value::from(*index as u64)).collect();
+                            let mut form = serde_json::json!({
+                                "at": at,
+                                "vertices": verts,
+                            });
+                            if !opacity_bindings.is_empty() {
+                                let mut form_opacity = opacity;
+                                for binding in &opacity_bindings {
+                                    let (bx, by) = self.binding_grid(*binding, &axes, &combo);
+                                    form_opacity *= self.value_at(*binding, bx, by);
                                 }
-                                forms.push(serde_json::json!({
-                                    "at": at,
-                                    "vertices": verts,
-                                }));
+                                form["opacity"] = jv(form_opacity);
+                            }
+                            forms.push(form);
+                            // Odometer: the last axis runs
+                            // fastest, keeping forms in the
+                            // canonical ascending order.
+                            for axis in (0..combo.len()).rev() {
+                                combo[axis] += 1;
+                                if combo[axis] < counts[axis] {
+                                    break;
+                                }
+                                combo[axis] = 0;
                             }
                         }
-                        for binding in &defs {
+                        for binding in &all {
                             self.consumed.insert(*binding);
                         }
                         model_mesh["keyforms"] = self.lattice_json(&axes, forms);
@@ -2551,6 +2602,215 @@ mod tests {
         // token — never torogao's native token.
         assert_eq!(LUMEN_MODEL_FORMAT_TOKEN, "lumen-rig-model");
         assert_ne!(LUMEN_MODEL_FORMAT_TOKEN, torogao_format::MODEL_FORMAT_TOKEN);
+    }
+
+    /// The D-4 E1 shapes end to end at the exporter: an
+    /// iris mesh whose deform bindings span three axes
+    /// (roll + the gaze pair) exports a three-axis lattice,
+    /// and a blush mesh whose only binding is an opacity
+    /// binding exports a one-axis lattice whose forms carry
+    /// absolute opacity.
+    #[test]
+    fn e1_gaze_and_cheek_bindings_export_as_extended_lattices() {
+        // The gaze grid is authored in the [0, 1] encoding
+        // (mapped positions 0 / 0.5 / 1 = gaze -1 / 0 / +1).
+        let gaze_cell = |mx: f64, my: f64| {
+            let offset = [(2.0 * mx - 1.0) * 5.5, -(2.0 * my - 1.0) * 5.8];
+            serde_json::json!([offset, offset, offset, offset])
+        };
+        let mut gaze_values = Vec::new();
+        let mut gaze_set = Vec::new();
+        for mx in [0.0, 0.5, 1.0] {
+            let mut row = Vec::new();
+            let mut set_row = Vec::new();
+            for my in [0.0, 0.5, 1.0] {
+                row.push(gaze_cell(mx, my));
+                set_row.push(serde_json::json!(true));
+            }
+            gaze_values.push(serde_json::json!(row));
+            gaze_set.push(serde_json::json!(set_row));
+        }
+        let part = |uuid: u32, name: &str, trans: [f64; 3], texture: u64| {
+            serde_json::json!({
+                "blend_mode": "Normal",
+                "emissionStrength": 1.0,
+                "enabled": true,
+                "lockToRoot": false,
+                "mask_threshold": 0.5,
+                "mesh": {
+                    "indices": [0, 1, 2, 2, 1, 3],
+                    "origin": [0, 0],
+                    "uvs": [0, 0, 1, 0, 0, 1, 1, 1],
+                    "verts": [-5.5, -5.5, 5.5, -5.5, -5.5, 5.5, 5.5, 5.5]
+                },
+                "name": name,
+                "opacity": 1.0,
+                "screenTint": [0, 0, 0],
+                "textures": [texture, 4294967295u64, 4294967295u64],
+                "tint": [1, 1, 1],
+                "transform": {"rot": [0, 0, 0], "scale": [1, 1], "trans": trans},
+                "type": "Part",
+                "uuid": uuid,
+                "zsort": 0.1
+            })
+        };
+        let payload = serde_json::json!({
+            "animations": {},
+            "meta": {"name": "E1Test", "rigger": "test", "version": "INP 0.8"},
+            "nodes": {
+                "children": [{
+                    "children": [
+                        part(3001, "IrisL", [-20.0, -8.0, 0.0], 0),
+                        part(3301, "BlushL", [-27.0, 8.0, 0.0], 1)
+                    ],
+                    "enabled": true,
+                    "lockToRoot": false,
+                    "name": "HeadAnchor",
+                    "transform": {"rot": [0, 0, 0], "scale": [1, 1], "trans": [0, -135, 0]},
+                    "type": "Node",
+                    "uuid": 1020,
+                    "zsort": 0
+                }],
+                "enabled": true,
+                "lockToRoot": false,
+                "name": "Root",
+                "transform": {"rot": [0, 0, 0], "scale": [1, 1], "trans": [0, 0, 0]},
+                "type": "Node",
+                "uuid": 1001,
+                "zsort": 0
+            },
+            "param": [
+                {
+                    "axis_points": [[0, 1], [0]],
+                    "bindings": [{
+                        "isSet": [[true], [true]],
+                        "node": 3001,
+                        "param_name": "deform",
+                        "values": [
+                            [[[0, 0], [0, 0], [0, 0], [0, 0]]],
+                            [[[0, -5.8], [0, -5.8], [0, -5.8], [0, -5.8]]]
+                        ]
+                    }],
+                    "defaults": [0, 0],
+                    "is_vec2": false,
+                    "max": [1, 0],
+                    "min": [0, 0],
+                    "name": "ParamEyeRoll",
+                    "uuid": 2101
+                },
+                {
+                    "axis_points": [[0, 0.5, 1], [0, 0.5, 1]],
+                    "bindings": [{
+                        "isSet": gaze_set,
+                        "node": 3001,
+                        "param_name": "deform",
+                        "values": gaze_values
+                    }],
+                    "defaults": [0.5, 0.5],
+                    "is_vec2": true,
+                    "max": [1, 1],
+                    "min": [0, 0],
+                    "name": "ParamGaze",
+                    "uuid": 2201
+                },
+                {
+                    "axis_points": [[0, 0.5, 1], [0]],
+                    "bindings": [{
+                        "isSet": [[true], [true], [true]],
+                        "node": 3301,
+                        "param_name": "opacity",
+                        "values": [[0.0], [0.5], [1.0]]
+                    }],
+                    "defaults": [0, 0],
+                    "is_vec2": false,
+                    "max": [1, 0],
+                    "min": [0, 0],
+                    "name": "ParamCheek",
+                    "uuid": 2203
+                }
+            ],
+            "physics": {"gravity": 9.8, "pixelsPerMeter": 100}
+        });
+        // Load through the real container path (the same
+        // one the CLI and the probe example use).
+        let payload_bytes = serde_json::to_vec(&payload).expect("payload serializes");
+        let slots = vec![
+            torogao_format::container::TextureSlot {
+                tag: 0,
+                data: vec![0x89, b'P', b'N', b'G'],
+            },
+            torogao_format::container::TextureSlot {
+                tag: 0,
+                data: vec![0x89, b'P', b'N', b'G'],
+            },
+        ];
+        let bytes = torogao_format::container::build_inp(&payload_bytes, &slots, &[]);
+        let inp = torogao_format::container::read_inp(&bytes).expect("container reads");
+        let doc = torogao_format::payload::decode_payload(&inp.payload)
+            .expect("payload decodes");
+        let mut puppet = Puppet::load(&doc, &inp).expect("test puppet loads");
+        let mut walk = Walk::build(&mut puppet);
+        let result = RigExporter::run(&puppet, &mut walk, 2).expect("export succeeds");
+
+        let param_ids: Vec<&str> = result.model["parameters"]
+            .as_array()
+            .expect("parameters")
+            .iter()
+            .filter_map(|param| param["id"].as_str())
+            .collect();
+        assert!(param_ids.contains(&"ParamGaze_2201_x"), "{param_ids:?}");
+        assert!(param_ids.contains(&"ParamGaze_2201_y"), "{param_ids:?}");
+        assert!(param_ids.contains(&"ParamCheek_2203_x"), "{param_ids:?}");
+
+        let meshes = result.model["meshes"].as_array().expect("meshes");
+        let iris = meshes
+            .iter()
+            .find(|mesh| mesh["id"] == "mesh_IrisL_3001")
+            .expect("iris mesh");
+        let iris_forms = iris["keyforms"]["forms"].as_array().expect("iris forms");
+        assert_eq!(
+            iris["keyforms"]["axes"],
+            serde_json::json!(["ParamEyeRoll_2101_x", "ParamGaze_2201_x", "ParamGaze_2201_y"])
+        );
+        assert_eq!(iris_forms.len(), 18);
+        // Roll 0, gaze (+1, +1): the base world vertex plus
+        // the gaze delta, y flipped into lumen space.
+        let gazed = iris_forms
+            .iter()
+            .find(|form| form["at"] == serde_json::json!([0, 2, 2]))
+            .expect("gaze corner form");
+        assert_eq!(
+            gazed["vertices"][0],
+            serde_json::json!([-20.0, f64::from(154.3f32)])
+        );
+        // No opacity binding drives the iris: forms carry
+        // no opacity field.
+        assert!(gazed.get("opacity").is_none());
+
+        let blush = meshes
+            .iter()
+            .find(|mesh| mesh["id"] == "mesh_BlushL_3301")
+            .expect("blush mesh");
+        assert_eq!(
+            blush["keyforms"]["axes"],
+            serde_json::json!(["ParamCheek_2203_x"])
+        );
+        let blush_forms = blush["keyforms"]["forms"].as_array().expect("blush forms");
+        assert_eq!(blush_forms.len(), 3);
+        assert_eq!(blush_forms[0]["opacity"], serde_json::json!(0.0));
+        assert_eq!(blush_forms[1]["opacity"], serde_json::json!(0.5));
+        assert_eq!(blush_forms[2]["opacity"], serde_json::json!(1.0));
+
+        for entry in &result.entries {
+            assert!(
+                !(entry.verdict == "dropped"
+                    && (entry.construct.contains("ParamGaze")
+                        || entry.construct.contains("ParamCheek"))),
+                "E1 binding dropped: {} — {}",
+                entry.construct,
+                entry.detail
+            );
+        }
     }
 
     #[test]

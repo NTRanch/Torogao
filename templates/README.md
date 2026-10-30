@@ -37,8 +37,11 @@ Two kinds of document share the format:
 ## The v1 set
 
 - `base-humanoid` — body/head angle parameters, breath,
-  eye/brow parameters, and the three mouth parameters the
-  viseme contract maps onto (see `contracts/`). Anchors:
+  eye/brow parameters, the gaze pair (`ParamGaze`, driving
+  the IrisL/IrisR parts) and the blush parameter
+  (`ParamCheek`, driving the BlushL/BlushR parts' opacity)
+  from the D-4 E1 extension, and the three mouth parameters
+  the viseme contract maps onto (see `contracts/`). Anchors:
   `HairAnchor`, `BreastAnchor`, `SkirtAnchor`. Geometry is
   nominal placeholder quads; rig real artwork over the same
   node names.
