@@ -366,7 +366,11 @@ impl<'a> RigExporter<'a> {
     }
 
     // ------------------------------------------------ lattices
-    fn collect_axes(&self, bindings: &[BindingRef], max_axes: usize) -> Result<Vec<AxisSrc>, String> {
+    fn collect_axes(
+        &self,
+        bindings: &[BindingRef],
+        max_axes: usize,
+    ) -> Result<Vec<AxisSrc>, String> {
         let mut axes: Vec<AxisSrc> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
         for &(param_idx, _) in bindings {
@@ -1231,16 +1235,14 @@ impl<'a> RigExporter<'a> {
                         }
                     }
                     Ok(axes) => {
-                        let counts: Vec<usize> =
-                            axes.iter().map(|axis| axis.keys.len()).collect();
+                        let counts: Vec<usize> = axes.iter().map(|axis| axis.keys.len()).collect();
                         let total: usize = counts.iter().product();
                         let mut forms = Vec::with_capacity(total);
                         let mut combo = vec![0usize; axes.len()];
                         for _ in 0..total {
                             let mut verts = Vec::new();
                             for (vi, vertex) in mesh.vertices.iter().enumerate() {
-                                let mut point =
-                                    self.walk.to_world(walk_idx, *vertex, mesh.origin);
+                                let mut point = self.walk.to_world(walk_idx, *vertex, mesh.origin);
                                 for binding in &defs {
                                     let (bx, by) = self.binding_grid(*binding, &axes, &combo);
                                     let delta = self.walk.delta_to_world(
@@ -1252,8 +1254,10 @@ impl<'a> RigExporter<'a> {
                                 }
                                 verts.push(jv2f(point));
                             }
-                            let at: Vec<Value> =
-                                combo.iter().map(|index| Value::from(*index as u64)).collect();
+                            let at: Vec<Value> = combo
+                                .iter()
+                                .map(|index| Value::from(*index as u64))
+                                .collect();
                             let mut form = serde_json::json!({
                                 "at": at,
                                 "vertices": verts,
@@ -2746,8 +2750,7 @@ mod tests {
         ];
         let bytes = torogao_format::container::build_inp(&payload_bytes, &slots, &[]);
         let inp = torogao_format::container::read_inp(&bytes).expect("container reads");
-        let doc = torogao_format::payload::decode_payload(&inp.payload)
-            .expect("payload decodes");
+        let doc = torogao_format::payload::decode_payload(&inp.payload).expect("payload decodes");
         let mut puppet = Puppet::load(&doc, &inp).expect("test puppet loads");
         let mut walk = Walk::build(&mut puppet);
         let result = RigExporter::run(&puppet, &mut walk, 2).expect("export succeeds");
@@ -2770,7 +2773,11 @@ mod tests {
         let iris_forms = iris["keyforms"]["forms"].as_array().expect("iris forms");
         assert_eq!(
             iris["keyforms"]["axes"],
-            serde_json::json!(["ParamEyeRoll_2101_x", "ParamGaze_2201_x", "ParamGaze_2201_y"])
+            serde_json::json!([
+                "ParamEyeRoll_2101_x",
+                "ParamGaze_2201_x",
+                "ParamGaze_2201_y"
+            ])
         );
         assert_eq!(iris_forms.len(), 18);
         // Roll 0, gaze (+1, +1): the base world vertex plus
