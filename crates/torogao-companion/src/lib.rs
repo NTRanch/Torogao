@@ -22,8 +22,15 @@
 //! live state and is shared by both presentations; there
 //! is no companion-private scene or player. The companion
 //! ships no audio code path at all (Gate G8).
+//!
+//! Stage 2.2 adds the culmination presentation
+//! (`culmination`): the arousal engine's culmination
+//! events played as rig curves, descriptors, and face
+//! segment markers from the torogao-culmination/1
+//! performance package.
 
 pub mod core;
+pub mod culmination;
 pub mod error;
 pub mod fallback;
 pub mod menu;
