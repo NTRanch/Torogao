@@ -10,7 +10,7 @@ use crate::extdoc::{ExtView, expression_missing, tracking_coverage, validate_ext
 use crate::packs::{pack_str, pack_tracking_set};
 use crate::paths::find_data_file;
 use crate::preview::{PreviewOptions, run_physics_preview};
-use crate::rigexport::RigExporter;
+use crate::rigexport::{LUMEN_MODEL_FORMAT_TOKEN, RigExporter};
 use crate::util::{fmt_g, jget};
 use crate::walk::Walk;
 use crate::wav::sha256_hex;
@@ -151,17 +151,18 @@ fn expression_evidence(ext: &ExtView, pack: &Value) -> (Vec<String>, bool) {
 }
 
 fn export_evidence(puppet: &Puppet, walk: &mut Walk, slot_count: usize) -> (Vec<String>, bool) {
-    // RP1-D1: the port's exporter emits the "torogao-rig-model"
-    // token; the check tests for the port token and names it.
+    // The bridge exporter emits the lumen token
+    // ("lumen-rig-model", the one-token law); the check
+    // tests for the lumen token and names it.
     match RigExporter::run(puppet, walk, slot_count) {
         Ok(result) => {
             let fmt = jget(&result.model, "format");
-            let ok = fmt.as_str() == Some(torogao_format::MODEL_FORMAT_TOKEN);
+            let ok = fmt.as_str() == Some(LUMEN_MODEL_FORMAT_TOKEN);
             (
                 vec![format!(
                     "export built a {} model ({} conversion entries)",
                     if ok {
-                        torogao_format::MODEL_FORMAT_TOKEN
+                        LUMEN_MODEL_FORMAT_TOKEN
                     } else {
                         "unexpected"
                     },

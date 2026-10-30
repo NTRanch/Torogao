@@ -7,11 +7,15 @@
 //!
 //! Orientation: INP space is y-down, lumen model space is
 //! y-up. All baked positions flip y; rotation angles flip
-//! sign. Under ruling RP1-D1, writers emit the current
-//! format token only: the model document carries
-//! `torogao-rig-model` (the reference writes its
-//! predecessor token; that one field is the pre-authorized
-//! difference between the two exporters).
+//! sign. The model document is a lumen-rig model — the
+//! format is lumen-rig-core's SPEC — so it carries lumen's
+//! format token (`lumen-rig-model`): the one-token law
+//! (Pax ruling 2026-10-29, superseding RP1-D1 for this
+//! bridge). Torogao's native token
+//! (`torogao_format::MODEL_FORMAT_TOKEN`) governs
+//! torogao-authored model files, not bridge exports; the
+//! reference exporter writes the lumen token too, so the
+//! two exporters agree on this field.
 
 use crate::extdoc::ExtView;
 use crate::handlers::{ToolLoad, join_path, stamp_doc};
@@ -22,7 +26,36 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use torogao_engine::param::BindingValues;
 use torogao_engine::{Node, Puppet, Vec2};
-use torogao_format::MODEL_FORMAT_TOKEN;
+
+/// The format token the exported model document carries:
+/// `lumen-rig-model`. This module is the INP -> lumen
+/// bridge and the format is lumen-rig-core's SPEC, so the
+/// export conforms to lumen's token (the one-token law);
+/// torogao's native token stays with torogao-authored
+/// model files. The motion documents this exporter emits
+/// likewise carry lumen's `lumen-rig-motion` token.
+pub const LUMEN_MODEL_FORMAT_TOKEN: &str = "lumen-rig-model";
+
+/// The smallest scale component a lumen rotation keyform
+/// may carry. SPEC section 3.4 requires sx, sy > 0
+/// (LRF-305), while INP encodes a part's "feature off"
+/// state as scale 0; non-positive keyform components
+/// export at this floor instead (see
+/// `keyform_scale_component`).
+const KEYFORM_SCALE_FLOOR: f32 = 1e-6;
+
+/// One rotation keyform scale component as lumen may
+/// carry it: positive components pass through unchanged;
+/// a non-positive component (INP's "feature off" states)
+/// exports at [`KEYFORM_SCALE_FLOOR`], because lumen
+/// requires sx, sy > 0 (SPEC section 3.4, LRF-305).
+fn keyform_scale_component(value: f32) -> f32 {
+    if value <= 0.0 {
+        KEYFORM_SCALE_FLOOR
+    } else {
+        value
+    }
+}
 
 /// How an export can fail: the conversion itself, or the
 /// file writes after it.
@@ -186,7 +219,7 @@ impl<'a> RigExporter<'a> {
         exporter.account_whole_constructs();
         let model = serde_json::json!({
             "deformers": deformers,
-            "format": MODEL_FORMAT_TOKEN,
+            "format": LUMEN_MODEL_FORMAT_TOKEN,
             "format_version": 1,
             "generator": "torogao-cli 0.1.0",
             "id": model_name,
@@ -683,6 +716,7 @@ impl<'a> RigExporter<'a> {
             1
         };
         let mut forms = Vec::new();
+        let mut floored_components = 0usize;
         for i in 0..nx {
             for j in 0..ny {
                 let mut angle = base_rz_deg;
@@ -699,6 +733,16 @@ impl<'a> RigExporter<'a> {
                     let (bx, by) = self.binding_indices(*binding, &axes, i, j);
                     scale_y *= self.value_at(*binding, bx, by);
                 }
+                let floored_x = keyform_scale_component(scale_x);
+                if floored_x != scale_x {
+                    floored_components += 1;
+                }
+                scale_x = floored_x;
+                let floored_y = keyform_scale_component(scale_y);
+                if floored_y != scale_y {
+                    floored_components += 1;
+                }
+                scale_y = floored_y;
                 let mut at = vec![Value::from(i as u64)];
                 if axes.len() > 1 {
                     at.push(Value::from(j as u64));
@@ -722,6 +766,18 @@ impl<'a> RigExporter<'a> {
             "node transform rotation/scale bindings become a lumen rotation deformer; angles are absolute world-space degrees (sign-flipped for the y-up space) and rest vertices are baked with the full rest transform, so runtime evaluation semantics differ from INP's local-transform composition"
                 .to_string(),
         );
+        if floored_components > 0 {
+            self.note(
+                "approximated",
+                format!(
+                    "rotation of node '{}' keyform scale",
+                    self.walk.path_of(self.puppet, walk_idx)
+                ),
+                format!(
+                    "{floored_components} keyform scale component(s) are non-positive in INP (its 'feature off' states); lumen requires sx, sy > 0 (SPEC section 3.4, LRF-305), so those components export at the 1e-6 floor"
+                ),
+            );
+        }
 
         let mut deformer = serde_json::json!({
             "base_angle_degrees": jv(base_rz_deg),
@@ -2486,5 +2542,29 @@ mod tests {
         let mut doc = valid_motion();
         doc["frames_per_second"] = serde_json::json!(0);
         assert!(validate_motion(&doc, &ranges(), &physics).is_err());
+    }
+
+    #[test]
+    fn exported_model_carries_the_lumen_token() {
+        // The one-token law: the bridge export is a
+        // lumen-rig model document, so it carries lumen's
+        // token — never torogao's native token.
+        assert_eq!(LUMEN_MODEL_FORMAT_TOKEN, "lumen-rig-model");
+        assert_ne!(LUMEN_MODEL_FORMAT_TOKEN, torogao_format::MODEL_FORMAT_TOKEN);
+    }
+
+    #[test]
+    fn keyform_scale_floor_repairs_feature_off_components() {
+        // INP's "feature off" states are scale 0; lumen
+        // requires sx, sy > 0 (LRF-305), so non-positive
+        // components export at the floor.
+        assert_eq!(keyform_scale_component(0.0), KEYFORM_SCALE_FLOOR);
+        assert_eq!(keyform_scale_component(-2.5), KEYFORM_SCALE_FLOOR);
+        assert_eq!(KEYFORM_SCALE_FLOOR, 1e-6);
+        // Positive components pass through unchanged,
+        // including small-but-positive ones.
+        assert_eq!(keyform_scale_component(0.5), 0.5);
+        assert_eq!(keyform_scale_component(1.0), 1.0);
+        assert_eq!(keyform_scale_component(2.0e-6), 2.0e-6);
     }
 }
