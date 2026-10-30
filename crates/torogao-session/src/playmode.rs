@@ -749,42 +749,222 @@ fn cue_table() -> Vec<CueDef> {
     let voice = "torori/voice/{character}/{class}/v{variant}";
     vec![
         // (a) character vocal lane — priority 0.
-        def("V-BREATH", CueTrigger::BreathContinuous, AssetKind::BreathBed, 0, "torori/breath/{character}/bed"),
+        def(
+            "V-BREATH",
+            CueTrigger::BreathContinuous,
+            AssetKind::BreathBed,
+            0,
+            "torori/breath/{character}/bed",
+        ),
         def("V-GASP", CueTrigger::Gasp, AssetKind::VoiceSet, 0, voice),
-        def("V-MOAN", CueTrigger::MoanOnPulse, AssetKind::VoiceSet, 0, voice),
-        def("V-EDGE", CueTrigger::EdgeOnPulse, AssetKind::VoiceSet, 0, voice),
+        def(
+            "V-MOAN",
+            CueTrigger::MoanOnPulse,
+            AssetKind::VoiceSet,
+            0,
+            voice,
+        ),
+        def(
+            "V-EDGE",
+            CueTrigger::EdgeOnPulse,
+            AssetKind::VoiceSet,
+            0,
+            voice,
+        ),
         def("V-CULM", CueTrigger::Latch, AssetKind::VoiceSet, 0, voice),
-        def("V-AFTER", CueTrigger::AfterglowCue, AssetKind::VoiceSet, 0, voice),
-        def("V-REFR", CueTrigger::DeliberateSilence, AssetKind::Silence, 0, ""),
-        def("V-TOUCH", CueTrigger::TouchInput, AssetKind::VoiceSet, 0, voice),
-        def("V-FLUID-REACT", CueTrigger::FaceFluidContact, AssetKind::VoiceSet, 0, voice),
+        def(
+            "V-AFTER",
+            CueTrigger::AfterglowCue,
+            AssetKind::VoiceSet,
+            0,
+            voice,
+        ),
+        def(
+            "V-REFR",
+            CueTrigger::DeliberateSilence,
+            AssetKind::Silence,
+            0,
+            "",
+        ),
+        def(
+            "V-TOUCH",
+            CueTrigger::TouchInput,
+            AssetKind::VoiceSet,
+            0,
+            voice,
+        ),
+        def(
+            "V-FLUID-REACT",
+            CueTrigger::FaceFluidContact,
+            AssetKind::VoiceSet,
+            0,
+            voice,
+        ),
         // (b) device — priority 2.
-        def("D-HUM", CueTrigger::HumContinuous, AssetKind::HumRender, 2, "torori/hum/device/{wave}"),
-        def("D-ON", CueTrigger::DeviceOn, AssetKind::SfxOneShot, 2, "torori/sfx/d-on/a0"),
-        def("D-OFF", CueTrigger::DeviceOff, AssetKind::SfxOneShot, 2, "torori/sfx/d-off/a0"),
-        def("D-SHIFT", CueTrigger::ContactShift, AssetKind::SfxOneShot, 2, "torori/sfx/d-shift/a0"),
-        def("D-RATTLE", CueTrigger::RattleOnPulse, AssetKind::SfxOneShot, 2, "torori/sfx/d-rattle/a0"),
+        def(
+            "D-HUM",
+            CueTrigger::HumContinuous,
+            AssetKind::HumRender,
+            2,
+            "torori/hum/device/{wave}",
+        ),
+        def(
+            "D-ON",
+            CueTrigger::DeviceOn,
+            AssetKind::SfxOneShot,
+            2,
+            "torori/sfx/d-on/a0",
+        ),
+        def(
+            "D-OFF",
+            CueTrigger::DeviceOff,
+            AssetKind::SfxOneShot,
+            2,
+            "torori/sfx/d-off/a0",
+        ),
+        def(
+            "D-SHIFT",
+            CueTrigger::ContactShift,
+            AssetKind::SfxOneShot,
+            2,
+            "torori/sfx/d-shift/a0",
+        ),
+        def(
+            "D-RATTLE",
+            CueTrigger::RattleOnPulse,
+            AssetKind::SfxOneShot,
+            2,
+            "torori/sfx/d-rattle/a0",
+        ),
         // (c) fluid — priority 1.
-        def("F-LEAK", CueTrigger::FirstLeak, AssetKind::SfxOneShot, 1, "torori/sfx/f-leak/a0"),
-        def("F-SPURT", CueTrigger::Burst, AssetKind::SfxOneShot, 1, "torori/sfx/f-spurt/a0"),
-        def("F-CULM-EJECT", CueTrigger::CulminationTrain, AssetKind::SfxOneShot, 1, "torori/sfx/f-culm-eject/a0"),
-        def("F-SPLAT-BODY", CueTrigger::DepositBody, AssetKind::SfxOneShot, 1, "torori/sfx/f-splat-body/a0"),
-        def("F-SPLAT-FIXTURE", CueTrigger::DepositFixture, AssetKind::SfxOneShot, 1, "torori/sfx/f-splat-fixture/a0"),
-        def("F-SPLAT-FLOOR", CueTrigger::DepositFloor, AssetKind::SfxOneShot, 1, "torori/sfx/f-splat-floor/a0"),
-        def("F-DRIP", CueTrigger::DripTransfer, AssetKind::SfxOneShot, 1, "torori/sfx/f-drip/a0"),
+        def(
+            "F-LEAK",
+            CueTrigger::FirstLeak,
+            AssetKind::SfxOneShot,
+            1,
+            "torori/sfx/f-leak/a0",
+        ),
+        def(
+            "F-SPURT",
+            CueTrigger::Burst,
+            AssetKind::SfxOneShot,
+            1,
+            "torori/sfx/f-spurt/a0",
+        ),
+        def(
+            "F-CULM-EJECT",
+            CueTrigger::CulminationTrain,
+            AssetKind::SfxOneShot,
+            1,
+            "torori/sfx/f-culm-eject/a0",
+        ),
+        def(
+            "F-SPLAT-BODY",
+            CueTrigger::DepositBody,
+            AssetKind::SfxOneShot,
+            1,
+            "torori/sfx/f-splat-body/a0",
+        ),
+        def(
+            "F-SPLAT-FIXTURE",
+            CueTrigger::DepositFixture,
+            AssetKind::SfxOneShot,
+            1,
+            "torori/sfx/f-splat-fixture/a0",
+        ),
+        def(
+            "F-SPLAT-FLOOR",
+            CueTrigger::DepositFloor,
+            AssetKind::SfxOneShot,
+            1,
+            "torori/sfx/f-splat-floor/a0",
+        ),
+        def(
+            "F-DRIP",
+            CueTrigger::DripTransfer,
+            AssetKind::SfxOneShot,
+            1,
+            "torori/sfx/f-drip/a0",
+        ),
         // (d) body / fixture / gear — priority 3.
-        def("B-CONTR", CueTrigger::PulseBody, AssetKind::SfxOneShot, 3, "torori/sfx/b-contr/a0"),
-        def("B-CREAK", CueTrigger::FixtureStrain, AssetKind::SfxOneShot, 3, "torori/sfx/b-creak/a0"),
-        def("B-CLAMP", CueTrigger::ClampOp, AssetKind::SfxOneShot, 3, "torori/sfx/b-clamp/a0"),
-        def("B-FABRIC", CueTrigger::ApparelTransition, AssetKind::SfxOneShot, 3, "torori/sfx/b-fabric/a0"),
-        def("B-TREMBLE", CueTrigger::TrembleContinuous, AssetKind::SfxOneShot, 3, "torori/sfx/b-tremble/loop"),
+        def(
+            "B-CONTR",
+            CueTrigger::PulseBody,
+            AssetKind::SfxOneShot,
+            3,
+            "torori/sfx/b-contr/a0",
+        ),
+        def(
+            "B-CREAK",
+            CueTrigger::FixtureStrain,
+            AssetKind::SfxOneShot,
+            3,
+            "torori/sfx/b-creak/a0",
+        ),
+        def(
+            "B-CLAMP",
+            CueTrigger::ClampOp,
+            AssetKind::SfxOneShot,
+            3,
+            "torori/sfx/b-clamp/a0",
+        ),
+        def(
+            "B-FABRIC",
+            CueTrigger::ApparelTransition,
+            AssetKind::SfxOneShot,
+            3,
+            "torori/sfx/b-fabric/a0",
+        ),
+        def(
+            "B-TREMBLE",
+            CueTrigger::TrembleContinuous,
+            AssetKind::SfxOneShot,
+            3,
+            "torori/sfx/b-tremble/loop",
+        ),
         // (e) room / UI — priority 4.
-        def("R-AMB", CueTrigger::AmbienceContinuous, AssetKind::AmbienceBed, 4, "torori/ambience/playroom-mode/bed"),
-        def("R-REC-START", CueTrigger::RecStart, AssetKind::SfxOneShot, 4, "torori/sfx/r-rec-start/a0"),
-        def("R-REC-STOP", CueTrigger::RecStop, AssetKind::SfxOneShot, 4, "torori/sfx/r-rec-stop/a0"),
-        def("U-CONFIRM", CueTrigger::OpAdmitted, AssetKind::UiOneShot, 4, "torori/ui/u-confirm/a0"),
-        def("U-DENY", CueTrigger::OpRefused, AssetKind::UiOneShot, 4, "torori/ui/u-deny/a0"),
-        def("U-RESET", CueTrigger::RemoveAllAct, AssetKind::UiOneShot, 4, "torori/ui/u-reset/a0"),
+        def(
+            "R-AMB",
+            CueTrigger::AmbienceContinuous,
+            AssetKind::AmbienceBed,
+            4,
+            "torori/ambience/playroom-mode/bed",
+        ),
+        def(
+            "R-REC-START",
+            CueTrigger::RecStart,
+            AssetKind::SfxOneShot,
+            4,
+            "torori/sfx/r-rec-start/a0",
+        ),
+        def(
+            "R-REC-STOP",
+            CueTrigger::RecStop,
+            AssetKind::SfxOneShot,
+            4,
+            "torori/sfx/r-rec-stop/a0",
+        ),
+        def(
+            "U-CONFIRM",
+            CueTrigger::OpAdmitted,
+            AssetKind::UiOneShot,
+            4,
+            "torori/ui/u-confirm/a0",
+        ),
+        def(
+            "U-DENY",
+            CueTrigger::OpRefused,
+            AssetKind::UiOneShot,
+            4,
+            "torori/ui/u-deny/a0",
+        ),
+        def(
+            "U-RESET",
+            CueTrigger::RemoveAllAct,
+            AssetKind::UiOneShot,
+            4,
+            "torori/ui/u-reset/a0",
+        ),
     ]
 }
 
@@ -978,8 +1158,7 @@ impl PulseGen {
                     ))
                 } else if a < 800 && q < 700 {
                     let rate = law.band2_rate_lo_millihz
-                        + (law.band2_rate_hi_millihz - law.band2_rate_lo_millihz) * (a - 550)
-                            / 250;
+                        + (law.band2_rate_hi_millihz - law.band2_rate_lo_millihz) * (a - 550) / 250;
                     Some((rate, law.band2_depth_base + law.band2_depth_span * q / 1000))
                 } else {
                     let rate = law.band3_rate_lo_millihz
@@ -1008,9 +1187,9 @@ impl PulseGen {
         // The second lobe of an earlier main lobe.
         if self.second_lobe_tick == Some(tick) {
             self.second_lobe_tick = None;
-            let depth =
-                (u64::from(self.second_lobe_depth) * u64::from(law.lobe_depth_scale_permille)
-                    / 1000) as u32;
+            let depth = (u64::from(self.second_lobe_depth)
+                * u64::from(law.lobe_depth_scale_permille)
+                / 1000) as u32;
             self.last_depth_permille = depth;
             self.event_count += 1;
             events.push(PulseEvent {
@@ -1314,8 +1493,10 @@ impl Ejection {
             let span = 2 * data.fan_half_angle_millideg;
             let offset = (draw % (span as u64 + 1)) as i64 - data.fan_half_angle_millideg;
             let angle = axis + offset;
-            let vx = div_round_signed((v0 as i128) * (sin_millideg(angle) as i128), 1_000_000) as i64;
-            let vy = div_round_signed((v0 as i128) * (cos_millideg(angle) as i128), 1_000_000) as i64;
+            let vx =
+                div_round_signed((v0 as i128) * (sin_millideg(angle) as i128), 1_000_000) as i64;
+            let vy =
+                div_round_signed((v0 as i128) * (cos_millideg(angle) as i128), 1_000_000) as i64;
             self.droplets.push(Droplet {
                 x_milli: 0,
                 y_milli: 0,
@@ -1427,8 +1608,8 @@ impl Ejection {
             .find(|s| s.area == from_area)
             .expect("wetness areas are the surface areas");
         let draw = splitmix_next(rng);
-        let x = (draw % ((2 * surface.half_width_milli) as u64 + 1)) as i64
-            - surface.half_width_milli;
+        let x =
+            (draw % ((2 * surface.half_width_milli) as u64 + 1)) as i64 - surface.half_width_milli;
         self.droplets.push(Droplet {
             x_milli: x,
             y_milli: surface.y_milli,
@@ -1447,7 +1628,11 @@ impl Ejection {
     /// §5.4) and resolves landings. Emitted droplets
     /// produce deposit events; drip droplets produce
     /// transfer events when they land on the area below.
-    fn step_droplets(&mut self, data: &EjectionData, tick: u64) -> (Vec<DepositEvent>, Vec<DripEvent>) {
+    fn step_droplets(
+        &mut self,
+        data: &EjectionData,
+        tick: u64,
+    ) -> (Vec<DepositEvent>, Vec<DripEvent>) {
         let mut deposits: Vec<DepositEvent> = Vec::new();
         let mut drips: Vec<DripEvent> = Vec::new();
         let mut alive: Vec<Droplet> = Vec::with_capacity(self.droplets.len());
@@ -1514,8 +1699,6 @@ impl Ejection {
         (deposits, drips)
     }
 }
-
-
 
 /// The wetness field (`wetness/1`, §6): per-area `w`,
 /// deposit, sheen/drip thresholds, volume-conserving
@@ -1659,7 +1842,8 @@ impl Wetness {
                 // The share leaves the field only when
                 // the droplet lands (transfer is atomic
                 // at landing); the droplet carries it.
-                let share = div_round((w as i128) * (data.drip_share_permille as i128), 1000) as i64;
+                let share =
+                    div_round((w as i128) * (data.drip_share_permille as i128), 1000) as i64;
                 ejection.spawn_drip(edata, &area, share, &mut self.rng);
             }
         }
@@ -1764,7 +1948,10 @@ pub struct CueRecord {
 impl CueRecord {
     /// The canonical cue-track line.
     pub fn line(&self) -> String {
-        format!("cue:{}:{}:{}:{}", self.tick, self.cue_id, self.asset_id, self.edge)
+        format!(
+            "cue:{}:{}:{}:{}",
+            self.tick, self.cue_id, self.asset_id, self.edge
+        )
     }
 }
 
@@ -2273,9 +2460,10 @@ impl PlaytimeMode {
     /// Take stop: finalises the take record (§8.3).
     pub fn stop_take(&mut self, host: &mut ArousalHost) -> R<TakeRecord> {
         let character = self.require_entered()?.to_string();
-        let take = self.take.take().ok_or_else(|| {
-            Refusal::new("TG-PM-STATE", "no take is recording")
-        })?;
+        let take = self
+            .take
+            .take()
+            .ok_or_else(|| Refusal::new("TG-PM-STATE", "no take is recording"))?;
         if self.rec_on {
             self.queue_cue("R-REC-STOP", "fire");
         }
@@ -2334,11 +2522,7 @@ impl PlaytimeMode {
     /// pulse generation at step 5 from the
     /// post-integration state, consumers (body cycle,
     /// ejection, wetness, cues) at step 6.
-    pub fn step(
-        &mut self,
-        host: &mut ArousalHost,
-        input: &ModeTickInput,
-    ) -> R<ModeOutput> {
+    pub fn step(&mut self, host: &mut ArousalHost, input: &ModeTickInput) -> R<ModeOutput> {
         let character = self.require_entered()?.to_string();
         let data = self.definition.character(&character)?.clone();
         // --- the governor (§3.3): caps input, never
@@ -2458,8 +2642,7 @@ impl PlaytimeMode {
             for (t, depth) in &self.recent_lobes {
                 let age = tick - t;
                 let shape = self.definition.pulse.lobe_duration_ticks - age;
-                excursion += u64::from(*depth) * shape
-                    / self.definition.pulse.lobe_duration_ticks;
+                excursion += u64::from(*depth) * shape / self.definition.pulse.lobe_duration_ticks;
             }
             let excursion = excursion.min(1000) as u32;
             BodyCycleMod {
@@ -2475,13 +2658,10 @@ impl PlaytimeMode {
                 >= self.definition.ejection.burst_threshold_permille
             {
                 let seq = self.pulse.main_count + bursts.len() as u64;
-                bursts.push(self.ejection.burst(
-                    &self.definition.ejection,
-                    v_ep,
-                    tick,
-                    *p,
-                    seq,
-                ));
+                bursts.push(
+                    self.ejection
+                        .burst(&self.definition.ejection, v_ep, tick, *p, seq),
+                );
             }
         }
         // The culmination train's final release, at the
@@ -2513,17 +2693,13 @@ impl PlaytimeMode {
                     + (edata.leak_rate_hi_per_s - edata.leak_rate_lo_per_s)
                         * (p - edata.leak_band_permille)
                         / (1000 - edata.leak_band_permille);
-                self.ejection.leak_acc_micro +=
-                    i64::from(rate) * MP / (TICKS_PER_SECOND as i64);
+                self.ejection.leak_acc_micro += i64::from(rate) * MP / (TICKS_PER_SECOND as i64);
                 while self.ejection.leak_acc_micro >= MP {
                     self.ejection.leak_acc_micro -= MP;
                     let seq = 1_000_000 + self.ejection.burst_count + u64::from(leak_droplets);
-                    let emitted = self.ejection.emit(
-                        edata,
-                        edata.leak_droplet_volume_micro,
-                        seq,
-                        1,
-                    );
+                    let emitted =
+                        self.ejection
+                            .emit(edata, edata.leak_droplet_volume_micro, seq, 1);
                     if emitted == 0 {
                         break;
                     }
@@ -2533,10 +2709,12 @@ impl PlaytimeMode {
             }
         }
         // Wetness drips spawn, then all droplets fly.
-        self.wetness
-            .step_drips(&self.definition.wetness, &mut self.ejection, &self.definition.ejection);
-        let (deposits, drip_events) =
-            self.ejection.step_droplets(&self.definition.ejection, tick);
+        self.wetness.step_drips(
+            &self.definition.wetness,
+            &mut self.ejection,
+            &self.definition.ejection,
+        );
+        let (deposits, drip_events) = self.ejection.step_droplets(&self.definition.ejection, tick);
         for d in &deposits {
             self.wetness
                 .deposit(&self.definition.wetness, &d.area, d.volume_micro);
@@ -2663,8 +2841,7 @@ impl PlaytimeMode {
                 let edging = if self.stage == Stage::Edging {
                     v.pleasure_charge >= 700
                 } else {
-                    v.pleasure_charge >= 800
-                        && (self.hold_engaged || self.edging_band_ticks >= 600)
+                    v.pleasure_charge >= 800 && (self.hold_engaged || self.edging_band_ticks >= 600)
                 };
                 self.stage = if edging {
                     Stage::Edging
@@ -2740,22 +2917,42 @@ impl PlaytimeMode {
         let breath_want = self.entered;
         if breath_want != self.cue_state.breath_on {
             self.cue_state.breath_on = breath_want;
-            fire(&mut records, "V-BREATH", if breath_want { "start" } else { "stop" }, self);
+            fire(
+                &mut records,
+                "V-BREATH",
+                if breath_want { "start" } else { "stop" },
+                self,
+            );
         }
         let amb_want = self.entered;
         if amb_want != self.cue_state.amb_on {
             self.cue_state.amb_on = amb_want;
-            fire(&mut records, "R-AMB", if amb_want { "start" } else { "stop" }, self);
+            fire(
+                &mut records,
+                "R-AMB",
+                if amb_want { "start" } else { "stop" },
+                self,
+            );
         }
         let hum_want = f.drive_strength > 0;
         if hum_want != self.cue_state.hum_on {
             self.cue_state.hum_on = hum_want;
-            fire(&mut records, "D-HUM", if hum_want { "start" } else { "stop" }, self);
+            fire(
+                &mut records,
+                "D-HUM",
+                if hum_want { "start" } else { "stop" },
+                self,
+            );
         }
         let tremble_want = f.tremble_milli_px > 0;
         if tremble_want != self.cue_state.tremble_on {
             self.cue_state.tremble_on = tremble_want;
-            fire(&mut records, "B-TREMBLE", if tremble_want { "start" } else { "stop" }, self);
+            fire(
+                &mut records,
+                "B-TREMBLE",
+                if tremble_want { "start" } else { "stop" },
+                self,
+            );
         }
         // Contact band edges (§9.2 D-SHIFT).
         let band = f.device_contact_quality / 250;
@@ -2883,7 +3080,13 @@ impl PlaytimeMode {
         let variant = if class.is_empty() {
             0
         } else {
-            let count = data.vocal_set.classes.get(class).copied().unwrap_or(1).max(1);
+            let count = data
+                .vocal_set
+                .classes
+                .get(class)
+                .copied()
+                .unwrap_or(1)
+                .max(1);
             let h = fnv1a_64(format!("{}:{}:{}", def.id, f.tick, f.episode).as_bytes());
             (h % u64::from(count)) as u32
         };
@@ -3034,9 +3237,10 @@ fn find_authority_field(value: &serde_json::Value, path: &str) -> Option<String>
             }
             None
         }
-        serde_json::Value::Array(items) => items.iter().enumerate().find_map(|(i, child)| {
-            find_authority_field(child, &format!("{path}[{i}]"))
-        }),
+        serde_json::Value::Array(items) => items
+            .iter()
+            .enumerate()
+            .find_map(|(i, child)| find_authority_field(child, &format!("{path}[{i}]"))),
         _ => None,
     }
 }
@@ -3111,14 +3315,16 @@ fn census_unknown(value: &serde_json::Value, path: &str, doc: &str) -> Result<()
 /// (`TG-GEAR-MIRROR-AUTHORITY`). Steps 6/7/10 (part
 /// references, hooks, pack consistency) have no
 /// settings-document content.
-pub fn validate_settings_document(text: &str, document_path: &str) -> Result<ModeSettings, ModeRefusal> {
+pub fn validate_settings_document(
+    text: &str,
+    document_path: &str,
+) -> Result<ModeSettings, ModeRefusal> {
     let schema = |field: &str, message: String| {
         mode_refusal("TG-GEAR-SCHEMA", document_path, field, message)
     };
     // (1) parse + schema version.
-    let value: serde_json::Value = serde_json::from_str(text).map_err(|e| {
-        schema("", format!("malformed settings document: {e}"))
-    })?;
+    let value: serde_json::Value = serde_json::from_str(text)
+        .map_err(|e| schema("", format!("malformed settings document: {e}")))?;
     let obj = value
         .as_object()
         .ok_or_else(|| schema("", "settings document must be an object".to_string()))?;
@@ -3144,9 +3350,9 @@ pub fn validate_settings_document(text: &str, document_path: &str) -> Result<Mod
             ));
         }
     }
-    let emitter = obj["emitter"].as_object().ok_or_else(|| {
-        schema("emitter", "emitter must be an object".to_string())
-    })?;
+    let emitter = obj["emitter"]
+        .as_object()
+        .ok_or_else(|| schema("emitter", "emitter must be an object".to_string()))?;
     if !emitter.contains_key("anchor") {
         return Err(mode_refusal(
             "TG-GEAR-CLASS-INCOMPLETE",
@@ -3155,12 +3361,15 @@ pub fn validate_settings_document(text: &str, document_path: &str) -> Result<Mod
             "the emitter block must declare its anchor",
         ));
     }
-    let characters = obj["characters"].as_object().ok_or_else(|| {
-        schema("characters", "characters must be an object".to_string())
-    })?;
+    let characters = obj["characters"]
+        .as_object()
+        .ok_or_else(|| schema("characters", "characters must be an object".to_string()))?;
     for (name, entry) in characters {
         let entry = entry.as_object().ok_or_else(|| {
-            schema(&format!("characters.{name}"), "character entry must be an object".to_string())
+            schema(
+                &format!("characters.{name}"),
+                "character entry must be an object".to_string(),
+            )
         })?;
         for field in ["eject_threshold_permille", "eject_volume_scale_permille"] {
             if !entry.contains_key(field) {
@@ -3180,9 +3389,7 @@ pub fn validate_settings_document(text: &str, document_path: &str) -> Result<Mod
             "TG-PM-EJECT-ANCHOR",
             document_path,
             "emitter.anchor",
-            format!(
-                "an ejection emitter may be declared only on {EJECT_ANCHOR}, found {anchor:?}"
-            ),
+            format!("an ejection emitter may be declared only on {EJECT_ANCHOR}, found {anchor:?}"),
         ));
     }
     // (5) profile bounds (§8.4).
@@ -3209,9 +3416,9 @@ pub fn validate_settings_document(text: &str, document_path: &str) -> Result<Mod
         parsed_characters.insert(name.clone(), (threshold, volume));
     }
     // (8) pulse-law bounds (§8.4).
-    let pulse = obj["pulse"].as_object().ok_or_else(|| {
-        schema("pulse", "pulse must be an object".to_string())
-    })?;
+    let pulse = obj["pulse"]
+        .as_object()
+        .ok_or_else(|| schema("pulse", "pulse must be an object".to_string()))?;
     let max_rate = pulse
         .get("max_rate_millihz")
         .and_then(|v| v.as_u64())
@@ -3245,7 +3452,9 @@ pub fn validate_settings_document(text: &str, document_path: &str) -> Result<Mod
             "TG-PM-PULSE-BOUND",
             document_path,
             "pulse.lobe_gap_ticks",
-            format!("the two-lobed pulse shape fixes the lobe gap at 9 ticks (D2), found {lobe_gap}"),
+            format!(
+                "the two-lobed pulse shape fixes the lobe gap at 9 ticks (D2), found {lobe_gap}"
+            ),
         ));
     }
     // (9) authority census (§2.2: a preference set may
@@ -3335,11 +3544,8 @@ impl PlaytimeMode {
     /// ceiling (§8.3). Written with §5.9's sibling-temp +
     /// rename pattern.
     pub fn save_preference_set(&self, dir: &Path, name: &str) -> R<PathBuf> {
-        let settings = ModeSettings::from_definition(
-            &self.definition,
-            self.user_amplitude,
-            self.rec_on,
-        );
+        let settings =
+            ModeSettings::from_definition(&self.definition, self.user_amplitude, self.rec_on);
         // The file is a settings *document* (§2.2): the
         // nested form §8.4's pipeline admits (emitter /
         // characters / pulse blocks), NOT the admitted
@@ -3633,12 +3839,11 @@ fn apply_take_op(mode: &mut PlaytimeMode, host: &mut ArousalHost, op: &ModeOp) -
             .map(|_| ()),
         ModeOp::SetRecSkin { on } => mode.set_rec_skin(host, *on).map(|_| ()),
         ModeOp::RemoveAllAndReset => mode.remove_all_and_reset(host).map(|_| ()),
-        ModeOp::Enter { .. }
-        | ModeOp::Exit
-        | ModeOp::StartTake
-        | ModeOp::StopTake => Err(Refusal::new(
-            "TG-PM-STATE",
-            "lifecycle ops are not part of a take's op stream",
-        )),
+        ModeOp::Enter { .. } | ModeOp::Exit | ModeOp::StartTake | ModeOp::StopTake => {
+            Err(Refusal::new(
+                "TG-PM-STATE",
+                "lifecycle ops are not part of a take's op stream",
+            ))
+        }
     }
 }

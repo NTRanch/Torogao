@@ -201,10 +201,9 @@ impl ArousalEngineView for RealEngineView {
             .map(|s| s.item_id.clone())
             .collect();
         for id in ids {
-            let _ = self.host.apply_op(
-                &self.character,
-                &ArousalOp::StopDevice { item_id: id },
-            );
+            let _ = self
+                .host
+                .apply_op(&self.character, &ArousalOp::StopDevice { item_id: id });
         }
     }
 
@@ -307,11 +306,7 @@ impl PlayroomPlaytime {
     /// Take start (§8.3).
     pub fn start_take(&mut self) -> Result<(), Refusal> {
         self.mode.start_take(self.view.host_mut())?;
-        self.take_start_tick = self
-            .view
-            .host()
-            .get(self.playmate())
-            .map(|e| e.tick());
+        self.take_start_tick = self.view.host().get(self.playmate()).map(|e| e.tick());
         Ok(())
     }
 
@@ -395,7 +390,10 @@ impl PlayroomPlaytime {
             Some(start) => {
                 let elapsed = tick.saturating_sub(start);
                 let bars = (1 + elapsed / 1800).min(6) as usize;
-                (format!("[{}{}]", "|".repeat(bars), " ".repeat(6 - bars)), elapsed)
+                (
+                    format!("[{}{}]", "|".repeat(bars), " ".repeat(6 - bars)),
+                    elapsed,
+                )
             }
             None => ("[      ]".to_string(), tick),
         };
@@ -407,9 +405,7 @@ impl PlayroomPlaytime {
             "+--------------------------------------------------------------+".to_string(),
             format!("  {dot} REC                                                {battery}"),
             format!("              [ + ]  focus {DEVICE_ITEM_ID} / body.perineum"),
-            format!(
-                "  ISO 300   TC {hours:02}:{minutes:02}:{seconds:02}:{frames:02}"
-            ),
+            format!("  ISO 300   TC {hours:02}:{minutes:02}:{seconds:02}:{frames:02}"),
             "+--------------------------------------------------------------+".to_string(),
         ]
     }
@@ -423,25 +419,29 @@ impl PlayroomPlaytime {
         let definition = self.mode.definition();
         let mut lines = vec![format!(
             "Playtime — {} setting · playmate {}",
-            definition.setting_id, self.playmate()
+            definition.setting_id,
+            self.playmate()
         )];
         if !self.mode.entered() {
             lines.push("stage Setup — choose your playmate, then enter the mode".to_string());
             return lines;
         }
-        let v = self.view.vector().unwrap_or(torogao_session::ArousalVector {
-            arousal: 0,
-            pleasure_charge: 0,
-            sensitivity: 1000,
-            floor: 0,
-            peak_input: 0,
-            dose: 0,
-            phase: Phase::Baseline,
-            culmination_latch: false,
-            episode: 1,
-            phase_ticks: 0,
-            afterglow_level: 150,
-        });
+        let v = self
+            .view
+            .vector()
+            .unwrap_or(torogao_session::ArousalVector {
+                arousal: 0,
+                pleasure_charge: 0,
+                sensitivity: 1000,
+                floor: 0,
+                peak_input: 0,
+                dose: 0,
+                phase: Phase::Baseline,
+                culmination_latch: false,
+                episode: 1,
+                phase_ticks: 0,
+                afterglow_level: 150,
+            });
         lines.push(format!(
             "stage {} (engine phase {})",
             self.mode.stage().name(),
@@ -455,7 +455,11 @@ impl PlayroomPlaytime {
             "device {} amplitude {} (user) · hold {}",
             DEVICE_ITEM_ID,
             self.mode.user_amplitude(),
-            if self.mode.hold_engaged() { "on" } else { "off" }
+            if self.mode.hold_engaged() {
+                "on"
+            } else {
+                "off"
+            }
         ));
         if self.mode.hold_engaged() {
             let i_hold = definition

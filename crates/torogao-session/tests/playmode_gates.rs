@@ -225,9 +225,7 @@ fn run_canonical(character: &str) -> CanonicalRun {
             plateau_start = t;
             plateau_amp = mode.user_amplitude();
         }
-        if plateau_active
-            && ((wet[0] > 0 && wet[1] > 0) || t - plateau_start > 10_800)
-        {
+        if plateau_active && ((wet[0] > 0 && wet[1] > 0) || t - plateau_start > 10_800) {
             plateau_active = false;
             plateau_done = true;
         }
@@ -581,7 +579,10 @@ fn p2_ejection_scaling() {
             assert!(
                 w[1].1 >= w[0].1,
                 "depth {depth}: volume {} at P_f {} < volume {} at P_f {}",
-                w[1].1, w[1].0, w[0].1, w[0].0
+                w[1].1,
+                w[1].0,
+                w[0].1,
+                w[0].0
             );
         }
     }
@@ -629,7 +630,9 @@ fn p5_character_swap() {
     for (i, run) in runs.iter().enumerate() {
         let me = chars[i];
         assert!(
-            run.expressions.iter().all(|e| e.starts_with(&format!("{me}."))),
+            run.expressions
+                .iter()
+                .all(|e| e.starts_with(&format!("{me}."))),
             "{me}: every expression recipe is hers"
         );
         let mut saw_vocal = false;
@@ -647,7 +650,8 @@ fn p5_character_swap() {
                     assert!(
                         !rec.asset_id.contains(other),
                         "cross-character asset id: {} in {}'s track",
-                        rec.asset_id, me
+                        rec.asset_id,
+                        me
                     );
                 }
             }
@@ -703,9 +707,7 @@ fn p6_hold_governor() {
 /// and count ticks to culmination.
 /// Returns (culminations during hold, Q at engage,
 /// Q min, Q max, Q at release, ticks release→culmination).
-fn hold_experiment(
-    definition: &PlaytimeDefinition,
-) -> (usize, u32, u32, u32, u32, u64) {
+fn hold_experiment(definition: &PlaytimeDefinition) -> (usize, u32, u32, u32, u32, u64) {
     let mut host = ArousalHost::new();
     let mut mode = PlaytimeMode::new(definition.clone());
     mode.enter(&mut host, "prima").unwrap();
@@ -828,8 +830,8 @@ fn p7_pulse_coupling() {
         // is the previous burst's pressure × retain
         // (whole-permille rounding slack ±2).
         for w in bursts.windows(2) {
-            let expected = (u64::from(w[0].pressure_before_permille) * u64::from(retain) + 500)
-                / 1000;
+            let expected =
+                (u64::from(w[0].pressure_before_permille) * u64::from(retain) + 500) / 1000;
             let actual = u64::from(w[1].pressure_before_permille);
             assert!(
                 actual.abs_diff(expected) <= 2,
@@ -842,8 +844,8 @@ fn p7_pulse_coupling() {
         // the tick's pressure never reached threshold.
         if f.pulses.len() > bursts.len() {
             if let Some(last) = bursts.last() {
-                let after = (u64::from(last.pressure_before_permille) * u64::from(retain) + 500)
-                    / 1000;
+                let after =
+                    (u64::from(last.pressure_before_permille) * u64::from(retain) + 500) / 1000;
                 assert!(
                     after < u64::from(threshold) + 2,
                     "tick {i}: a qualifying pulse was skipped (pressure {after})"
@@ -875,8 +877,9 @@ fn p7_pulse_coupling() {
 #[test]
 fn p8_validation_and_authority() {
     let valid = valid_settings_document();
-    let admitted = validate_settings_document(&serde_json::to_string(&valid).unwrap(), "test.gear.json")
-        .expect("the control document validates");
+    let admitted =
+        validate_settings_document(&serde_json::to_string(&valid).unwrap(), "test.gear.json")
+            .expect("the control document validates");
     assert_eq!(admitted.setting, "blossom");
 
     // TG-PM-EJECT-ANCHOR.
@@ -923,7 +926,10 @@ fn p8_validation_and_authority() {
         "ache_ceiling",
     ];
     for field in corpus {
-        assert!(AUTHORITY_FIELDS.contains(&field), "{field} is in the census list");
+        assert!(
+            AUTHORITY_FIELDS.contains(&field),
+            "{field} is in the census list"
+        );
         let mut doc = valid.clone();
         doc[field] = serde_json::json!(true);
         let err =
@@ -1048,7 +1054,11 @@ fn persistence_round_trips() {
     mode2.enter(&mut host2, "prima").unwrap();
     mode2.restore_state(&dir).unwrap();
     assert_eq!(wet_of(&mode2), wet_before, "wetness restored");
-    assert_eq!(mode2.pressure_permille(), pressure_before, "pressure restored");
+    assert_eq!(
+        mode2.pressure_permille(),
+        pressure_before,
+        "pressure restored"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1080,7 +1090,10 @@ fn p3_no_decay_and_scene_change() {
     assert!(reached_afterglow);
     mode.set_amplitude(&mut host, 0).unwrap();
     let total_at_hold_start = mode.wetness().total_mp();
-    assert!(total_at_hold_start > 0, "the field is wet entering the hold");
+    assert!(
+        total_at_hold_start > 0,
+        "the field is wet entering the hold"
+    );
     // 600 s of idle steps: sample the conserved total.
     for t in 0..36_000u64 {
         mode.step(&mut host, &ModeTickInput::default()).unwrap();

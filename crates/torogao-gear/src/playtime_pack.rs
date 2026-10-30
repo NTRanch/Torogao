@@ -12,8 +12,8 @@
 
 use crate::document::{
     ApparelBlock, Attachment, Device, DrawOrderEntry, DrawRelation, Facing, FixtureBlock,
-    GearClass, GearDocument, Honesty, Hook, HookKind, PartRef, Physics, PoseConstraint,
-    Provenance, Sensation, StateVariant, WaveKind, WaveSpec,
+    GearClass, GearDocument, Honesty, Hook, HookKind, PartRef, Physics, PoseConstraint, Provenance,
+    Sensation, StateVariant, WaveKind, WaveSpec,
 };
 use crate::payloads::{MemoryPayloads, sha256_hex};
 

@@ -70,7 +70,12 @@ fn seat_and_mount_carry_the_mode_contract() {
     assert_eq!(fixture.declares_anchors, vec!["device-mount".to_string()]);
     // §7.1's engaged character anchors.
     let anchors: Vec<&str> = seat.anchors.iter().map(|a| a.anchor.as_str()).collect();
-    for want in ["body.pelvis", "body.ankle.left", "body.ankle.right", "body.waist"] {
+    for want in [
+        "body.pelvis",
+        "body.ankle.left",
+        "body.ankle.right",
+        "body.waist",
+    ] {
         assert!(anchors.contains(&want), "seat engages {want}");
     }
     assert!(!fixture.pose_constraints.is_empty());

@@ -60,7 +60,8 @@ fn gear_panel_binds_the_real_engine() {
     assert!(
         board.state.arousal > 0 && board.state.dose > 0,
         "the real engine integrated input: A {} D {}",
-        board.state.arousal, board.state.dose
+        board.state.arousal,
+        board.state.dose
     );
     assert_eq!(
         board.per_device_effective_input,
@@ -85,7 +86,10 @@ fn gear_panel_binds_the_real_engine() {
         .collect();
     assert_eq!(kinds, vec!["latch", "reset", "completed"]);
     let board = panel.dashboard();
-    assert_eq!(board.state.arousal, 0, "the real engine is back at baseline");
+    assert_eq!(
+        board.state.arousal, 0,
+        "the real engine is back at baseline"
+    );
     assert_eq!(
         board.state.phase,
         torogao_gear::engine_iface::ArousalPhase::Baseline
@@ -102,7 +106,10 @@ fn playtime_panel_drives_the_mode_with_live_readouts() {
     let mut panel = PlayroomPlaytime::new("prima").unwrap();
     // Setup: the panel states its stage before entry.
     assert!(
-        panel.panel_lines().iter().any(|l| l.contains("stage Setup")),
+        panel
+            .panel_lines()
+            .iter()
+            .any(|l| l.contains("stage Setup")),
         "setup readout"
     );
     panel.enter_mode().unwrap();

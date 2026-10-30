@@ -11,9 +11,7 @@
 use std::path::PathBuf;
 
 use torogao_app::playtime::PlayroomPlaytime;
-use torogao_session::playmode::{
-    ModeTickInput, PlaytimeDefinition, PlaytimeMode, replay_take,
-};
+use torogao_session::playmode::{ModeTickInput, PlaytimeDefinition, PlaytimeMode, replay_take};
 use torogao_session::{ArousalHost, Phase};
 
 /// The gate-canonical script (same state-triggered
