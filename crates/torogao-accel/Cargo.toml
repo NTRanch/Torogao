@@ -1,0 +1,22 @@
+[package]
+name = "torogao-accel"
+version = "0.1.0"
+edition = "2024"
+license = "BSD-2-Clause"
+rust-version = "1.85"
+description = "Torogao's hardware-acceleration policy layer: capability probing, the acceleration settings model, effective-plan evaluation, and the determinism gate harness every offload workload must pass."
+
+# Standalone workspace for now: the acceleration program does not
+# edit the root manifest the port program owns. Integration
+# (ACCELERATION-DESIGN section 8) deletes this table and adds the
+# crate to the root workspace members.
+[workspace]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+
+# The crate's records are serde data; the JSON codec belongs to
+# consumers (and to this crate's tests), not to the library.
+[dev-dependencies]
+serde_json = "1"

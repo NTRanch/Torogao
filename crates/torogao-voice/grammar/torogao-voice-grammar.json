@@ -1,0 +1,3262 @@
+{
+  "version": "torogao-voice-grammar/1",
+  "entries": [
+    {
+      "id": "app.confirm-pending",
+      "target": {
+        "kind": "app-command",
+        "name": "confirm-pending"
+      },
+      "posture": "app",
+      "confirm": "none",
+      "templates": [
+        "confirm"
+      ],
+      "slots": []
+    },
+    {
+      "id": "app.open-code-ledger",
+      "target": {
+        "kind": "app-command",
+        "name": "open-code-ledger"
+      },
+      "posture": "app",
+      "confirm": "none",
+      "templates": [
+        "open code ledger"
+      ],
+      "slots": []
+    },
+    {
+      "id": "app.open-creator",
+      "target": {
+        "kind": "app-command",
+        "name": "open-creator"
+      },
+      "posture": "app",
+      "confirm": "none",
+      "templates": [
+        "open creator",
+        "creator"
+      ],
+      "slots": []
+    },
+    {
+      "id": "app.open-playroom",
+      "target": {
+        "kind": "app-command",
+        "name": "open-playroom"
+      },
+      "posture": "app",
+      "confirm": "none",
+      "templates": [
+        "open playroom",
+        "playroom"
+      ],
+      "slots": []
+    },
+    {
+      "id": "app.open-purge-reset",
+      "target": {
+        "kind": "app-command",
+        "name": "open-purge-reset"
+      },
+      "posture": "app",
+      "confirm": "none",
+      "templates": [
+        "open purge and reset",
+        "open purge"
+      ],
+      "slots": []
+    },
+    {
+      "id": "app.open-settings",
+      "target": {
+        "kind": "app-command",
+        "name": "open-settings"
+      },
+      "posture": "app",
+      "confirm": "none",
+      "templates": [
+        "open settings",
+        "settings"
+      ],
+      "slots": []
+    },
+    {
+      "id": "app.open-study",
+      "target": {
+        "kind": "app-command",
+        "name": "open-study"
+      },
+      "posture": "app",
+      "confirm": "none",
+      "templates": [
+        "open study",
+        "the study"
+      ],
+      "slots": []
+    },
+    {
+      "id": "app.toggle-nerd-mode",
+      "target": {
+        "kind": "app-command",
+        "name": "toggle-nerd-mode"
+      },
+      "posture": "app",
+      "confirm": "none",
+      "templates": [
+        "toggle nerd mode",
+        "nerd mode"
+      ],
+      "slots": []
+    },
+    {
+      "id": "mode.a2a",
+      "target": {
+        "kind": "cli-mode",
+        "name": "a2a"
+      },
+      "posture": "app",
+      "confirm": "confirm",
+      "templates": [
+        "start a2a server",
+        "a2a server"
+      ],
+      "slots": []
+    },
+    {
+      "id": "mode.mcp",
+      "target": {
+        "kind": "cli-mode",
+        "name": "mcp"
+      },
+      "posture": "app",
+      "confirm": "confirm",
+      "templates": [
+        "start mcp server",
+        "mcp server"
+      ],
+      "slots": []
+    },
+    {
+      "id": "mode.paths",
+      "target": {
+        "kind": "cli-mode",
+        "name": "paths"
+      },
+      "posture": "app",
+      "confirm": "none",
+      "templates": [
+        "show paths",
+        "paths"
+      ],
+      "slots": []
+    },
+    {
+      "id": "mode.registry-dump",
+      "target": {
+        "kind": "cli-mode",
+        "name": "registry-dump"
+      },
+      "posture": "app",
+      "confirm": "none",
+      "templates": [
+        "dump registry",
+        "registry dump"
+      ],
+      "slots": []
+    },
+    {
+      "id": "safety.stop",
+      "target": {
+        "kind": "safety-stop"
+      },
+      "posture": "safety",
+      "confirm": "none",
+      "templates": [
+        "stop",
+        "halt",
+        "cancel",
+        "safeword"
+      ],
+      "slots": []
+    },
+    {
+      "id": "tool.apply-fixes",
+      "target": {
+        "kind": "registry-tool",
+        "name": "apply-fixes"
+      },
+      "posture": "disabled",
+      "confirm": "none",
+      "templates": [
+        "apply fixes project {project}",
+        "apply fixes {project}"
+      ],
+      "slots": [
+        {
+          "name": "project",
+          "kind": "project",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.apply-state",
+      "target": {
+        "kind": "registry-tool",
+        "name": "apply-state"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "apply state project {project} [state {state}] track {track} [variant {variant}]",
+        "apply state project {project} track {track}"
+      ],
+      "slots": [
+        {
+          "name": "project",
+          "kind": "project",
+          "required": true
+        },
+        {
+          "name": "state",
+          "kind": "name",
+          "required": false
+        },
+        {
+          "name": "track",
+          "kind": "path",
+          "required": true
+        },
+        {
+          "name": "variant",
+          "kind": "name",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "tool.audio-bake",
+      "target": {
+        "kind": "registry-tool",
+        "name": "audio-bake"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "audio bake [force] out {out} recipe {recipe} wav {wav}"
+      ],
+      "slots": [
+        {
+          "name": "force",
+          "kind": "flag",
+          "required": false,
+          "phrase": "force"
+        },
+        {
+          "name": "out",
+          "kind": "path",
+          "required": true
+        },
+        {
+          "name": "recipe",
+          "kind": "path",
+          "required": true
+        },
+        {
+          "name": "wav",
+          "kind": "path",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.audio-render",
+      "target": {
+        "kind": "registry-tool",
+        "name": "audio-render"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "audio render [force] out {out} recipe {recipe}"
+      ],
+      "slots": [
+        {
+          "name": "force",
+          "kind": "flag",
+          "required": false,
+          "phrase": "force"
+        },
+        {
+          "name": "out",
+          "kind": "path",
+          "required": true
+        },
+        {
+          "name": "recipe",
+          "kind": "path",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.audio-validate",
+      "target": {
+        "kind": "registry-tool",
+        "name": "audio-validate"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "audio validate recipe {recipe}"
+      ],
+      "slots": [
+        {
+          "name": "recipe",
+          "kind": "path",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.create-character",
+      "target": {
+        "kind": "registry-tool",
+        "name": "create-character"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "create character [force] identity {identity} out {out} pack {pack} [presets {presets}]",
+        "create character [force] identity {identity} out {out} pack {pack}"
+      ],
+      "slots": [
+        {
+          "name": "force",
+          "kind": "flag",
+          "required": false,
+          "phrase": "force"
+        },
+        {
+          "name": "identity",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "out",
+          "kind": "path",
+          "required": true
+        },
+        {
+          "name": "pack",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "presets",
+          "kind": "list",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "tool.effects-compile",
+      "target": {
+        "kind": "registry-tool",
+        "name": "effects-compile"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "effects compile effects {effects} [force] out {out} project {project}"
+      ],
+      "slots": [
+        {
+          "name": "effects",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "force",
+          "kind": "flag",
+          "required": false,
+          "phrase": "force"
+        },
+        {
+          "name": "out",
+          "kind": "path",
+          "required": true
+        },
+        {
+          "name": "project",
+          "kind": "project",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.effects-validate",
+      "target": {
+        "kind": "registry-tool",
+        "name": "effects-validate"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "effects validate effects {effects} [project {project}]",
+        "effects validate effects {effects}"
+      ],
+      "slots": [
+        {
+          "name": "effects",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "project",
+          "kind": "project",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "tool.events-author",
+      "target": {
+        "kind": "registry-tool",
+        "name": "events-author"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "events author [force] out {out} project {project} spec {spec}"
+      ],
+      "slots": [
+        {
+          "name": "force",
+          "kind": "flag",
+          "required": false,
+          "phrase": "force"
+        },
+        {
+          "name": "out",
+          "kind": "path",
+          "required": true
+        },
+        {
+          "name": "project",
+          "kind": "project",
+          "required": true
+        },
+        {
+          "name": "spec",
+          "kind": "name",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.events-list",
+      "target": {
+        "kind": "registry-tool",
+        "name": "events-list"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "events list project {project}",
+        "events list {project}"
+      ],
+      "slots": [
+        {
+          "name": "project",
+          "kind": "project",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.export-rig",
+      "target": {
+        "kind": "registry-tool",
+        "name": "export-rig"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "export rig [force] out {out} project {project}"
+      ],
+      "slots": [
+        {
+          "name": "force",
+          "kind": "flag",
+          "required": false,
+          "phrase": "force"
+        },
+        {
+          "name": "out",
+          "kind": "path",
+          "required": true
+        },
+        {
+          "name": "project",
+          "kind": "project",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.expression-check",
+      "target": {
+        "kind": "registry-tool",
+        "name": "expression-check"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "expression check pack {pack} project {project}"
+      ],
+      "slots": [
+        {
+          "name": "pack",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "project",
+          "kind": "project",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.fluid-sim",
+      "target": {
+        "kind": "registry-tool",
+        "name": "fluid-sim"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "fluid sim [emitter {emitter}] [force] out {out} project {project} scene {scene} [seconds {seconds}]",
+        "fluid sim [force] out {out} project {project} scene {scene}"
+      ],
+      "slots": [
+        {
+          "name": "emitter",
+          "kind": "name",
+          "required": false
+        },
+        {
+          "name": "force",
+          "kind": "flag",
+          "required": false,
+          "phrase": "force"
+        },
+        {
+          "name": "out",
+          "kind": "path",
+          "required": true
+        },
+        {
+          "name": "project",
+          "kind": "project",
+          "required": true
+        },
+        {
+          "name": "scene",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "seconds",
+          "kind": "number",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "tool.glb-expression-check",
+      "target": {
+        "kind": "registry-tool",
+        "name": "glb-expression-check"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "glb expression check glb {glb} map {map} pack {pack}"
+      ],
+      "slots": [
+        {
+          "name": "glb",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "map",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "pack",
+          "kind": "name",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.glb-info",
+      "target": {
+        "kind": "registry-tool",
+        "name": "glb-info"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "glb info glb {glb}"
+      ],
+      "slots": [
+        {
+          "name": "glb",
+          "kind": "name",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.glb-resolve-expression",
+      "target": {
+        "kind": "registry-tool",
+        "name": "glb-resolve-expression"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "glb resolve expression map {map} name {name}"
+      ],
+      "slots": [
+        {
+          "name": "map",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "name",
+          "kind": "name",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.hitareas-author",
+      "target": {
+        "kind": "registry-tool",
+        "name": "hitareas-author"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "hitareas author [force] out {out} project {project} spec {spec}"
+      ],
+      "slots": [
+        {
+          "name": "force",
+          "kind": "flag",
+          "required": false,
+          "phrase": "force"
+        },
+        {
+          "name": "out",
+          "kind": "path",
+          "required": true
+        },
+        {
+          "name": "project",
+          "kind": "project",
+          "required": true
+        },
+        {
+          "name": "spec",
+          "kind": "name",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.hitareas-list",
+      "target": {
+        "kind": "registry-tool",
+        "name": "hitareas-list"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "hitareas list project {project}",
+        "hitareas list {project}"
+      ],
+      "slots": [
+        {
+          "name": "project",
+          "kind": "project",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.inspect",
+      "target": {
+        "kind": "registry-tool",
+        "name": "inspect"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "inspect project {project}",
+        "inspect {project}"
+      ],
+      "slots": [
+        {
+          "name": "project",
+          "kind": "project",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.instantiate-template",
+      "target": {
+        "kind": "registry-tool",
+        "name": "instantiate-template"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "instantiate template [force] out {out} [presets {presets}] template {template}",
+        "instantiate template [force] out {out} template {template}"
+      ],
+      "slots": [
+        {
+          "name": "force",
+          "kind": "flag",
+          "required": false,
+          "phrase": "force"
+        },
+        {
+          "name": "out",
+          "kind": "path",
+          "required": true
+        },
+        {
+          "name": "presets",
+          "kind": "list",
+          "required": false
+        },
+        {
+          "name": "template",
+          "kind": "name",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.lipsync-analyze",
+      "target": {
+        "kind": "registry-tool",
+        "name": "lipsync-analyze"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "lipsync analyze [contract {contract}] [force] out {out} wav {wav}",
+        "lipsync analyze [force] out {out} wav {wav}"
+      ],
+      "slots": [
+        {
+          "name": "contract",
+          "kind": "name",
+          "required": false
+        },
+        {
+          "name": "force",
+          "kind": "flag",
+          "required": false,
+          "phrase": "force"
+        },
+        {
+          "name": "out",
+          "kind": "path",
+          "required": true
+        },
+        {
+          "name": "wav",
+          "kind": "path",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.list-states",
+      "target": {
+        "kind": "registry-tool",
+        "name": "list-states"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "list states project {project}",
+        "list states {project}"
+      ],
+      "slots": [
+        {
+          "name": "project",
+          "kind": "project",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.list-templates",
+      "target": {
+        "kind": "registry-tool",
+        "name": "list-templates"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "list templates"
+      ],
+      "slots": []
+    },
+    {
+      "id": "tool.pack-info",
+      "target": {
+        "kind": "registry-tool",
+        "name": "pack-info"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "pack info pack {pack}"
+      ],
+      "slots": [
+        {
+          "name": "pack",
+          "kind": "name",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.physics-preview",
+      "target": {
+        "kind": "registry-tool",
+        "name": "physics-preview"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "physics preview [controllers {controllers}] [drivers {drivers}] [fps {fps}] [override {override}] project {project} [state {state}] track {track} [variant {variant}]",
+        "physics preview project {project} track {track}"
+      ],
+      "slots": [
+        {
+          "name": "controllers",
+          "kind": "path",
+          "required": false
+        },
+        {
+          "name": "drivers",
+          "kind": "path",
+          "required": false
+        },
+        {
+          "name": "fps",
+          "kind": "number",
+          "required": false
+        },
+        {
+          "name": "override",
+          "kind": "path",
+          "required": false
+        },
+        {
+          "name": "project",
+          "kind": "project",
+          "required": true
+        },
+        {
+          "name": "state",
+          "kind": "name",
+          "required": false
+        },
+        {
+          "name": "track",
+          "kind": "path",
+          "required": true
+        },
+        {
+          "name": "variant",
+          "kind": "name",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "tool.playroom-compose",
+      "target": {
+        "kind": "registry-tool",
+        "name": "playroom-compose"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "playroom compose [force] [out {out}] session {session} [steps {steps}]",
+        "playroom compose [force] session {session}"
+      ],
+      "slots": [
+        {
+          "name": "force",
+          "kind": "flag",
+          "required": false,
+          "phrase": "force"
+        },
+        {
+          "name": "out",
+          "kind": "path",
+          "required": false
+        },
+        {
+          "name": "session",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "steps",
+          "kind": "number",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "tool.playroom-create",
+      "target": {
+        "kind": "registry-tool",
+        "name": "playroom-create"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "playroom create [activity {activity}] [force] identity {identity} out {out} pack {pack} [presets {presets}] [scene {scene}] session {session}",
+        "playroom create [force] identity {identity} out {out} pack {pack} session {session}"
+      ],
+      "slots": [
+        {
+          "name": "activity",
+          "kind": "name",
+          "required": false
+        },
+        {
+          "name": "force",
+          "kind": "flag",
+          "required": false,
+          "phrase": "force"
+        },
+        {
+          "name": "identity",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "out",
+          "kind": "path",
+          "required": true
+        },
+        {
+          "name": "pack",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "presets",
+          "kind": "list",
+          "required": false
+        },
+        {
+          "name": "scene",
+          "kind": "name",
+          "required": false
+        },
+        {
+          "name": "session",
+          "kind": "name",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.playroom-open",
+      "target": {
+        "kind": "registry-tool",
+        "name": "playroom-open"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "playroom open [activity {activity}] character {character} [expressionState {expressionState}] [force] pack {pack} [scene {scene}] session {session}",
+        "playroom open character {character} [force] pack {pack} session {session}"
+      ],
+      "slots": [
+        {
+          "name": "activity",
+          "kind": "name",
+          "required": false
+        },
+        {
+          "name": "character",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "expressionState",
+          "kind": "name",
+          "required": false
+        },
+        {
+          "name": "force",
+          "kind": "flag",
+          "required": false,
+          "phrase": "force"
+        },
+        {
+          "name": "pack",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "scene",
+          "kind": "name",
+          "required": false
+        },
+        {
+          "name": "session",
+          "kind": "name",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.playroom-set",
+      "target": {
+        "kind": "registry-tool",
+        "name": "playroom-set"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "playroom set field {field} session {session} value {value}"
+      ],
+      "slots": [
+        {
+          "name": "field",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "session",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "value",
+          "kind": "name",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.prefset-apply",
+      "target": {
+        "kind": "registry-tool",
+        "name": "prefset-apply"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "prefset apply [dir {dir}] session {session} set {set}",
+        "prefset apply session {session} set {set}"
+      ],
+      "slots": [
+        {
+          "name": "dir",
+          "kind": "name",
+          "required": false
+        },
+        {
+          "name": "session",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "set",
+          "kind": "name",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.prefset-list",
+      "target": {
+        "kind": "registry-tool",
+        "name": "prefset-list"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "prefset list [dir {dir}]",
+        "prefset list"
+      ],
+      "slots": [
+        {
+          "name": "dir",
+          "kind": "name",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "tool.prefset-save",
+      "target": {
+        "kind": "registry-tool",
+        "name": "prefset-save"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "prefset save [dir {dir}] [force] name {name} [session {session}] [set {set}]",
+        "prefset save [force] name {name}"
+      ],
+      "slots": [
+        {
+          "name": "dir",
+          "kind": "name",
+          "required": false
+        },
+        {
+          "name": "force",
+          "kind": "flag",
+          "required": false,
+          "phrase": "force"
+        },
+        {
+          "name": "name",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "session",
+          "kind": "name",
+          "required": false
+        },
+        {
+          "name": "set",
+          "kind": "name",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "tool.project-info",
+      "target": {
+        "kind": "registry-tool",
+        "name": "project-info"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "project info project {project}",
+        "project info {project}"
+      ],
+      "slots": [
+        {
+          "name": "project",
+          "kind": "project",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.rating-check",
+      "target": {
+        "kind": "registry-tool",
+        "name": "rating-check"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "rating check project {project}",
+        "rating check {project}"
+      ],
+      "slots": [
+        {
+          "name": "project",
+          "kind": "project",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.scene-info",
+      "target": {
+        "kind": "registry-tool",
+        "name": "scene-info"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "scene info scene {scene}"
+      ],
+      "slots": [
+        {
+          "name": "scene",
+          "kind": "name",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.scene-validate",
+      "target": {
+        "kind": "registry-tool",
+        "name": "scene-validate"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "scene validate [pack {pack}] [project {project}] scene {scene}",
+        "scene validate scene {scene}"
+      ],
+      "slots": [
+        {
+          "name": "pack",
+          "kind": "name",
+          "required": false
+        },
+        {
+          "name": "project",
+          "kind": "project",
+          "required": false
+        },
+        {
+          "name": "scene",
+          "kind": "name",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.session-build",
+      "target": {
+        "kind": "registry-tool",
+        "name": "session-build"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "session build [force] out {out} session {session}"
+      ],
+      "slots": [
+        {
+          "name": "force",
+          "kind": "flag",
+          "required": false,
+          "phrase": "force"
+        },
+        {
+          "name": "out",
+          "kind": "path",
+          "required": true
+        },
+        {
+          "name": "session",
+          "kind": "name",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.session-validate",
+      "target": {
+        "kind": "registry-tool",
+        "name": "session-validate"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "session validate session {session}"
+      ],
+      "slots": [
+        {
+          "name": "session",
+          "kind": "name",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.sfx-list",
+      "target": {
+        "kind": "registry-tool",
+        "name": "sfx-list"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "sfx list"
+      ],
+      "slots": []
+    },
+    {
+      "id": "tool.tracking-bake",
+      "target": {
+        "kind": "registry-tool",
+        "name": "tracking-bake"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "tracking bake [force] [fps {fps}] out {out} pack {pack} [seconds {seconds}] take {take}",
+        "tracking bake [force] out {out} pack {pack} take {take}"
+      ],
+      "slots": [
+        {
+          "name": "force",
+          "kind": "flag",
+          "required": false,
+          "phrase": "force"
+        },
+        {
+          "name": "fps",
+          "kind": "number",
+          "required": false
+        },
+        {
+          "name": "out",
+          "kind": "path",
+          "required": true
+        },
+        {
+          "name": "pack",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "seconds",
+          "kind": "number",
+          "required": false
+        },
+        {
+          "name": "take",
+          "kind": "name",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.tracking-check",
+      "target": {
+        "kind": "registry-tool",
+        "name": "tracking-check"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "tracking check pack {pack} project {project} set {set}"
+      ],
+      "slots": [
+        {
+          "name": "pack",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "project",
+          "kind": "project",
+          "required": true
+        },
+        {
+          "name": "set",
+          "kind": "name",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.tracking-validate",
+      "target": {
+        "kind": "registry-tool",
+        "name": "tracking-validate"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "tracking validate pack {pack} take {take}"
+      ],
+      "slots": [
+        {
+          "name": "pack",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "take",
+          "kind": "name",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.tutorial-check",
+      "target": {
+        "kind": "registry-tool",
+        "name": "tutorial-check"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "tutorial check lesson {lesson} pack {pack} [progress {progress}] project {project} [track {track}]",
+        "tutorial check lesson {lesson} pack {pack} project {project}"
+      ],
+      "slots": [
+        {
+          "name": "lesson",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "pack",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "progress",
+          "kind": "name",
+          "required": false
+        },
+        {
+          "name": "project",
+          "kind": "project",
+          "required": true
+        },
+        {
+          "name": "track",
+          "kind": "path",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "tool.tutorial-list",
+      "target": {
+        "kind": "registry-tool",
+        "name": "tutorial-list"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "tutorial list pack {pack}"
+      ],
+      "slots": [
+        {
+          "name": "pack",
+          "kind": "name",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.tutorial-status",
+      "target": {
+        "kind": "registry-tool",
+        "name": "tutorial-status"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "tutorial status [pack {pack}] [progress {progress}]",
+        "tutorial status"
+      ],
+      "slots": [
+        {
+          "name": "pack",
+          "kind": "name",
+          "required": false
+        },
+        {
+          "name": "progress",
+          "kind": "name",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "tool.validate",
+      "target": {
+        "kind": "registry-tool",
+        "name": "validate"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "validate project {project}",
+        "validate {project}"
+      ],
+      "slots": [
+        {
+          "name": "project",
+          "kind": "project",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.video-build",
+      "target": {
+        "kind": "registry-tool",
+        "name": "video-build"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "video build clips {clips} [force] out {out}"
+      ],
+      "slots": [
+        {
+          "name": "clips",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "force",
+          "kind": "flag",
+          "required": false,
+          "phrase": "force"
+        },
+        {
+          "name": "out",
+          "kind": "path",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.video-export",
+      "target": {
+        "kind": "registry-tool",
+        "name": "video-export"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "video export [force] outDir {outDir} timeline {timeline}"
+      ],
+      "slots": [
+        {
+          "name": "force",
+          "kind": "flag",
+          "required": false,
+          "phrase": "force"
+        },
+        {
+          "name": "outDir",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "timeline",
+          "kind": "name",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.video-tempo",
+      "target": {
+        "kind": "registry-tool",
+        "name": "video-tempo"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "video tempo timeline {timeline}"
+      ],
+      "slots": [
+        {
+          "name": "timeline",
+          "kind": "name",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.video-validate",
+      "target": {
+        "kind": "registry-tool",
+        "name": "video-validate"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "video validate [dir {dir}] timeline {timeline}",
+        "video validate timeline {timeline}"
+      ],
+      "slots": [
+        {
+          "name": "dir",
+          "kind": "name",
+          "required": false
+        },
+        {
+          "name": "timeline",
+          "kind": "name",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.viseme-author",
+      "target": {
+        "kind": "registry-tool",
+        "name": "viseme-author"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "viseme author [contract {contract}] [force] out {out} spec {spec}",
+        "viseme author [force] out {out} spec {spec}"
+      ],
+      "slots": [
+        {
+          "name": "contract",
+          "kind": "name",
+          "required": false
+        },
+        {
+          "name": "force",
+          "kind": "flag",
+          "required": false,
+          "phrase": "force"
+        },
+        {
+          "name": "out",
+          "kind": "path",
+          "required": true
+        },
+        {
+          "name": "spec",
+          "kind": "name",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.viseme-bake",
+      "target": {
+        "kind": "registry-tool",
+        "name": "viseme-bake"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "viseme bake [contract {contract}] [force] out {out} track {track}",
+        "viseme bake [force] out {out} track {track}"
+      ],
+      "slots": [
+        {
+          "name": "contract",
+          "kind": "name",
+          "required": false
+        },
+        {
+          "name": "force",
+          "kind": "flag",
+          "required": false,
+          "phrase": "force"
+        },
+        {
+          "name": "out",
+          "kind": "path",
+          "required": true
+        },
+        {
+          "name": "track",
+          "kind": "path",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.viseme-check",
+      "target": {
+        "kind": "registry-tool",
+        "name": "viseme-check"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "viseme check [contract {contract}] project {project}",
+        "viseme check project {project}",
+        "viseme check {project} [contract {contract}]"
+      ],
+      "slots": [
+        {
+          "name": "contract",
+          "kind": "name",
+          "required": false
+        },
+        {
+          "name": "project",
+          "kind": "project",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.viseme-validate",
+      "target": {
+        "kind": "registry-tool",
+        "name": "viseme-validate"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "viseme validate [contract {contract}] project {project} track {track}",
+        "viseme validate project {project} track {track}"
+      ],
+      "slots": [
+        {
+          "name": "contract",
+          "kind": "name",
+          "required": false
+        },
+        {
+          "name": "project",
+          "kind": "project",
+          "required": true
+        },
+        {
+          "name": "track",
+          "kind": "path",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.voice-check",
+      "target": {
+        "kind": "registry-tool",
+        "name": "voice-check"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "voice check record {record}"
+      ],
+      "slots": [
+        {
+          "name": "record",
+          "kind": "name",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.writer-draft",
+      "target": {
+        "kind": "registry-tool",
+        "name": "writer-draft"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "writer draft character {character} [force] kink {kink} lane {lane} out {out} pack {pack} [sfx {sfx}] stage {stage}",
+        "writer draft character {character} [force] kink {kink} lane {lane} out {out} pack {pack} stage {stage}"
+      ],
+      "slots": [
+        {
+          "name": "character",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "force",
+          "kind": "flag",
+          "required": false,
+          "phrase": "force"
+        },
+        {
+          "name": "kink",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "lane",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "out",
+          "kind": "path",
+          "required": true
+        },
+        {
+          "name": "pack",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "sfx",
+          "kind": "list",
+          "required": false
+        },
+        {
+          "name": "stage",
+          "kind": "number",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "tool.writer-scaffold",
+      "target": {
+        "kind": "registry-tool",
+        "name": "writer-scaffold"
+      },
+      "posture": "export",
+      "confirm": "confirm",
+      "templates": [
+        "writer scaffold character {character} [force] kink {kink} [out {out}] pack {pack} [sfx {sfx}] stage {stage}",
+        "writer scaffold character {character} [force] kink {kink} pack {pack} stage {stage}"
+      ],
+      "slots": [
+        {
+          "name": "character",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "force",
+          "kind": "flag",
+          "required": false,
+          "phrase": "force"
+        },
+        {
+          "name": "kink",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "out",
+          "kind": "path",
+          "required": false
+        },
+        {
+          "name": "pack",
+          "kind": "name",
+          "required": true
+        },
+        {
+          "name": "sfx",
+          "kind": "list",
+          "required": false
+        },
+        {
+          "name": "stage",
+          "kind": "number",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "verb.audio_bind_set",
+      "target": {
+        "kind": "author-verb",
+        "name": "audio_bind_set"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author audio bind set",
+        "author audio bind set {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.audio_track_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "audio_track_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author audio track define",
+        "author audio track define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.character_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "character_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author character define",
+        "author character define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.choice_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "choice_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author choice define",
+        "author choice define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.clock_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "clock_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author clock define",
+        "author clock define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.condition_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "condition_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author condition define",
+        "author condition define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.curve_from_samples",
+      "target": {
+        "kind": "author-verb",
+        "name": "curve_from_samples"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author curve from samples",
+        "author curve from samples {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.curve_set",
+      "target": {
+        "kind": "author-verb",
+        "name": "curve_set"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author curve set",
+        "author curve set {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.deformer_glue_set",
+      "target": {
+        "kind": "author-verb",
+        "name": "deformer_glue_set"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author deformer glue set",
+        "author deformer glue set {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.deformer_parent_set",
+      "target": {
+        "kind": "author-verb",
+        "name": "deformer_parent_set"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author deformer parent set",
+        "author deformer parent set {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.deformer_remove",
+      "target": {
+        "kind": "author-verb",
+        "name": "deformer_remove"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author deformer remove",
+        "author deformer remove {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.deformer_rotation_create",
+      "target": {
+        "kind": "author-verb",
+        "name": "deformer_rotation_create"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author deformer rotation create",
+        "author deformer rotation create {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.deformer_warp_create",
+      "target": {
+        "kind": "author-verb",
+        "name": "deformer_warp_create"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author deformer warp create",
+        "author deformer warp create {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.dialogue_line_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "dialogue_line_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author dialogue line define",
+        "author dialogue line define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.effect_set_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "effect_set_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author effect set define",
+        "author effect set define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.ending_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "ending_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author ending define",
+        "author ending define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.export_bundle",
+      "target": {
+        "kind": "author-verb",
+        "name": "export_bundle"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author export bundle",
+        "author export bundle {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.export_manifest",
+      "target": {
+        "kind": "author-verb",
+        "name": "export_manifest"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author export manifest",
+        "author export manifest {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.export_native",
+      "target": {
+        "kind": "author-verb",
+        "name": "export_native"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author export native",
+        "author export native {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.expression_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "expression_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author expression define",
+        "author expression define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.expression_remove",
+      "target": {
+        "kind": "author-verb",
+        "name": "expression_remove"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author expression remove",
+        "author expression remove {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.expression_test",
+      "target": {
+        "kind": "author-verb",
+        "name": "expression_test"
+      },
+      "posture": "read-only",
+      "confirm": "confirm",
+      "templates": [
+        "author expression test",
+        "author expression test {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.flag_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "flag_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author flag define",
+        "author flag define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.gallery_entry_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "gallery_entry_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author gallery entry define",
+        "author gallery entry define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.game_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "game_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author game define",
+        "author game define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.game_save_schema_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "game_save_schema_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author game save schema define",
+        "author game save schema define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.game_simulate",
+      "target": {
+        "kind": "author-verb",
+        "name": "game_simulate"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "author game simulate",
+        "author game simulate {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.intake_image",
+      "target": {
+        "kind": "author-verb",
+        "name": "intake_image"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author intake image",
+        "author intake image {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.intake_psd",
+      "target": {
+        "kind": "author-verb",
+        "name": "intake_psd"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author intake psd",
+        "author intake psd {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.keyform_set",
+      "target": {
+        "kind": "author-verb",
+        "name": "keyform_set"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author keyform set",
+        "author keyform set {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.mesh_set",
+      "target": {
+        "kind": "author-verb",
+        "name": "mesh_set"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author mesh set",
+        "author mesh set {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.mesh_trim",
+      "target": {
+        "kind": "author-verb",
+        "name": "mesh_trim"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author mesh trim",
+        "author mesh trim {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.motion_bake",
+      "target": {
+        "kind": "author-verb",
+        "name": "motion_bake"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author motion bake",
+        "author motion bake {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.motion_create",
+      "target": {
+        "kind": "author-verb",
+        "name": "motion_create"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author motion create",
+        "author motion create {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.param_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "param_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author param define",
+        "author param define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.param_grid_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "param_grid_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author param grid define",
+        "author param grid define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.param_link_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "param_link_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author param link define",
+        "author param link define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.param_pose_default_set",
+      "target": {
+        "kind": "author-verb",
+        "name": "param_pose_default_set"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author param pose default set",
+        "author param pose default set {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.param_remove",
+      "target": {
+        "kind": "author-verb",
+        "name": "param_remove"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author param remove",
+        "author param remove {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.part_art_bind",
+      "target": {
+        "kind": "author-verb",
+        "name": "part_art_bind"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author part art bind",
+        "author part art bind {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.part_clip_set",
+      "target": {
+        "kind": "author-verb",
+        "name": "part_clip_set"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author part clip set",
+        "author part clip set {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.part_create",
+      "target": {
+        "kind": "author-verb",
+        "name": "part_create"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author part create",
+        "author part create {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.part_draw_order_set",
+      "target": {
+        "kind": "author-verb",
+        "name": "part_draw_order_set"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author part draw order set",
+        "author part draw order set {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.part_parent_set",
+      "target": {
+        "kind": "author-verb",
+        "name": "part_parent_set"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author part parent set",
+        "author part parent set {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.part_remove",
+      "target": {
+        "kind": "author-verb",
+        "name": "part_remove"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author part remove",
+        "author part remove {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.part_visibility_set",
+      "target": {
+        "kind": "author-verb",
+        "name": "part_visibility_set"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author part visibility set",
+        "author part visibility set {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.physics_bake",
+      "target": {
+        "kind": "author-verb",
+        "name": "physics_bake"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author physics bake",
+        "author physics bake {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.physics_forces_set",
+      "target": {
+        "kind": "author-verb",
+        "name": "physics_forces_set"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author physics forces set",
+        "author physics forces set {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.physics_group_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "physics_group_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author physics group define",
+        "author physics group define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.physics_group_remove",
+      "target": {
+        "kind": "author-verb",
+        "name": "physics_group_remove"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author physics group remove",
+        "author physics group remove {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.project_diff",
+      "target": {
+        "kind": "author-verb",
+        "name": "project_diff"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "author project diff",
+        "author project diff {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.project_import",
+      "target": {
+        "kind": "author-verb",
+        "name": "project_import"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author project import",
+        "author project import {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.project_init",
+      "target": {
+        "kind": "author-verb",
+        "name": "project_init"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author project init",
+        "author project init {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.project_inspect",
+      "target": {
+        "kind": "author-verb",
+        "name": "project_inspect"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "author project inspect",
+        "author project inspect {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.project_replay",
+      "target": {
+        "kind": "author-verb",
+        "name": "project_replay"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author project replay",
+        "author project replay {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.project_validate",
+      "target": {
+        "kind": "author-verb",
+        "name": "project_validate"
+      },
+      "posture": "read-only",
+      "confirm": "none",
+      "templates": [
+        "author project validate",
+        "author project validate {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.render_range_sweep",
+      "target": {
+        "kind": "author-verb",
+        "name": "render_range_sweep"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author render range sweep",
+        "author render range sweep {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.render_still",
+      "target": {
+        "kind": "author-verb",
+        "name": "render_still"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author render still",
+        "author render still {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.render_take",
+      "target": {
+        "kind": "author-verb",
+        "name": "render_take"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author render take",
+        "author render take {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.rng_stream_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "rng_stream_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author rng stream define",
+        "author rng stream define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.scene_bind_rig",
+      "target": {
+        "kind": "author-verb",
+        "name": "scene_bind_rig"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author scene bind rig",
+        "author scene bind rig {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.scene_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "scene_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author scene define",
+        "author scene define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.scene_exit_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "scene_exit_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author scene exit define",
+        "author scene exit define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.schedule_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "schedule_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author schedule define",
+        "author schedule define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.stat_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "stat_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author stat define",
+        "author stat define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.stat_tier_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "stat_tier_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author stat tier define",
+        "author stat tier define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.table_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "table_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author table define",
+        "author table define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.trigger_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "trigger_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author trigger define",
+        "author trigger define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "verb.value_define",
+      "target": {
+        "kind": "author-verb",
+        "name": "value_define"
+      },
+      "posture": "mutating",
+      "confirm": "confirm",
+      "templates": [
+        "author value define",
+        "author value define {args}"
+      ],
+      "slots": [
+        {
+          "name": "args",
+          "kind": "rest",
+          "required": false
+        }
+      ]
+    }
+  ]
+}

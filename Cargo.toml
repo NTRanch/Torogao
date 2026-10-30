@@ -3,10 +3,12 @@ members = [
     "crates/torogao-app",
     "crates/torogao-author",
     "crates/torogao-cli",
+    "crates/torogao-companion",
     "crates/torogao-engine",
     "crates/torogao-format",
     "crates/torogao-gear",
     "crates/torogao-session",
+    "crates/torogao-voice",
 ]
 resolver = "3"
 

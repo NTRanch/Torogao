@@ -844,6 +844,23 @@ impl Renderer {
             .map_err(|err| AppError::Render(format!("window surface creation failed: {err}")))
     }
 
+    /// Creates a surface from a caller-supplied target on
+    /// this renderer's instance: the seam through which a
+    /// non-winit presentation (the companion's Wayland
+    /// layer-shell surface, Stage 1.1) draws with this
+    /// renderer. The target's handles must stay valid for
+    /// the surface's whole lifetime — the caller's surface
+    /// object owns that guarantee, exactly as the winit
+    /// window does for `create_surface`.
+    pub fn create_surface_from_target(
+        &self,
+        target: wgpu::SurfaceTarget<'static>,
+    ) -> AppResult<wgpu::Surface<'static>> {
+        self.instance
+            .create_surface(target)
+            .map_err(|err| AppError::Render(format!("window surface creation failed: {err}")))
+    }
+
     /// The preferred surface format for a surface on this
     /// renderer's adapter (sRGB when offered).
     pub fn surface_format(&self, surface: &wgpu::Surface<'_>) -> wgpu::TextureFormat {
@@ -860,6 +877,13 @@ impl Renderer {
     /// The queue paired with the device.
     pub fn queue(&self) -> &wgpu::Queue {
         &self.queue
+    }
+
+    /// The adapter the device was made on — surface
+    /// capability queries (the companion's configure path)
+    /// need it.
+    pub fn adapter(&self) -> &wgpu::Adapter {
+        &self.adapter
     }
 
     /// The adapter's maximum 2D texture dimension (the 8K

@@ -1,0 +1,28 @@
+[package]
+name = "torogao-companion"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "The Torogao desktop companion: a third presentation of the one session host — Prima performing her repertoire in a transparent, frameless, always-on-top window (Wayland layer-shell on wlroots compositors, winit fallback elsewhere)."
+publish = false
+
+[dependencies]
+egui = "0.35"
+egui-wgpu = "0.35"
+
+raw-window-handle = "0.6"
+serde = { workspace = true }
+serde_json = { workspace = true }
+smithay-client-toolkit = "0.20"
+torogao-app = { path = "../torogao-app" }
+torogao-engine = { path = "../torogao-engine" }
+torogao-format = { path = "../torogao-format" }
+torogao-session = { path = "../torogao-session" }
+wayland-client = { version = "0.31", features = ["system"] }
+wgpu = "29"
+winit = "0.30"
+
+[[bin]]
+name = "torogao-companion"
+path = "src/main.rs"

@@ -1,0 +1,20 @@
+[package]
+name = "torogao-voice"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Voice control for Torogao: a deterministic command grammar over the tool registry, author verbs, CLI modes, and app features, with a local-only speech-recognition adapter. Voice is an input surface, never an authority."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+torogao = { path = "../torogao-cli" }
+
+[lib]
+name = "torogao_voice"
+path = "src/lib.rs"
+
+[[bin]]
+name = "torogao-voice"
+path = "src/main.rs"
