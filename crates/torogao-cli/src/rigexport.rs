@@ -938,6 +938,9 @@ impl<'a> RigExporter<'a> {
             if let Some(parent) = self.walk.nodes[walk_idx].parent {
                 part["parent"] = Value::String(self.walk.nodes[parent].part_id.clone());
             }
+            if let Some(lattice) = self.build_part_translation(walk_idx) {
+                part["translation_keyforms"] = lattice;
+            }
             arr.push(part);
             let world_pos = self.walk.world_pos(walk_idx);
             self.anchor_point.insert(node.uuid, world_pos);
@@ -967,6 +970,85 @@ impl<'a> RigExporter<'a> {
             }
         }
         Value::Array(arr)
+    }
+
+    /// BIND-1: a node's `transform.t.x` / `transform.t.y`
+    /// bindings become a `translation_keyforms` lattice on
+    /// the node's part (lumen SPEC section 3.2, the BIND-1
+    /// amendment). Each lattice point's payload is the
+    /// bindings' summed local delta carried into model
+    /// space at rest orientation — the same
+    /// `delta_to_world` conversion the mesh-deformation
+    /// exporter applies to deform offsets. Returns the
+    /// lattice document, or None when the node has no
+    /// translation bindings (or they cannot form a lattice,
+    /// in which case they are noted dropped and consumed,
+    /// exactly as failed rotation lattices are).
+    fn build_part_translation(&mut self, walk_idx: usize) -> Option<Value> {
+        let node_idx = self.walk.nodes[walk_idx].node;
+        let tx = self.channel_bindings(node_idx, "transform.t.x");
+        let ty = self.channel_bindings(node_idx, "transform.t.y");
+        if tx.is_empty() && ty.is_empty() {
+            return None;
+        }
+        let all: Vec<BindingRef> = tx.iter().chain(ty.iter()).copied().collect();
+        let axes = match self.collect_axes(&all) {
+            Ok(axes) => axes,
+            Err(reason) => {
+                for binding in &all {
+                    self.consumed.insert(*binding);
+                    let construct = self.binding_construct(*binding);
+                    self.note(
+                        "dropped",
+                        construct,
+                        format!("translation binding cannot form a lumen lattice: {reason}"),
+                    );
+                }
+                return None;
+            }
+        };
+        let nx = axes[0].keys.len();
+        let ny = if axes.len() > 1 {
+            axes[1].keys.len()
+        } else {
+            1
+        };
+        let mut forms = Vec::new();
+        for i in 0..nx {
+            for j in 0..ny {
+                let (mut dx, mut dy) = (0.0f32, 0.0f32);
+                for binding in &tx {
+                    let (bx, by) = self.binding_indices(*binding, &axes, i, j);
+                    dx += self.value_at(*binding, bx, by);
+                }
+                for binding in &ty {
+                    let (bx, by) = self.binding_indices(*binding, &axes, i, j);
+                    dy += self.value_at(*binding, bx, by);
+                }
+                let delta = self.walk.delta_to_world(walk_idx, Vec2::new(dx, dy));
+                let mut at = vec![Value::from(i as u64)];
+                if axes.len() > 1 {
+                    at.push(Value::from(j as u64));
+                }
+                forms.push(serde_json::json!({
+                    "at": at,
+                    "translation": jv2(delta[0], delta[1]),
+                }));
+            }
+        }
+        for binding in &all {
+            self.consumed.insert(*binding);
+        }
+        self.note(
+            "approximated",
+            format!(
+                "translation of node '{}'",
+                self.walk.path_of(self.puppet, walk_idx)
+            ),
+            "node transform translation bindings become a BIND-1 translation_keyforms lattice on the part; values are model-space translations converted at rest orientation (delta_to_world), so the INP local-frame behaviour — the delta rotating with an ancestor's animated rotation, and descendant deformer pivots moving with the node — is not carried (lumen SPEC section 3.2 names both)"
+                .to_string(),
+        );
+        Some(self.lattice_json(&axes, forms))
     }
 
     /// Product of Composite ancestors' opacity for a node.
@@ -1662,8 +1744,11 @@ impl<'a> RigExporter<'a> {
                 let channel = binding.param_name.as_str();
                 let reason = if matches!(binding.values, BindingValues::Deform(_)) {
                     "deformation binding was not consumed by any exporter path".to_string()
+                } else if channel == "transform.t.z" {
+                    "node transform channel transform.t.z has no lumen representation (BIND-1 part translations are 2D)"
+                        .to_string()
                 } else if channel.len() >= 10 && &channel.as_bytes()[..10] == b"transform." {
-                    "node transform channels have no lumen v1 representation (parts carry no transforms); only transform.r.z / s.x / s.y are consumed, as rotation deformers"
+                    "node transform channel was not consumed by any exporter path (transform.r.z / s.x / s.y are consumed as rotation deformers and transform.t.x / t.y as BIND-1 part translation keyforms)"
                         .to_string()
                 } else {
                     format!("property channel '{channel}' has no lumen v1 representation")
@@ -2542,6 +2627,100 @@ mod tests {
         let mut doc = valid_motion();
         doc["frames_per_second"] = serde_json::json!(0);
         assert!(validate_motion(&doc, &ranges(), &physics).is_err());
+    }
+
+    #[test]
+    fn aka_translation_bindings_become_bind1_part_lattices() {
+        // BIND-1 end to end on a real puppet: Aka's
+        // transform.t.x / t.y bindings (126 of them dropped
+        // at the pre-BIND-1 baseline) now land as
+        // translation_keyforms lattices on their parts
+        // wherever they fit the format's 2-axis lattice law
+        // (57 parts; the brow bindings span 3 axes and drop
+        // with that limit named), the retired "parts carry
+        // no transforms" reason appears nowhere, and the
+        // surviving transform.t drops are strictly fewer
+        // than the baseline.
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/example-models/aka/Aka.inx");
+        if !path.exists() {
+            eprintln!("Aka fixture unavailable; BIND-1 bridge test skipped");
+            return;
+        }
+        let mut puppet = crate::guards::load_puppet_guarded(path.to_str().expect("utf8 path"))
+            .expect("Aka loads");
+        let mut walk = Walk::build(&mut puppet);
+        let slot_count = puppet.texture_slots.len();
+        let result = RigExporter::run(&puppet, &mut walk, slot_count).expect("Aka exports");
+
+        let parts = result.model["parts"]
+            .as_array()
+            .expect("model carries parts");
+        let translated: Vec<&Value> = parts
+            .iter()
+            .filter(|part| part.get("translation_keyforms").is_some())
+            .collect();
+        assert!(
+            translated.len() >= 10,
+            "Aka parts carrying BIND-1 lattices: {}",
+            translated.len()
+        );
+        // A named carrier part has a well-formed lattice.
+        let tail = parts
+            .iter()
+            .find(|part| part["id"].as_str() == Some("Tail_3102679707"))
+            .expect("Tail part present");
+        let lattice = tail
+            .get("translation_keyforms")
+            .expect("Tail carries a translation lattice");
+        assert!(!lattice["axes"].as_array().expect("axes").is_empty());
+        assert!(!lattice["forms"].as_array().expect("forms").is_empty());
+        for form in lattice["forms"].as_array().expect("forms") {
+            assert_eq!(
+                form["translation"].as_array().expect("translation").len(),
+                2
+            );
+        }
+        // The brow parts honestly do NOT convert: their
+        // translation bindings span 3 parameter axes
+        // (Head:: Yaw-Pitch x/y plus Eye:: Blink), past the
+        // format's 2-axis lattice law — they drop with that
+        // reason named, not silently.
+        for brow_id in ["Eyebrow_Left_228585614", "Eyebrow_Right_4144177566"] {
+            let brow = parts
+                .iter()
+                .find(|part| part["id"].as_str() == Some(brow_id))
+                .unwrap_or_else(|| panic!("part {brow_id} present"));
+            assert!(
+                brow.get("translation_keyforms").is_none(),
+                "{brow_id} spans 3 axes and must not carry a lattice"
+            );
+        }
+        assert!(
+            result.entries.iter().any(|entry| {
+                entry.verdict == "dropped"
+                    && entry.construct.contains("Eyebrow")
+                    && entry.detail.contains("bindings span 3 parameter axes")
+            }),
+            "the brow drops name the 3-axis lattice limit"
+        );
+        // Accounting: the retired reason is gone, and fewer
+        // transform.t bindings drop than the 126 baseline.
+        let mut transform_t_drops = 0_usize;
+        for entry in &result.entries {
+            assert!(
+                !entry.detail.contains("parts carry no transforms"),
+                "retired drop reason leaked: {}",
+                entry.detail
+            );
+            if entry.verdict == "dropped" && entry.construct.contains("transform.t") {
+                transform_t_drops += 1;
+            }
+        }
+        assert!(
+            transform_t_drops < 126,
+            "transform.t drops fell from the 126 baseline: {transform_t_drops}"
+        );
     }
 
     #[test]
