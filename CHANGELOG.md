@@ -13,7 +13,7 @@
   green, each on its own module-test verify.
 - Toolchain pin: nightly-2026-10-30 (rustc 1.101.0-nightly
   92b5b8c87 2026-10-29, clippy 0.1.101).
-- Gates at the bump: `cargo test --workspace` 101 passed / 0
+- Gates at the bump: `cargo test --workspace` 176+ passed / 0
   failed; `cargo clippy --workspace --all-targets -- -D warnings`
   clean; `cargo fmt --check` clean; no future-incompatibility
   reports.
