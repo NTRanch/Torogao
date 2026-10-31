@@ -2923,6 +2923,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "torogao-jam-laws"
+version = "0.1.0"
+
+[[package]]
 name = "torogao-session"
 version = "0.1.0"
 dependencies = [

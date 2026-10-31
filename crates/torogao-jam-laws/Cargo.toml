@@ -1,0 +1,8 @@
+[package]
+name = "torogao-jam-laws"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Validated jam-program laws, ported for torogao"
+
+[dependencies]
