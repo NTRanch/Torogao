@@ -23,6 +23,36 @@ torogao-session = { path = "../torogao-session" }
 wgpu = "29"
 winit = "0.30"
 
+# The Android build needs a different winit feature set than
+# the desktop build (the E0425 fix — Hands-On game-wave
+# 2026-10-27, applied to this tree by Android stage A-1; two
+# layers, both feature selection, no patch and no upgrade):
+#
+# Layer 1 — the activity backend. android-activity 0.6.1 has
+# NO default backend: with neither feature enabled its
+# cfg-gated `activity_impl` module does not exist, so the
+# build fails with E0583, the crate's own compile_error!
+# ("Either game-activity or native-activity must be
+# enabled"), and E0425 for every backend type input.rs
+# names. The lawful backend is native-activity: the Android
+# packaging (crates/torogao-android/packaging) declares
+# android.app.NativeActivity, and the Gradle-free pipeline
+# ships no GameActivity AAR for the alternative. winit is
+# declared per-target so desktop builds are untouched;
+# egui-winit forwards the same selection to winit.
+#
+# Layer 2 — accesskit. egui-winit 0.35's accesskit feature
+# is optional and is NOT in its default set, and nothing in
+# this graph enables it, so the accesskit_winit limitation
+# (game-activity only) never engages here — unlike eframe
+# 0.32, whose default set carries accesskit and forced the
+# drop on the Hands-On tree. The A-1 gate verifies the
+# resolved Android graph carries no accesskit_winit (cargo
+# tree evidence in the stage's gate report).
+[target.'cfg(target_os = "android")'.dependencies]
+egui-winit = { version = "0.35", features = ["android-native-activity"] }
+winit = { version = "0.30", features = ["android-native-activity"] }
+
 [[bin]]
 name = "torogao-app"
 path = "src/main.rs"

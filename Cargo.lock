@@ -2854,6 +2854,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "torogao-android"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "egui-wgpu",
+ "egui-winit",
+ "serde",
+ "serde_json",
+ "torogao-app",
+ "torogao-engine",
+ "torogao-format",
+ "torogao-session",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
 name = "torogao-app"
 version = "0.1.0"
 dependencies = [
@@ -2911,6 +2928,15 @@ dependencies = [
  "tokio",
  "torogao-author",
  "tungstenite",
+]
+
+[[package]]
+name = "torogao-voice"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "torogao",
 ]
 
 [[package]]

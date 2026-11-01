@@ -1,0 +1,29 @@
+[package]
+name = "torogao-android"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "The Torogao Android shell: the Persona frame in portrait reflow and the Settings area, a presentation of the one session host (AMENDMENT-ANDROID track T5, stage A-1)."
+publish = false
+
+# The Android entry is a cdylib the NativeActivity glue
+# loads (it exports `android_main`); the rlib half lets host
+# targets build and test the shell's platform-neutral logic
+# (layout, settings store, audit, fixture evaluation).
+[lib]
+name = "torogao_android"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+egui = "0.35"
+egui-wgpu = "0.35"
+egui-winit = "0.35"
+serde = { workspace = true }
+serde_json = { workspace = true }
+torogao-app = { path = "../torogao-app" }
+torogao-engine = { path = "../torogao-engine" }
+torogao-format = { path = "../torogao-format" }
+torogao-session = { path = "../torogao-session" }
+wgpu = "29"
+winit = "0.30"

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Torogao Android shell manifest (Stage A-1).
+
+  The Hands-On packaging pattern (its manifest is the
+  estate precedent): a Gradle-free cargo-ndk build hosts
+  the Rust cdylib in a NativeActivity — hasCode=false,
+  the library name in meta-data, native libraries stored
+  uncompressed and extracted at install. The activity is
+  portrait: the Persona frame's reflow is portrait-first
+  (AMENDMENT-ANDROID §3.3 rule 1); landscape behaviour is
+  an A-2 question, not an A-1 improvisation.
+
+  Package id ai.ntranch.torogao follows the estate's
+  package-id pattern (Hands-On ai.ntranch.handson,
+  MoonDeep ai.ntranch.moondeep); it is named here, in the
+  build script, and in GATE-A1 as this stage's choice.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="ai.ntranch.torogao"
+    android:versionCode="1"
+    android:versionName="0.1.0-a1">
+
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
+
+    <application
+        android:label="Torogao"
+        android:hasCode="false"
+        android:debuggable="true"
+        android:extractNativeLibs="true">
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="true"
+            android:screenOrientation="portrait"
+            android:configChanges="orientation|keyboardHidden|screenSize">
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="torogao_android" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
