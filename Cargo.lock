@@ -172,6 +172,16 @@ name = "torogao-app"
 version = "0.1.0"
 
 [[package]]
+name = "torogao-author"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "torogao-format",
+]
+
+[[package]]
 name = "torogao-engine"
 version = "0.1.0"
 dependencies = [
@@ -185,6 +195,15 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "torogao-voice"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "torogao",
 ]
 
 [[package]]

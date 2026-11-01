@@ -1,0 +1,69 @@
+{
+  "provenance": "Shaped from BRIEF-AUTHORING.md §Item 4's census description (the PROTOCOL §3 fields the brief names: part tree, deformer tree, parameter table with classes and 2-axis data, mesh density, draw bands, masks, swaps, expression inventory) plus REPLICATION-SPEC.md §7's ganged eye assembly (eyeball L/R and lid L/R as separately transformable parts under rotation deformers, EyeRoll driving both eyes). The batch-1 census report itself was not in the A1 brief set; no studied rig contributed any value here.",
+  "parts": [
+    {"id": "body", "parent": null, "deformer": null, "drawable": false, "visible": true},
+    {"id": "eye_l", "parent": "head", "deformer": null, "drawable": false, "visible": true},
+    {"id": "eye_r", "parent": "head", "deformer": null, "drawable": false, "visible": true},
+    {"id": "eye_white_l", "parent": "eye_l", "deformer": "face_warp", "drawable": true, "visible": true},
+    {"id": "eye_white_r", "parent": "eye_r", "deformer": "face_warp", "drawable": true, "visible": true},
+    {"id": "eyeball_l", "parent": "eye_l", "deformer": "eyeball_l_rot", "drawable": true, "visible": true},
+    {"id": "eyeball_r", "parent": "eye_r", "deformer": "eyeball_r_rot", "drawable": true, "visible": true},
+    {"id": "face", "parent": "head", "deformer": "face_warp", "drawable": true, "visible": true},
+    {"id": "hair_back", "parent": "body", "deformer": "head_rot", "drawable": true, "visible": true},
+    {"id": "hair_front", "parent": "head", "deformer": "head_rot", "drawable": true, "visible": true},
+    {"id": "head", "parent": "body", "deformer": null, "drawable": false, "visible": true},
+    {"id": "lid_l", "parent": "eye_l", "deformer": "lid_l_rot", "drawable": true, "visible": true},
+    {"id": "lid_r", "parent": "eye_r", "deformer": "lid_r_rot", "drawable": true, "visible": true},
+    {"id": "mouth", "parent": "head", "deformer": null, "drawable": false, "visible": true},
+    {"id": "mouth_closed", "parent": "mouth", "deformer": "mouth_warp", "drawable": true, "visible": true},
+    {"id": "mouth_open", "parent": "mouth", "deformer": "mouth_warp", "drawable": true, "visible": false},
+    {"id": "neck", "parent": "body", "deformer": "neck_rot", "drawable": true, "visible": true},
+    {"id": "torso", "parent": "body", "deformer": "body_rot", "drawable": true, "visible": true}
+  ],
+  "part_depth_max": 3,
+  "deformers": [
+    {"id": "body_rot", "kind": "rotation", "parent": "body_warp", "keyed_on": ["ParamBodyAngleZ"]},
+    {"id": "body_warp", "kind": "warp", "parent": null, "keyed_on": ["ParamBreath"]},
+    {"id": "eyeball_l_rot", "kind": "rotation", "parent": "face_warp", "keyed_on": ["ParamEyeRoll"]},
+    {"id": "eyeball_r_rot", "kind": "rotation", "parent": "face_warp", "keyed_on": ["ParamEyeRoll"]},
+    {"id": "face_warp", "kind": "warp", "parent": "head_rot", "keyed_on": ["ParamAngleX", "ParamAngleY"]},
+    {"id": "head_rot", "kind": "rotation", "parent": "neck_rot", "keyed_on": ["ParamAngleX"]},
+    {"id": "lid_l_rot", "kind": "rotation", "parent": "face_warp", "keyed_on": ["ParamEyeLOpen"]},
+    {"id": "lid_r_rot", "kind": "rotation", "parent": "face_warp", "keyed_on": ["ParamEyeROpen"]},
+    {"id": "mouth_warp", "kind": "warp", "parent": "face_warp", "keyed_on": ["ParamMouthForm"]},
+    {"id": "neck_rot", "kind": "rotation", "parent": "body_rot", "keyed_on": []}
+  ],
+  "deformer_chain_depth_max": 5,
+  "glues": [{"id": "neck_torso", "a": "neck", "b": "torso", "pairs": 2}],
+  "parameters": [
+    {"id": "ParamAngleX", "class": "angle", "min": -30.0, "default": 0.0, "max": 30.0, "neutral": 0.0, "grid_partners": ["ParamAngleY"]},
+    {"id": "ParamAngleY", "class": "angle", "min": -30.0, "default": 0.0, "max": 30.0, "neutral": 0.0, "grid_partners": ["ParamAngleX"]},
+    {"id": "ParamBodyAngleZ", "class": "body", "min": -10.0, "default": 0.0, "max": 10.0, "neutral": 0.0, "grid_partners": []},
+    {"id": "ParamBreath", "class": "body", "min": 0.0, "default": 0.0, "max": 1.0, "neutral": 0.5, "grid_partners": []},
+    {"id": "ParamEyeLOpen", "class": "eye", "min": 0.0, "default": 1.0, "max": 1.0, "neutral": 1.0, "grid_partners": []},
+    {"id": "ParamEyeROpen", "class": "eye", "min": 0.0, "default": 1.0, "max": 1.0, "neutral": 1.0, "grid_partners": []},
+    {"id": "ParamEyeRoll", "class": "eye", "min": 0.0, "default": 0.0, "max": 1.0, "neutral": 0.0, "grid_partners": []},
+    {"id": "ParamMouthForm", "class": "mouth", "min": -1.0, "default": 0.0, "max": 1.0, "neutral": 0.0, "grid_partners": []},
+    {"id": "ParamMouthOpenY", "class": "mouth", "min": 0.0, "default": 0.0, "max": 1.0, "neutral": 0.0, "grid_partners": []}
+  ],
+  "grids": [{"target": "face_warp", "axes": ["ParamAngleX", "ParamAngleY"]}],
+  "draw_bands": [
+    {"band": 0, "parts": ["hair_back"]},
+    {"band": 10, "parts": ["torso", "neck"]},
+    {"band": 20, "parts": ["face"]},
+    {"band": 30, "parts": ["eye_white_l", "eyeball_l", "lid_l", "eye_white_r", "eyeball_r", "lid_r"]},
+    {"band": 40, "parts": ["mouth_closed", "mouth_open"]},
+    {"band": 50, "parts": ["hair_front"]}
+  ],
+  "masks": [
+    {"part": "eyeball_l", "source": "eye_white_l", "inverted": false},
+    {"part": "eyeball_r", "source": "eye_white_r", "inverted": false}
+  ],
+  "expressions": [
+    {"id": "roll", "blend": "override", "parameters": ["ParamEyeLOpen", "ParamEyeROpen", "ParamEyeRoll"], "part_swaps": []},
+    {"id": "smile", "blend": "additive", "parameters": ["ParamEyeLOpen", "ParamEyeROpen", "ParamMouthForm"], "part_swaps": []},
+    {"id": "surprised", "blend": "override", "parameters": ["ParamMouthOpenY"], "part_swaps": [{"part": "mouth_closed", "visible": false}, {"part": "mouth_open", "visible": true}]}
+  ],
+  "mesh_density": {"drawables": 13, "total_vertices": 57, "total_triangles": 32},
+  "lattices": {"count": 10, "all_complete": true}
+}

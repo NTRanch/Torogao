@@ -489,12 +489,15 @@ fn binding_from_payload(
     })
 }
 
-/// The reference Catmull-Rom cubic on scalars.
+/// The reference Catmull-Rom cubic on scalars (the
+/// reference math library's coefficient form, evaluated
+/// in its operation order).
 fn cubic(p0: f32, p1: f32, p2: f32, p3: f32, t: f32) -> f32 {
-    0.5 * (2.0 * p1
-        + (-p0 + p3) * t
-        + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - 3.0 * p3) * t * t
-        + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t * t * t)
+    let a = -0.5 * p0 + 1.5 * p1 - 1.5 * p2 + 0.5 * p3;
+    let b = p0 - 2.5 * p1 + 2.0 * p2 - 0.5 * p3;
+    let c = -0.5 * p0 + 0.5 * p2;
+    let d = p1;
+    a * (t * t * t) + b * (t * t) + c * t + d
 }
 
 /// The reference Catmull-Rom cubic on deformations
@@ -798,9 +801,22 @@ pub fn node_default_value(nodes: &NodeArena, idx: usize, key: &str) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Combinator, MergeMode, Parameter};
+    use super::{Combinator, MergeMode, Parameter, cubic};
     use crate::math::Vec2;
     use serde_json::json;
+
+    #[test]
+    fn cubic_interpolates_endpoints_and_constants() {
+        // The curve passes through p1 at t=0 and p2 at t=1,
+        // and a constant stencil stays constant everywhere;
+        // a wrong t/t^2 coefficient breaks both properties
+        // (at a clamped grid edge p3 == p2 it returned 0).
+        assert_eq!(cubic(3.0, 5.0, 7.0, 11.0, 0.0), 5.0);
+        assert_eq!(cubic(3.0, 5.0, 7.0, 11.0, 1.0), 7.0);
+        for t in [0.25f32, 0.5, 0.75, 1.0] {
+            assert_eq!(cubic(1.0, 1.0, 1.0, 1.0, t), 1.0);
+        }
+    }
 
     #[test]
     fn combinator_avg_divides_by_count_not_weight_sum() {

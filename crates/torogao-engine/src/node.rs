@@ -777,6 +777,16 @@ impl NodeArena {
                     self.node_post_process(idx);
                 }
             }
+            NodeKind::MeshGroup => {
+                // The reference `MeshGroup.postProcess`
+                // calls the superclass pre-process instead:
+                // a mesh group runs its pre-process filter
+                // in the post phase and never runs a
+                // post-process filter (so a group nested in
+                // a dynamic group, whose filter is assigned
+                // to the post phase, is never warped by it).
+                self.drawable_pre_process(idx);
+            }
             _ => {
                 if self.nodes[idx].is_drawable() {
                     self.drawable_post_process(idx);
@@ -934,7 +944,13 @@ impl NodeArena {
             if dynamic {
                 out[i] = new_pos - vertex;
             } else {
-                let inv = center.inverse();
+                // The reference applies only the linear part
+                // of the inverse to the delta: the translation
+                // column is zeroed before the multiply.
+                let mut inv = center.inverse();
+                inv.m[12] = 0.0;
+                inv.m[13] = 0.0;
+                inv.m[14] = 0.0;
                 let diff =
                     inv * Vec4::new(new_pos.x - c_vertex.x, new_pos.y - c_vertex.y, 0.0, 1.0);
                 out[i] += Vec2::new(diff.x, diff.y);

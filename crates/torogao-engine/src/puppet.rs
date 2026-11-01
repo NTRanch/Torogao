@@ -102,6 +102,15 @@ pub struct Puppet {
     pub enable_drivers: bool,
     /// The engine clock.
     pub clock: Clock,
+    /// Whether the node tree's global transforms have not
+    /// yet been through an update pass since load. In the
+    /// reference, a node's stored global transform is only
+    /// composed during update passes, so a physics reset
+    /// issued before the first update reads the anchor from
+    /// the parent's global transform (the node's own local
+    /// transform not yet composed in). Cleared by the first
+    /// update pass, at its transform refresh.
+    pub transforms_stale: bool,
 }
 
 fn malformed(detail: &str) -> TorogaoError {
@@ -291,8 +300,12 @@ fn build_node(
             }
         }
         NodeKind::Composite => {
+            // The reference deserializer falls back to the
+            // legacy default when the key is absent: only an
+            // explicit true enables propagation (the field's
+            // own initializer is overridden on load).
             node.propagate_mesh_group =
-                !matches!(jget(raw, "propagate_meshgroup"), Value::Bool(false));
+                matches!(jget(raw, "propagate_meshgroup"), Value::Bool(true));
             node.opacity = jnum(raw, "opacity", 1.0) as f32;
             node.comp_threshold = jnum(raw, "threshold", 0.5) as f32;
             node.tint = vec3_of(jget(raw, "tint"), Vec3::ONE);
@@ -412,6 +425,7 @@ impl Puppet {
             render_parameters: true,
             enable_drivers: true,
             clock: Clock::default(),
+            transforms_stale: true,
         };
         puppet.finalize()?;
         Ok(puppet)
@@ -569,6 +583,7 @@ impl Puppet {
             }
         }
         self.nodes.transform_changed(root);
+        self.transforms_stale = false;
         if self.render_parameters && self.enable_drivers {
             let drivers = self.drivers.clone();
             for driver in drivers {
@@ -629,11 +644,36 @@ impl Puppet {
         }
     }
 
+    /// The anchor a physics reset reads: before the first
+    /// update pass, the reference's stored global transform
+    /// for the node does not yet include the node's own
+    /// local transform, so the anchor is the parent's global
+    /// position (the origin for a parentless node); after an
+    /// update pass it is the node's composed global position.
+    /// Local-only drivers always read their local translation.
+    fn physics_reset_anchor(&mut self, idx: usize) -> Vec2 {
+        let local_only = self.nodes.nodes[idx]
+            .physics
+            .as_ref()
+            .map(|s| s.local_only)
+            .unwrap_or(false);
+        if local_only || !self.transforms_stale {
+            return self.physics_anchor(idx);
+        }
+        match self.nodes.nodes[idx].parent {
+            Some(parent) => {
+                let global = self.nodes.transform(parent);
+                (global.trs * Vec4::new(0.0, 0.0, 0.0, 1.0)).xy()
+            }
+            None => Vec2::ZERO,
+        }
+    }
+
     /// Resets one physics driver: refresh the anchor, build
     /// a fresh system hanging below it (the reference
     /// `SimplePhysics.reset`).
     pub fn physics_reset(&mut self, idx: usize) {
-        let anchor = self.physics_anchor(idx);
+        let anchor = self.physics_reset_anchor(idx);
         let node = &mut self.nodes.nodes[idx];
         let Some(state) = node.physics.as_mut() else {
             return;
@@ -734,6 +774,15 @@ impl Puppet {
         let mut local_angle = local_pos.xy();
         local_angle.normalize();
         let rel_length = output.distance(anchor) / length;
+        // The division by pi is deliberately done in f64.
+        // The reference stores the quotient in an f32, but
+        // its pi constant is extended precision, so the
+        // division itself is evaluated above f32 precision
+        // and rounded once on store. Measured on the RP2
+        // corpus: an f32-pi quotient disagrees with the
+        // reference on about 35% of inputs (by 1 ulp),
+        // while this f64 path matches; see the G-17 section
+        // of GATE-REPORT-RP2.md.
         let angle = (-local_angle.x).atan2(local_angle.y) as f64 / std::f64::consts::PI;
         let p = match map_mode {
             1 => {

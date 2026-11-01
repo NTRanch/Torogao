@@ -268,74 +268,103 @@ impl Mat4 {
     /// singular matrix the reference produces infinities/NaNs
     /// by division; this mirrors the arithmetic without
     /// guarding it.
+    /// The matrix inverse. The cofactor expressions and
+    /// the determinant use the reference math library's
+    /// exact term order, and every cofactor is scaled by
+    /// the reciprocal of the determinant, so results
+    /// agree with the reference bit-for-bit (long sums of
+    /// large-magnitude products round differently under
+    /// any other association).
     pub fn inverse(&self) -> Mat4 {
         let a = &self.m;
         let mut inv = [0.0f32; 16];
-        inv[0] = a[5] * a[10] * a[15] - a[5] * a[11] * a[14] - a[9] * a[6] * a[15]
-            + a[9] * a[7] * a[14]
-            + a[13] * a[6] * a[11]
-            - a[13] * a[7] * a[10];
-        inv[4] = -a[4] * a[10] * a[15] + a[4] * a[11] * a[14] + a[8] * a[6] * a[15]
-            - a[8] * a[7] * a[14]
-            - a[12] * a[6] * a[11]
-            + a[12] * a[7] * a[10];
-        inv[8] = a[4] * a[9] * a[15] - a[4] * a[11] * a[13] - a[8] * a[5] * a[15]
-            + a[8] * a[7] * a[13]
-            + a[12] * a[5] * a[11]
-            - a[12] * a[7] * a[9];
-        inv[12] = -a[4] * a[9] * a[14] + a[4] * a[10] * a[13] + a[8] * a[5] * a[14]
-            - a[8] * a[6] * a[13]
-            - a[12] * a[5] * a[10]
-            + a[12] * a[6] * a[9];
-        inv[1] = -a[1] * a[10] * a[15] + a[1] * a[11] * a[14] + a[9] * a[2] * a[15]
-            - a[9] * a[3] * a[14]
-            - a[13] * a[2] * a[11]
-            + a[13] * a[3] * a[10];
-        inv[5] = a[0] * a[10] * a[15] - a[0] * a[11] * a[14] - a[8] * a[2] * a[15]
-            + a[8] * a[3] * a[14]
-            + a[12] * a[2] * a[11]
-            - a[12] * a[3] * a[10];
-        inv[9] = -a[0] * a[9] * a[15] + a[0] * a[11] * a[13] + a[8] * a[1] * a[15]
-            - a[8] * a[3] * a[13]
-            - a[12] * a[1] * a[11]
-            + a[12] * a[3] * a[9];
-        inv[13] = a[0] * a[9] * a[14] - a[0] * a[10] * a[13] - a[8] * a[1] * a[14]
-            + a[8] * a[2] * a[13]
-            + a[12] * a[1] * a[10]
-            - a[12] * a[2] * a[9];
-        inv[2] = a[1] * a[6] * a[15] - a[1] * a[7] * a[14] - a[5] * a[2] * a[15]
-            + a[5] * a[3] * a[14]
-            + a[13] * a[2] * a[7]
-            - a[13] * a[3] * a[6];
-        inv[6] = -a[0] * a[6] * a[15] + a[0] * a[7] * a[14] + a[4] * a[2] * a[15]
-            - a[4] * a[3] * a[14]
-            - a[12] * a[2] * a[7]
-            + a[12] * a[3] * a[6];
-        inv[10] = a[0] * a[5] * a[15] - a[0] * a[7] * a[13] - a[4] * a[1] * a[15]
-            + a[4] * a[3] * a[13]
-            + a[12] * a[1] * a[7]
-            - a[12] * a[3] * a[5];
-        inv[14] = -a[0] * a[5] * a[14] + a[0] * a[6] * a[13] + a[4] * a[1] * a[14]
-            - a[4] * a[2] * a[13]
-            - a[12] * a[1] * a[6]
-            + a[12] * a[2] * a[4];
-        inv[3] = -a[1] * a[6] * a[11] + a[1] * a[7] * a[10] + a[5] * a[2] * a[11]
-            - a[5] * a[3] * a[10]
-            - a[9] * a[2] * a[7]
-            + a[9] * a[3] * a[6];
-        inv[7] = a[0] * a[6] * a[11] - a[0] * a[7] * a[10] - a[4] * a[2] * a[11]
-            + a[4] * a[3] * a[10]
-            + a[8] * a[2] * a[7]
-            - a[8] * a[3] * a[6];
-        inv[11] = -a[0] * a[5] * a[11] + a[0] * a[6] * a[10] + a[4] * a[2] * a[11]
-            - a[4] * a[6] * a[10]
-            - a[8] * a[2] * a[7]
-            + a[8] * a[3] * a[6];
-        inv[15] = a[0] * a[5] * a[7] - a[0] * a[6] * a[6] - a[4] * a[1] * a[7]
-            + a[4] * a[2] * a[6]
-            + a[8] * a[1] * a[6]
-            - a[8] * a[2] * a[5];
-        let det = a[0] * inv[0] + a[1] * inv[4] + a[2] * inv[8] + a[3] * inv[12];
+        inv[0] = a[5] * a[10] * a[15] + a[9] * a[14] * a[7] + a[13] * a[6] * a[11]
+            - a[5] * a[14] * a[11]
+            - a[9] * a[6] * a[15]
+            - a[13] * a[10] * a[7];
+        inv[4] = a[4] * a[14] * a[11] + a[8] * a[6] * a[15] + a[12] * a[10] * a[7]
+            - a[4] * a[10] * a[15]
+            - a[8] * a[14] * a[7]
+            - a[12] * a[6] * a[11];
+        inv[8] = a[4] * a[9] * a[15] + a[8] * a[13] * a[7] + a[12] * a[5] * a[11]
+            - a[4] * a[13] * a[11]
+            - a[8] * a[5] * a[15]
+            - a[12] * a[9] * a[7];
+        inv[12] = a[4] * a[13] * a[10] + a[8] * a[5] * a[14] + a[12] * a[9] * a[6]
+            - a[4] * a[9] * a[14]
+            - a[8] * a[13] * a[6]
+            - a[12] * a[5] * a[10];
+        inv[1] = a[1] * a[14] * a[11] + a[9] * a[2] * a[15] + a[13] * a[10] * a[3]
+            - a[1] * a[10] * a[15]
+            - a[9] * a[14] * a[3]
+            - a[13] * a[2] * a[11];
+        inv[5] = a[0] * a[10] * a[15] + a[8] * a[14] * a[3] + a[12] * a[2] * a[11]
+            - a[0] * a[14] * a[11]
+            - a[8] * a[2] * a[15]
+            - a[12] * a[10] * a[3];
+        inv[9] = a[0] * a[13] * a[11] + a[8] * a[1] * a[15] + a[12] * a[9] * a[3]
+            - a[0] * a[9] * a[15]
+            - a[8] * a[13] * a[3]
+            - a[12] * a[1] * a[11];
+        inv[13] = a[0] * a[9] * a[14] + a[8] * a[13] * a[2] + a[12] * a[1] * a[10]
+            - a[0] * a[13] * a[10]
+            - a[8] * a[1] * a[14]
+            - a[12] * a[9] * a[2];
+        inv[2] = a[1] * a[6] * a[15] + a[5] * a[14] * a[3] + a[13] * a[2] * a[7]
+            - a[1] * a[14] * a[7]
+            - a[5] * a[2] * a[15]
+            - a[13] * a[6] * a[3];
+        inv[6] = a[0] * a[14] * a[7] + a[4] * a[2] * a[15] + a[12] * a[6] * a[3]
+            - a[0] * a[6] * a[15]
+            - a[4] * a[14] * a[3]
+            - a[12] * a[2] * a[7];
+        inv[10] = a[0] * a[5] * a[15] + a[4] * a[13] * a[3] + a[12] * a[1] * a[7]
+            - a[0] * a[13] * a[7]
+            - a[4] * a[1] * a[15]
+            - a[12] * a[5] * a[3];
+        inv[14] = a[0] * a[13] * a[6] + a[4] * a[1] * a[14] + a[12] * a[5] * a[2]
+            - a[0] * a[5] * a[14]
+            - a[4] * a[13] * a[2]
+            - a[12] * a[1] * a[6];
+        inv[3] = a[1] * a[10] * a[7] + a[5] * a[2] * a[11] + a[9] * a[6] * a[3]
+            - a[1] * a[6] * a[11]
+            - a[5] * a[10] * a[3]
+            - a[9] * a[2] * a[7];
+        inv[7] = a[0] * a[6] * a[11] + a[4] * a[10] * a[3] + a[8] * a[2] * a[7]
+            - a[0] * a[10] * a[7]
+            - a[4] * a[2] * a[11]
+            - a[8] * a[6] * a[3];
+        inv[11] = a[0] * a[9] * a[7] + a[4] * a[1] * a[11] + a[8] * a[5] * a[3]
+            - a[0] * a[5] * a[11]
+            - a[4] * a[9] * a[3]
+            - a[8] * a[1] * a[7];
+        inv[15] = a[0] * a[5] * a[10] + a[4] * a[9] * a[2] + a[8] * a[1] * a[6]
+            - a[0] * a[9] * a[6]
+            - a[4] * a[1] * a[10]
+            - a[8] * a[5] * a[2];
+        let det =
+            a[12] * a[9] * a[6] * a[3] - a[8] * a[13] * a[6] * a[3] - a[12] * a[5] * a[10] * a[3]
+                + a[4] * a[13] * a[10] * a[3]
+                + a[8] * a[5] * a[14] * a[3]
+                - a[4] * a[9] * a[14] * a[3]
+                - a[12] * a[9] * a[2] * a[7]
+                + a[8] * a[13] * a[2] * a[7]
+                + a[12] * a[1] * a[10] * a[7]
+                - a[0] * a[13] * a[10] * a[7]
+                - a[8] * a[1] * a[14] * a[7]
+                + a[0] * a[9] * a[14] * a[7]
+                + a[12] * a[5] * a[2] * a[11]
+                - a[4] * a[13] * a[2] * a[11]
+                - a[12] * a[1] * a[6] * a[11]
+                + a[0] * a[13] * a[6] * a[11]
+                + a[4] * a[1] * a[14] * a[11]
+                - a[0] * a[5] * a[14] * a[11]
+                - a[8] * a[5] * a[2] * a[15]
+                + a[4] * a[9] * a[2] * a[15]
+                + a[8] * a[1] * a[6] * a[15]
+                - a[0] * a[9] * a[6] * a[15]
+                - a[4] * a[1] * a[10] * a[15]
+                + a[0] * a[5] * a[10] * a[15];
         let inv_det = 1.0 / det;
         let mut out = Mat4::ZERO;
         for (i, cell) in inv.iter().enumerate() {
@@ -384,9 +413,18 @@ pub struct Mat3 {
 
 impl Mat3 {
     /// Builds a matrix from nine elements in the reference
-    /// constructor's array order.
+    /// constructor's array order. The reference constructor
+    /// fills its matrix row by row, while this storage is
+    /// column-major, so the elements are transposed on
+    /// store: `values[row * 3 + col]` lands at
+    /// `m[col * 3 + row]`.
     pub fn from_array(values: [f32; 9]) -> Mat3 {
-        Mat3 { m: values }
+        Mat3 {
+            m: [
+                values[0], values[3], values[6], values[1], values[4], values[7], values[2],
+                values[5], values[8],
+            ],
+        }
     }
 }
 
@@ -435,6 +473,19 @@ mod tests {
     use super::{Mat4, Vec2, Vec3, Vec4};
 
     #[test]
+    fn mat3_from_array_uses_reference_row_major_order() {
+        // The reference constructor fills row by row, so
+        // [1, 2, 3, 4, 5, 6, 0, 0, 1] is the matrix with
+        // rows (1, 2, 3) and (4, 5, 6): applying it to
+        // (1, 1, 1) must give (1 + 2 + 3, 4 + 5 + 6, 1).
+        // Storing the array verbatim in column-major order
+        // transposed every literal-built warp matrix.
+        let m = super::Mat3::from_array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 0.0, 0.0, 1.0]);
+        let p = m * Vec3::new(1.0, 1.0, 1.0);
+        assert_eq!(p, Vec3::new(6.0, 15.0, 1.0));
+    }
+
+    #[test]
     fn translation_matrix_moves_points() {
         let m = Mat4::translation(Vec3::new(10.0, 20.0, 0.0));
         let p = m * Vec4::new(1.0, 2.0, 0.0, 1.0);
@@ -446,7 +497,33 @@ mod tests {
         let m = Mat4::translation(Vec3::new(3.0, -4.0, 0.0)) * Mat4::scaling(2.0, 4.0, 1.0);
         let inv = m.inverse();
         let p = inv * (m * Vec4::new(1.0, 1.0, 0.0, 1.0));
-        assert!((p.x - 1.0).abs() < 1e-6 && (p.y - 1.0).abs() < 1e-6);
+        assert!(
+            (p.x - 1.0).abs() < 1e-6
+                && (p.y - 1.0).abs() < 1e-6
+                && p.z.abs() < 1e-6
+                && (p.w - 1.0).abs() < 1e-6
+        );
+    }
+
+    #[test]
+    fn inverse_of_identity_is_identity() {
+        let inv = Mat4::identity().inverse();
+        for (i, cell) in inv.m.iter().enumerate() {
+            let want = if i % 5 == 0 { 1.0 } else { 0.0 };
+            assert_eq!(*cell, want, "element {i}");
+        }
+    }
+
+    #[test]
+    fn inverse_multiplies_back_to_identity_on_all_elements() {
+        let m = Mat4::translation(Vec3::new(-7.0, 11.0, 3.0))
+            * Mat4::euler_rotation(0.3, -0.2, 0.9)
+            * Mat4::scaling(1.5, 0.75, 2.0);
+        let product = m * m.inverse();
+        for (i, cell) in product.m.iter().enumerate() {
+            let want = if i % 5 == 0 { 1.0 } else { 0.0 };
+            assert!((cell - want).abs() < 1e-5, "element {i}: {cell}");
+        }
     }
 
     #[test]
