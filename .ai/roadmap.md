@@ -3,6 +3,8 @@
 
 How to work this roadmap (any agent): run `bloch task start R-xxx --agent <you>` before working a task, `bloch task done R-xxx` when you believe it is complete — done runs every `verify:` command and flips the task green only if all pass; there is no override. `bloch task fail R-xxx --error "..."` records a failure. Fixes learned the hard way land in `.ai/memory/lessons.md` via the inbox/promote flow and are surfaced in every HANDOFF.
 
+Note (2026-11-01): the tree's version was corrected from 1.0.0 to 0.4.0 (see the version-correction entry in CHANGELOG.md and the programme's VERSION-ASSESSMENT.md). Phases 1–6 of this roadmap stand unchecked, exactly as the audit found them — no item has been flipped on the strength of the 2026-10-31 bump, and R-601's 1.0.0 bump remains future work that closes only on gate evidence.
+
 ## Phase 1 — Baseline truth
 - [ ] R-101 Classify this repo (mcp, game, app, education, or tutorial), then regenerate this roadmap with `bloch init --kind <kind>` on a branch
   - verify: test -f .ai/roadmap.md

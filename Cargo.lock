@@ -3108,7 +3108,7 @@ dependencies = [
 
 [[package]]
 name = "torogao"
-version = "1.0.0"
+version = "0.4.0"
 dependencies = [
  "lumen-rig-core",
  "rmcp",
@@ -3121,7 +3121,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-app"
-version = "1.0.0"
+version = "0.4.0"
 dependencies = [
  "bytemuck",
  "egui",
@@ -3143,7 +3143,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-author"
-version = "1.0.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3153,7 +3153,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-companion"
-version = "1.0.0"
+version = "0.4.0"
 dependencies = [
  "egui",
  "egui-wgpu",
@@ -3172,7 +3172,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-engine"
-version = "1.0.0"
+version = "0.4.0"
 dependencies = [
  "serde_json",
  "torogao-format",
@@ -3180,7 +3180,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-format"
-version = "1.0.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3188,11 +3188,11 @@ dependencies = [
 
 [[package]]
 name = "torogao-jam-laws"
-version = "1.0.0"
+version = "0.4.0"
 
 [[package]]
 name = "torogao-session"
-version = "1.0.0"
+version = "0.4.0"
 dependencies = [
  "rmcp",
  "serde",
@@ -3223,7 +3223,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-voice"
-version = "1.0.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",

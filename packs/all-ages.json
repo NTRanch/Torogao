@@ -1,7 +1,7 @@
 {
   "format": "torogao-pack/1",
   "name": "all-ages",
-  "version": "1.0.0",
+  "version": "0.4.0",
   "lane": "all-ages",
   "title": "All-ages lane pack",
   "ratingRules": {
