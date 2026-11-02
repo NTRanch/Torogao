@@ -94,10 +94,16 @@ pub fn decide(state: Option<&Project>, op: &Op, observed: &Observed) -> Result<V
         Op::PartDrawOrderSet(inputs) => decide_draw(project, inputs),
         Op::MeshSet(inputs) => decide_mesh_set(project, inputs),
         Op::MeshTrim(inputs) => decide_mesh_trim(project, &inputs.part),
-        Op::ClockDefine(_)
+        Op::ChoiceDefine(_)
+        | Op::ClockDefine(_)
+        | Op::EndingDefine(_)
+        | Op::GalleryEntryDefine(_)
         | Op::GameDefine(_)
         | Op::GameSaveSchemaDefine(_)
-        | Op::RngStreamDefine(_) => crate::game::decide_game(project, op),
+        | Op::RngStreamDefine(_)
+        | Op::SceneBindRig(_)
+        | Op::SceneExitDefine(_)
+        | Op::ScheduleDefine(_) => crate::game::decide_game(project, op),
         Op::PhysicsForcesSet(_) | Op::PhysicsGroupDefine(_) | Op::PhysicsGroupRemove(_) => {
             crate::physics::decide_physics(project, op)
         }

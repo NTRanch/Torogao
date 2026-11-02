@@ -9,12 +9,25 @@
 //! §G3.1 tick skeleton with its per-tick state-hash chain, the
 //! deterministic RNG, and the typed checkers behind
 //! `TG-GAME-EXPR`, `TG-GAME-TIER`, and `TG-GAME-TABLE`. The
-//! remaining seventeen game verbs are refused by name with
-//! their slice (G2), exactly as later rig slices were refused
-//! in A1; the scene/dialogue checkers behind `TG-GAME-GRAPH`
-//! arrive with the scenes they check (G2.4), but the class is
-//! already live: `game_simulate` refuses a `choice` input with
-//! it, because no choices exist to honour yet.
+//! remaining game verbs are refused by name with their slice
+//! (G2), exactly as later rig slices were refused in A1; the
+//! scene/dialogue checkers behind `TG-GAME-GRAPH` arrive with
+//! the scenes they check (G2.4), but the class is already live:
+//! `game_simulate` refuses a `choice` input with it, because no
+//! choices exist to honour yet.
+//!
+//! The convergence step (post-G1) lands the six flow verbs the
+//! Phase 2 trunk deferred — `choice_define`, `ending_define`,
+//! `gallery_entry_define`, `schedule_define`,
+//! `scene_bind_rig`, `scene_exit_define` — as authoring records
+//! over this branch's G1 core. Their scene/character/condition/
+//! effect-set references are forward references (the posture
+//! below), because the verbs that define those families are
+//! still refused here; the checks this branch can honestly run
+//! (schedule coverage against the clock, binding targets
+//! against rig expressions and motions, gallery thumbnails
+//! against assets, ending-priority uniqueness, the
+//! unconditional-option rule) run at define time.
 //!
 //! Two G1 honesties, stated once here: `game_define`'s
 //! `start_scene` is a forward reference (§G2.1 delegates its
@@ -34,8 +47,10 @@ use crate::decide::{Verdict, check_id};
 use crate::intake::sha256_hex;
 use crate::limits;
 use crate::model::{
-    AssignValue, GameClock, GameDef, InitialAssignment, Migration, Project, RngStream,
-    SaveContextPolicy, SaveSchema, SlotHolds,
+    AssignValue, ChoiceOption, ChoiceOrigin, ChoiceTarget, GalleryEntry, GalleryUnlock, GameChoice,
+    GameClock, GameDef, GameEnding, InitialAssignment, Migration, Project, RngStream,
+    SaveContextPolicy, SaveSchema, SceneBinding, SceneExit, SceneSchedule, ScheduleOverride,
+    ScheduleSlot, SlotHolds,
 };
 use crate::op::Op;
 use crate::refusal::{Refusal, RefusalClass, refuse};
@@ -143,7 +158,7 @@ pub const GAME_MANIFEST: &[GameVerbSpec] = &[
         "choice_define",
         "characters, scenes, dialogue, choices",
         true,
-        false,
+        true,
         "G2"
     ),
     gverb!(
@@ -157,14 +172,14 @@ pub const GAME_MANIFEST: &[GameVerbSpec] = &[
         "schedule_define",
         "characters, scenes, dialogue, choices",
         true,
-        false,
+        true,
         "G2"
     ),
     gverb!(
         "scene_bind_rig",
         "characters, scenes, dialogue, choices",
         true,
-        false,
+        true,
         "G2"
     ),
     gverb!(
@@ -178,18 +193,18 @@ pub const GAME_MANIFEST: &[GameVerbSpec] = &[
         "scene_exit_define",
         "characters, scenes, dialogue, choices",
         true,
-        false,
+        true,
         "G2"
     ),
     // Triggers (§G2.5) — slice G2.
     gverb!("trigger_define", "triggers", true, false, "G2"),
     // Endings and gallery (§G2.6) — slice G2.
-    gverb!("ending_define", "endings and gallery", true, false, "G2"),
+    gverb!("ending_define", "endings and gallery", true, true, "G2"),
     gverb!(
         "gallery_entry_define",
         "endings and gallery",
         true,
-        false,
+        true,
         "G2"
     ),
 ];
@@ -207,7 +222,7 @@ pub fn game_refusal(verb: &str) -> Refusal {
         Some(spec) => Refusal::new(
             RefusalClass::UnknownKind,
             format!(
-                "verb '{verb}' belongs to AUTH-G slice {}; it is not implemented in G1",
+                "verb '{verb}' belongs to AUTH-G slice {}; it is not implemented on this branch",
                 spec.slice
             ),
         ),
@@ -386,6 +401,272 @@ pub struct GameSimulateInput {
     pub choice_log: Vec<ChoiceLogEntry>,
 }
 
+/// An expression in verb inputs (§G2.3): the JSON mirror of
+/// [`Expr`], kind-tagged like the save policy. Comparison and
+/// arithmetic operators travel as names and are validated by
+/// decide() before any builder runs.
+#[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case", tag = "kind")]
+pub enum ExprInput {
+    /// Boolean conjunction.
+    And {
+        /// Left operand.
+        left: Box<ExprInput>,
+        /// Right operand.
+        right: Box<ExprInput>,
+    },
+    /// An integer operation; `op` is add|sub|mul|min|max.
+    Arith {
+        /// The operator name.
+        op: String,
+        /// Left operand.
+        left: Box<ExprInput>,
+        /// Right operand.
+        right: Box<ExprInput>,
+    },
+    /// A boolean literal.
+    BoolLit {
+        /// The literal.
+        value: bool,
+    },
+    /// `clamp(value, lo, hi)`.
+    Clamp {
+        /// The clamped value.
+        value: Box<ExprInput>,
+        /// Lower bound.
+        lo: Box<ExprInput>,
+        /// Upper bound.
+        hi: Box<ExprInput>,
+    },
+    /// The current day.
+    ClockDay,
+    /// Days remaining before the day limit.
+    ClockDaysRemaining,
+    /// The current slot index.
+    ClockSlot,
+    /// The current weekday index.
+    ClockWeekday,
+    /// A comparison; `op` is eq|ne|lt|le|gt|ge.
+    Compare {
+        /// The operator name.
+        op: String,
+        /// Left operand.
+        left: Box<ExprInput>,
+        /// Right operand.
+        right: Box<ExprInput>,
+    },
+    /// A flag reference.
+    Flag {
+        /// The flag id.
+        id: String,
+    },
+    /// An integer literal.
+    Lit {
+        /// The literal.
+        value: i64,
+    },
+    /// Boolean negation.
+    Not {
+        /// The negated operand.
+        inner: Box<ExprInput>,
+    },
+    /// Boolean disjunction.
+    Or {
+        /// Left operand.
+        left: Box<ExprInput>,
+        /// Right operand.
+        right: Box<ExprInput>,
+    },
+    /// A stat reference.
+    Stat {
+        /// The stat id.
+        id: String,
+    },
+    /// The tier index of a stat.
+    TierOf {
+        /// The stat id.
+        stat: String,
+    },
+    /// A named-value reference.
+    ValueRef {
+        /// The value id.
+        id: String,
+    },
+}
+
+/// Where a choice option leads, in verb inputs.
+#[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case", tag = "kind")]
+pub enum ChoiceTargetInput {
+    /// The ending evaluation point.
+    EndingCheck,
+    /// A scene exit, by id.
+    Exit {
+        /// The exit id.
+        id: String,
+    },
+    /// A dialogue line, by id.
+    Line {
+        /// The line id.
+        id: String,
+    },
+}
+
+/// One option in `choice_define` inputs.
+#[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChoiceOptionInput {
+    /// Option id.
+    pub id: String,
+    /// Content id of the label text.
+    pub label_ref: String,
+    /// Condition id gating visibility.
+    #[serde(default)]
+    pub visible_if: Option<String>,
+    /// Condition id gating enablement.
+    #[serde(default)]
+    pub enabled_if: Option<String>,
+    /// Integer sort expression.
+    #[serde(default)]
+    pub sort: Option<ExprInput>,
+    /// Origin tag: `player` or `alter_ego`.
+    pub origin: String,
+    /// Effect set id applied on taking the option.
+    #[serde(default)]
+    pub effect_set: Option<String>,
+    /// Where the option leads.
+    pub target: ChoiceTargetInput,
+}
+
+/// Inputs of `choice_define`.
+#[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChoiceDefineInput {
+    /// Choice id.
+    pub id: String,
+    /// The scene the choice belongs to.
+    pub scene: String,
+    /// The prompt line id.
+    #[serde(default)]
+    pub prompt_line: Option<String>,
+    /// The options, in authored order.
+    pub options: Vec<ChoiceOptionInput>,
+}
+
+/// Inputs of `ending_define`.
+#[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EndingDefineInput {
+    /// Ending id.
+    pub id: String,
+    /// The condition id that must hold.
+    pub condition: String,
+    /// Evaluation priority (unique across endings).
+    pub priority: i64,
+    /// The epilogue scene id.
+    pub epilogue_scene: String,
+}
+
+/// How a gallery entry unlocks, in verb inputs.
+#[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case", tag = "kind")]
+pub enum GalleryUnlockInput {
+    /// Auto-unlock under this condition id.
+    Condition {
+        /// The condition id.
+        id: String,
+    },
+    /// An effect set's `unlock_gallery` atom names the entry.
+    Effect,
+}
+
+/// Inputs of `gallery_entry_define`.
+#[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GalleryEntryDefineInput {
+    /// Entry id.
+    pub id: String,
+    /// The gallery category.
+    pub category: String,
+    /// How the entry unlocks.
+    pub unlock: GalleryUnlockInput,
+    /// The replay target scene id.
+    pub replay_scene: String,
+    /// The replay target entry line id.
+    pub replay_line: String,
+    /// Thumbnail asset id.
+    #[serde(default)]
+    pub thumbnail: Option<String>,
+}
+
+/// One slot → scene row in `schedule_define` inputs.
+#[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduleSlotInput {
+    /// The clock slot name.
+    pub slot: String,
+    /// The scene id.
+    pub scene: String,
+}
+
+/// One condition override in `schedule_define` inputs.
+#[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduleOverrideInput {
+    /// The condition id.
+    pub condition: String,
+    /// The scene id.
+    pub scene: String,
+}
+
+/// Inputs of `schedule_define`.
+#[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduleDefineInput {
+    /// The character id.
+    pub character: String,
+    /// Slot → scene rows: every clock slot, exactly once.
+    pub slots: Vec<ScheduleSlotInput>,
+    /// Ordered condition overrides.
+    #[serde(default)]
+    pub overrides: Vec<ScheduleOverrideInput>,
+}
+
+/// Inputs of `scene_bind_rig`.
+#[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SceneBindRigInput {
+    /// The scene id.
+    pub scene: String,
+    /// The participant (character) id.
+    pub participant: String,
+    /// The rig model id.
+    pub rig_model: String,
+    /// The entry expression id (a rig expression).
+    pub entry_expression: String,
+    /// The entry motion id (a motion clip).
+    #[serde(default)]
+    pub entry_motion: Option<String>,
+}
+
+/// Inputs of `scene_exit_define`.
+#[derive(Clone, Debug, Deserialize, PartialEq, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SceneExitDefineInput {
+    /// The scene the exit leaves.
+    pub scene: String,
+    /// Exit id, unique within the scene.
+    pub id: String,
+    /// The target scene id.
+    pub target: String,
+    /// Condition id gating the exit.
+    #[serde(default)]
+    pub condition: Option<String>,
+    /// Effect set id applied on traversal.
+    #[serde(default)]
+    pub effect_set: Option<String>,
+}
+
 // ---- record builders ----------------------------------------------
 // Each builder canonicalizes its inputs into the stored record.
 // decide() identity checks and apply() both go through them, so
@@ -556,6 +837,329 @@ pub fn schema_inputs(schema: &SaveSchema) -> SaveSchemaDefineInput {
     }
 }
 
+/// The canonical expression for these inputs. Operator names
+/// are validated by decide() before this runs; an unvalidated
+/// name maps to the first operator, the `slot_holds` posture.
+pub fn expr_record(inputs: &ExprInput) -> Expr {
+    match inputs {
+        ExprInput::And { left, right } => {
+            Expr::And(Box::new(expr_record(left)), Box::new(expr_record(right)))
+        }
+        ExprInput::Arith { op, left, right } => Expr::Arith(
+            match op.as_str() {
+                "sub" => Arith::Sub,
+                "mul" => Arith::Mul,
+                "min" => Arith::Min,
+                "max" => Arith::Max,
+                _ => Arith::Add,
+            },
+            Box::new(expr_record(left)),
+            Box::new(expr_record(right)),
+        ),
+        ExprInput::BoolLit { value } => Expr::BoolLit(*value),
+        ExprInput::Clamp { value, lo, hi } => Expr::Clamp(
+            Box::new(expr_record(value)),
+            Box::new(expr_record(lo)),
+            Box::new(expr_record(hi)),
+        ),
+        ExprInput::ClockDay => Expr::ClockDay,
+        ExprInput::ClockDaysRemaining => Expr::ClockDaysRemaining,
+        ExprInput::ClockSlot => Expr::ClockSlot,
+        ExprInput::ClockWeekday => Expr::ClockWeekday,
+        ExprInput::Compare { op, left, right } => Expr::Compare(
+            match op.as_str() {
+                "ne" => Cmp::Ne,
+                "lt" => Cmp::Lt,
+                "le" => Cmp::Le,
+                "gt" => Cmp::Gt,
+                "ge" => Cmp::Ge,
+                _ => Cmp::Eq,
+            },
+            Box::new(expr_record(left)),
+            Box::new(expr_record(right)),
+        ),
+        ExprInput::Flag { id } => Expr::Flag(id.clone()),
+        ExprInput::Lit { value } => Expr::Lit(*value),
+        ExprInput::Not { inner } => Expr::Not(Box::new(expr_record(inner))),
+        ExprInput::Or { left, right } => {
+            Expr::Or(Box::new(expr_record(left)), Box::new(expr_record(right)))
+        }
+        ExprInput::Stat { id } => Expr::Stat(id.clone()),
+        ExprInput::TierOf { stat } => Expr::TierOf(stat.clone()),
+        ExprInput::ValueRef { id } => Expr::ValueRef(id.clone()),
+    }
+}
+
+/// The inputs that rebuild this expression (validation sweep).
+pub fn expr_input(expr: &Expr) -> ExprInput {
+    match expr {
+        Expr::And(left, right) => ExprInput::And {
+            left: Box::new(expr_input(left)),
+            right: Box::new(expr_input(right)),
+        },
+        Expr::Arith(op, left, right) => ExprInput::Arith {
+            op: match op {
+                Arith::Add => "add",
+                Arith::Sub => "sub",
+                Arith::Mul => "mul",
+                Arith::Min => "min",
+                Arith::Max => "max",
+            }
+            .to_string(),
+            left: Box::new(expr_input(left)),
+            right: Box::new(expr_input(right)),
+        },
+        Expr::BoolLit(value) => ExprInput::BoolLit { value: *value },
+        Expr::Clamp(value, lo, hi) => ExprInput::Clamp {
+            value: Box::new(expr_input(value)),
+            lo: Box::new(expr_input(lo)),
+            hi: Box::new(expr_input(hi)),
+        },
+        Expr::ClockDay => ExprInput::ClockDay,
+        Expr::ClockDaysRemaining => ExprInput::ClockDaysRemaining,
+        Expr::ClockSlot => ExprInput::ClockSlot,
+        Expr::ClockWeekday => ExprInput::ClockWeekday,
+        Expr::Compare(op, left, right) => ExprInput::Compare {
+            op: match op {
+                Cmp::Eq => "eq",
+                Cmp::Ne => "ne",
+                Cmp::Lt => "lt",
+                Cmp::Le => "le",
+                Cmp::Gt => "gt",
+                Cmp::Ge => "ge",
+            }
+            .to_string(),
+            left: Box::new(expr_input(left)),
+            right: Box::new(expr_input(right)),
+        },
+        Expr::Flag(id) => ExprInput::Flag { id: id.clone() },
+        Expr::Lit(value) => ExprInput::Lit { value: *value },
+        Expr::Not(inner) => ExprInput::Not {
+            inner: Box::new(expr_input(inner)),
+        },
+        Expr::Or(left, right) => ExprInput::Or {
+            left: Box::new(expr_input(left)),
+            right: Box::new(expr_input(right)),
+        },
+        Expr::Stat(id) => ExprInput::Stat { id: id.clone() },
+        Expr::TierOf(stat) => ExprInput::TierOf { stat: stat.clone() },
+        Expr::ValueRef(id) => ExprInput::ValueRef { id: id.clone() },
+    }
+}
+
+fn target_record(inputs: &ChoiceTargetInput) -> ChoiceTarget {
+    match inputs {
+        ChoiceTargetInput::EndingCheck => ChoiceTarget::EndingCheck,
+        ChoiceTargetInput::Exit { id } => ChoiceTarget::Exit(id.clone()),
+        ChoiceTargetInput::Line { id } => ChoiceTarget::Line(id.clone()),
+    }
+}
+
+fn target_input(target: &ChoiceTarget) -> ChoiceTargetInput {
+    match target {
+        ChoiceTarget::EndingCheck => ChoiceTargetInput::EndingCheck,
+        ChoiceTarget::Exit(id) => ChoiceTargetInput::Exit { id: id.clone() },
+        ChoiceTarget::Line(id) => ChoiceTargetInput::Line { id: id.clone() },
+    }
+}
+
+/// The canonical choice record for these inputs.
+pub fn choice_record(inputs: &ChoiceDefineInput) -> GameChoice {
+    GameChoice {
+        id: inputs.id.clone(),
+        scene: inputs.scene.clone(),
+        prompt_line: inputs.prompt_line.clone(),
+        options: inputs
+            .options
+            .iter()
+            .map(|option| ChoiceOption {
+                id: option.id.clone(),
+                label_ref: option.label_ref.clone(),
+                visible_if: option.visible_if.clone(),
+                enabled_if: option.enabled_if.clone(),
+                sort: option.sort.as_ref().map(expr_record),
+                origin: match option.origin.as_str() {
+                    "alter_ego" => ChoiceOrigin::AlterEgo,
+                    _ => ChoiceOrigin::Player,
+                },
+                effect_set: option.effect_set.clone(),
+                target: target_record(&option.target),
+            })
+            .collect(),
+    }
+}
+
+/// The inputs that rebuild this choice record (validation sweep).
+pub fn choice_inputs(choice: &GameChoice) -> ChoiceDefineInput {
+    ChoiceDefineInput {
+        id: choice.id.clone(),
+        scene: choice.scene.clone(),
+        prompt_line: choice.prompt_line.clone(),
+        options: choice
+            .options
+            .iter()
+            .map(|option| ChoiceOptionInput {
+                id: option.id.clone(),
+                label_ref: option.label_ref.clone(),
+                visible_if: option.visible_if.clone(),
+                enabled_if: option.enabled_if.clone(),
+                sort: option.sort.as_ref().map(expr_input),
+                origin: match option.origin {
+                    ChoiceOrigin::AlterEgo => "alter_ego",
+                    ChoiceOrigin::Player => "player",
+                }
+                .to_string(),
+                effect_set: option.effect_set.clone(),
+                target: target_input(&option.target),
+            })
+            .collect(),
+    }
+}
+
+/// The canonical ending record for these inputs.
+pub fn ending_record(inputs: &EndingDefineInput) -> GameEnding {
+    GameEnding {
+        id: inputs.id.clone(),
+        condition: inputs.condition.clone(),
+        priority: inputs.priority,
+        epilogue_scene: inputs.epilogue_scene.clone(),
+    }
+}
+
+/// The inputs that rebuild this ending record (validation sweep).
+pub fn ending_inputs(ending: &GameEnding) -> EndingDefineInput {
+    EndingDefineInput {
+        id: ending.id.clone(),
+        condition: ending.condition.clone(),
+        priority: ending.priority,
+        epilogue_scene: ending.epilogue_scene.clone(),
+    }
+}
+
+/// The canonical gallery record for these inputs.
+pub fn gallery_record(inputs: &GalleryEntryDefineInput) -> GalleryEntry {
+    GalleryEntry {
+        id: inputs.id.clone(),
+        category: inputs.category.clone(),
+        unlock: match &inputs.unlock {
+            GalleryUnlockInput::Condition { id } => GalleryUnlock::Condition(id.clone()),
+            GalleryUnlockInput::Effect => GalleryUnlock::Effect,
+        },
+        replay_scene: inputs.replay_scene.clone(),
+        replay_line: inputs.replay_line.clone(),
+        thumbnail: inputs.thumbnail.clone(),
+    }
+}
+
+/// The inputs that rebuild this gallery record (validation sweep).
+pub fn gallery_inputs(entry: &GalleryEntry) -> GalleryEntryDefineInput {
+    GalleryEntryDefineInput {
+        id: entry.id.clone(),
+        category: entry.category.clone(),
+        unlock: match &entry.unlock {
+            GalleryUnlock::Condition(id) => GalleryUnlockInput::Condition { id: id.clone() },
+            GalleryUnlock::Effect => GalleryUnlockInput::Effect,
+        },
+        replay_scene: entry.replay_scene.clone(),
+        replay_line: entry.replay_line.clone(),
+        thumbnail: entry.thumbnail.clone(),
+    }
+}
+
+/// The canonical schedule record for these inputs: slot rows
+/// sort by slot name (the map is the meaning; row order is
+/// not), overrides keep authored order (first match wins).
+pub fn schedule_record(inputs: &ScheduleDefineInput) -> SceneSchedule {
+    let mut slots: Vec<ScheduleSlot> = inputs
+        .slots
+        .iter()
+        .map(|row| ScheduleSlot {
+            slot: row.slot.clone(),
+            scene: row.scene.clone(),
+        })
+        .collect();
+    slots.sort_by(|a, b| a.slot.cmp(&b.slot));
+    SceneSchedule {
+        character: inputs.character.clone(),
+        slots,
+        overrides: inputs
+            .overrides
+            .iter()
+            .map(|row| ScheduleOverride {
+                condition: row.condition.clone(),
+                scene: row.scene.clone(),
+            })
+            .collect(),
+    }
+}
+
+/// The inputs that rebuild this schedule record (validation sweep).
+pub fn schedule_inputs(schedule: &SceneSchedule) -> ScheduleDefineInput {
+    ScheduleDefineInput {
+        character: schedule.character.clone(),
+        slots: schedule
+            .slots
+            .iter()
+            .map(|row| ScheduleSlotInput {
+                slot: row.slot.clone(),
+                scene: row.scene.clone(),
+            })
+            .collect(),
+        overrides: schedule
+            .overrides
+            .iter()
+            .map(|row| ScheduleOverrideInput {
+                condition: row.condition.clone(),
+                scene: row.scene.clone(),
+            })
+            .collect(),
+    }
+}
+
+/// The canonical binding record for these inputs.
+pub fn binding_record(inputs: &SceneBindRigInput) -> SceneBinding {
+    SceneBinding {
+        scene: inputs.scene.clone(),
+        participant: inputs.participant.clone(),
+        rig_model: inputs.rig_model.clone(),
+        entry_expression: inputs.entry_expression.clone(),
+        entry_motion: inputs.entry_motion.clone(),
+    }
+}
+
+/// The inputs that rebuild this binding record (validation sweep).
+pub fn binding_inputs(binding: &SceneBinding) -> SceneBindRigInput {
+    SceneBindRigInput {
+        scene: binding.scene.clone(),
+        participant: binding.participant.clone(),
+        rig_model: binding.rig_model.clone(),
+        entry_expression: binding.entry_expression.clone(),
+        entry_motion: binding.entry_motion.clone(),
+    }
+}
+
+/// The canonical exit record for these inputs.
+pub fn exit_record(inputs: &SceneExitDefineInput) -> SceneExit {
+    SceneExit {
+        scene: inputs.scene.clone(),
+        id: inputs.id.clone(),
+        target: inputs.target.clone(),
+        condition: inputs.condition.clone(),
+        effect_set: inputs.effect_set.clone(),
+    }
+}
+
+/// The inputs that rebuild this exit record (validation sweep).
+pub fn exit_inputs(exit: &SceneExit) -> SceneExitDefineInput {
+    SceneExitDefineInput {
+        scene: exit.scene.clone(),
+        id: exit.id.clone(),
+        target: exit.target.clone(),
+        condition: exit.condition.clone(),
+        effect_set: exit.effect_set.clone(),
+    }
+}
+
 // ---- decide --------------------------------------------------------
 
 /// Whether a stat or flag with this id is defined. G1 authors
@@ -572,11 +1176,406 @@ fn stat_or_flag_defined(_project: &Project, _target: &str) -> bool {
 /// by the caller before this runs).
 pub fn decide_game(project: &Project, op: &Op) -> Result<Verdict, Refusal> {
     match op {
+        Op::ChoiceDefine(inputs) => decide_choice(project, inputs),
         Op::ClockDefine(inputs) => decide_clock(project, inputs),
+        Op::EndingDefine(inputs) => decide_ending(project, inputs),
+        Op::GalleryEntryDefine(inputs) => decide_gallery(project, inputs),
         Op::GameDefine(inputs) => decide_game_def(project, inputs),
         Op::GameSaveSchemaDefine(inputs) => decide_schema(project, inputs),
         Op::RngStreamDefine(inputs) => decide_rng(project, inputs),
+        Op::ScheduleDefine(inputs) => decide_schedule(project, inputs),
+        Op::SceneBindRig(inputs) => decide_binding(project, inputs),
+        Op::SceneExitDefine(inputs) => decide_exit(project, inputs),
         other => unreachable!("decide_game called with {}", other.verb()),
+    }
+}
+
+fn graph_refusal(message: String) -> Refusal {
+    Refusal::new(RefusalClass::GameGraph, message)
+}
+
+/// Validates an expression's operator names (the builders map
+/// unvalidated names to a default operator, so decide walks
+/// the tree first).
+fn check_expr_ops(inputs: &ExprInput) -> Result<(), Refusal> {
+    match inputs {
+        ExprInput::And { left, right } | ExprInput::Or { left, right } => {
+            check_expr_ops(left)?;
+            check_expr_ops(right)
+        }
+        ExprInput::Arith { op, left, right } => {
+            if !matches!(op.as_str(), "add" | "sub" | "mul" | "min" | "max") {
+                return refuse(
+                    RefusalClass::UnknownKind,
+                    format!("expression operator '{op}' is not an arithmetic operator"),
+                );
+            }
+            check_expr_ops(left)?;
+            check_expr_ops(right)
+        }
+        ExprInput::Clamp { value, lo, hi } => {
+            check_expr_ops(value)?;
+            check_expr_ops(lo)?;
+            check_expr_ops(hi)
+        }
+        ExprInput::Compare { op, left, right } => {
+            if !matches!(op.as_str(), "eq" | "ne" | "lt" | "le" | "gt" | "ge") {
+                return refuse(
+                    RefusalClass::UnknownKind,
+                    format!("expression operator '{op}' is not a comparison operator"),
+                );
+            }
+            check_expr_ops(left)?;
+            check_expr_ops(right)
+        }
+        ExprInput::Not { inner } => check_expr_ops(inner),
+        ExprInput::BoolLit { .. }
+        | ExprInput::ClockDay
+        | ExprInput::ClockDaysRemaining
+        | ExprInput::ClockSlot
+        | ExprInput::ClockWeekday
+        | ExprInput::Flag { .. }
+        | ExprInput::Lit { .. }
+        | ExprInput::Stat { .. }
+        | ExprInput::TierOf { .. }
+        | ExprInput::ValueRef { .. } => Ok(()),
+    }
+}
+
+fn decide_choice(project: &Project, inputs: &ChoiceDefineInput) -> Result<Verdict, Refusal> {
+    check_id(&inputs.id, "id")?;
+    check_id(&inputs.scene, "scene")?;
+    if let Some(prompt) = &inputs.prompt_line {
+        check_id(prompt, "prompt_line")?;
+    }
+    if inputs.options.is_empty() {
+        return refuse(
+            RefusalClass::Malformed,
+            "a choice needs at least one option",
+        );
+    }
+    if inputs.options.len() > limits::CHOICE_OPTIONS_MAX {
+        return refuse(
+            RefusalClass::Range,
+            format!(
+                "choice '{}' declares {} options, over the bound of {}",
+                inputs.id,
+                inputs.options.len(),
+                limits::CHOICE_OPTIONS_MAX
+            ),
+        );
+    }
+    let mut seen = BTreeSet::new();
+    let mut any_unconditional = false;
+    for option in &inputs.options {
+        check_id(&option.id, "option id")?;
+        if !seen.insert(option.id.as_str()) {
+            return refuse(
+                RefusalClass::Malformed,
+                format!("choice '{}' names option '{}' twice", inputs.id, option.id),
+            );
+        }
+        check_id(&option.label_ref, "label_ref")?;
+        if let Some(condition) = &option.visible_if {
+            check_id(condition, "visible_if")?;
+        }
+        if let Some(condition) = &option.enabled_if {
+            check_id(condition, "enabled_if")?;
+        }
+        if option.visible_if.is_none() && option.enabled_if.is_none() {
+            any_unconditional = true;
+        }
+        if !matches!(option.origin.as_str(), "player" | "alter_ego") {
+            return refuse(
+                RefusalClass::UnknownKind,
+                format!(
+                    "option '{}' origin '{}' is not 'player' or 'alter_ego'",
+                    option.id, option.origin
+                ),
+            );
+        }
+        if let Some(effect_set) = &option.effect_set {
+            check_id(effect_set, "effect_set")?;
+        }
+        match &option.target {
+            ChoiceTargetInput::EndingCheck => {}
+            ChoiceTargetInput::Exit { id } => check_id(id, "target exit")?,
+            ChoiceTargetInput::Line { id } => check_id(id, "target line")?,
+        }
+        if let Some(sort) = &option.sort {
+            check_expr_ops(sort)?;
+            let expr = expr_record(sort);
+            // Stat/flag/value references cannot resolve on this
+            // branch (no G2.2 definitions exist), so a sort
+            // expression may only use literals and clock leaves
+            // until then — the G1 initial-assignment posture.
+            let kind = check_expression(&expr, &[], &[], &[])?;
+            if kind != ExprType::Int {
+                return Err(expr_refusal(format!(
+                    "option '{}' sort expression is not an integer",
+                    option.id
+                )));
+            }
+        }
+    }
+    if !any_unconditional {
+        return Err(graph_refusal(format!(
+            "choice '{}' has no unconditional option: a choice that can render empty is a graph defect",
+            inputs.id
+        )));
+    }
+    let record = choice_record(inputs);
+    match project.choice(&inputs.id) {
+        Some(existing) if *existing == record => Ok(Verdict::NoOp),
+        Some(_) => refuse(
+            RefusalClass::Conflict,
+            format!(
+                "choice '{}' is already defined with different inputs",
+                inputs.id
+            ),
+        ),
+        None => {
+            if project.choices.len() >= limits::CHOICES_MAX {
+                return refuse(RefusalClass::Range, "too many choices");
+            }
+            Ok(Verdict::Apply)
+        }
+    }
+}
+
+fn decide_ending(project: &Project, inputs: &EndingDefineInput) -> Result<Verdict, Refusal> {
+    check_id(&inputs.id, "id")?;
+    check_id(&inputs.condition, "condition")?;
+    check_id(&inputs.epilogue_scene, "epilogue_scene")?;
+    let record = ending_record(inputs);
+    match project.ending(&inputs.id) {
+        Some(existing) if *existing == record => return Ok(Verdict::NoOp),
+        Some(_) => {
+            return refuse(
+                RefusalClass::Conflict,
+                format!(
+                    "ending '{}' is already defined with different inputs",
+                    inputs.id
+                ),
+            );
+        }
+        None => {
+            if project.endings.len() >= limits::ENDINGS_MAX {
+                return refuse(RefusalClass::Range, "too many endings");
+            }
+        }
+    }
+    // Priorities are unique across endings: two endings
+    // claiming the same priority would make the runtime
+    // coin-flip an ending (§G2.6).
+    if let Some(other) = project
+        .endings
+        .iter()
+        .find(|ending| ending.priority == inputs.priority)
+    {
+        return Err(graph_refusal(format!(
+            "ending '{}' claims priority {}, already claimed by ending '{}'",
+            inputs.id, inputs.priority, other.id
+        )));
+    }
+    Ok(Verdict::Apply)
+}
+
+fn decide_gallery(project: &Project, inputs: &GalleryEntryDefineInput) -> Result<Verdict, Refusal> {
+    check_id(&inputs.id, "id")?;
+    if inputs.category.is_empty()
+        || inputs.category.len() > limits::PROVENANCE_TEXT_BYTES_MAX
+        || inputs.category.chars().any(char::is_control)
+    {
+        return refuse(
+            RefusalClass::Malformed,
+            format!("gallery category '{}' is not usable text", inputs.category),
+        );
+    }
+    if let GalleryUnlockInput::Condition { id } = &inputs.unlock {
+        check_id(id, "unlock condition")?;
+    }
+    check_id(&inputs.replay_scene, "replay_scene")?;
+    check_id(&inputs.replay_line, "replay_line")?;
+    if let Some(thumbnail) = &inputs.thumbnail {
+        check_id(thumbnail, "thumbnail")?;
+        if project.asset(thumbnail).is_none() {
+            return refuse(
+                RefusalClass::Dangling,
+                format!("gallery thumbnail '{thumbnail}' is not an intaken asset"),
+            );
+        }
+    }
+    let record = gallery_record(inputs);
+    match project.gallery_entry(&inputs.id) {
+        Some(existing) if *existing == record => Ok(Verdict::NoOp),
+        Some(_) => refuse(
+            RefusalClass::Conflict,
+            format!(
+                "gallery entry '{}' is already defined with different inputs",
+                inputs.id
+            ),
+        ),
+        None => {
+            if project.gallery_entries.len() >= limits::GALLERY_ENTRIES_MAX {
+                return refuse(RefusalClass::Range, "too many gallery entries");
+            }
+            Ok(Verdict::Apply)
+        }
+    }
+}
+
+fn decide_schedule(project: &Project, inputs: &ScheduleDefineInput) -> Result<Verdict, Refusal> {
+    check_id(&inputs.character, "character")?;
+    // Coverage is checked against the authored clock: with no
+    // clock there is nothing to cover, and a partial map would
+    // make the runtime guess a location (§G2.4).
+    let Some(clock) = &project.clock else {
+        return Err(graph_refusal(
+            "schedule_define needs a defined clock: coverage cannot be checked without one"
+                .to_string(),
+        ));
+    };
+    let mut seen = BTreeSet::new();
+    for row in &inputs.slots {
+        check_id(&row.slot, "slot")?;
+        check_id(&row.scene, "scene")?;
+        if !seen.insert(row.slot.as_str()) {
+            return refuse(
+                RefusalClass::Malformed,
+                format!(
+                    "schedule for '{}' names slot '{}' twice",
+                    inputs.character, row.slot
+                ),
+            );
+        }
+        if !clock.slots.iter().any(|slot| slot == &row.slot) {
+            return Err(graph_refusal(format!(
+                "schedule for '{}' places slot '{}', which the clock does not declare",
+                inputs.character, row.slot
+            )));
+        }
+    }
+    for slot in &clock.slots {
+        if !seen.contains(slot.as_str()) {
+            return Err(graph_refusal(format!(
+                "schedule for '{}' does not cover clock slot '{slot}': the runtime must never guess a location",
+                inputs.character
+            )));
+        }
+    }
+    if inputs.overrides.len() > limits::SCHEDULE_OVERRIDES_MAX {
+        return refuse(
+            RefusalClass::Range,
+            format!(
+                "schedule for '{}' declares {} overrides, over the bound of {}",
+                inputs.character,
+                inputs.overrides.len(),
+                limits::SCHEDULE_OVERRIDES_MAX
+            ),
+        );
+    }
+    let mut seen_conditions = BTreeSet::new();
+    for row in &inputs.overrides {
+        check_id(&row.condition, "condition")?;
+        check_id(&row.scene, "scene")?;
+        if !seen_conditions.insert(row.condition.as_str()) {
+            return refuse(
+                RefusalClass::Malformed,
+                format!(
+                    "schedule for '{}' overrides on condition '{}' twice",
+                    inputs.character, row.condition
+                ),
+            );
+        }
+    }
+    let record = schedule_record(inputs);
+    match project.schedule(&inputs.character) {
+        Some(existing) if *existing == record => Ok(Verdict::NoOp),
+        Some(_) => refuse(
+            RefusalClass::Conflict,
+            format!(
+                "character '{}' already has a schedule with different inputs",
+                inputs.character
+            ),
+        ),
+        None => {
+            if project.schedules.len() >= limits::SCHEDULES_MAX {
+                return refuse(RefusalClass::Range, "too many schedules");
+            }
+            Ok(Verdict::Apply)
+        }
+    }
+}
+
+fn decide_binding(project: &Project, inputs: &SceneBindRigInput) -> Result<Verdict, Refusal> {
+    check_id(&inputs.scene, "scene")?;
+    check_id(&inputs.participant, "participant")?;
+    check_id(&inputs.rig_model, "rig_model")?;
+    check_id(&inputs.entry_expression, "entry_expression")?;
+    // The binding's rig side resolves on this branch: the entry
+    // expression is a rig expression and the entry motion is a
+    // G-10 motion clip; both collections exist here.
+    if project.expression(&inputs.entry_expression).is_none() {
+        return refuse(
+            RefusalClass::Dangling,
+            format!(
+                "entry expression '{}' is not a defined rig expression",
+                inputs.entry_expression
+            ),
+        );
+    }
+    if let Some(motion) = &inputs.entry_motion {
+        check_id(motion, "entry_motion")?;
+        if project.motion(motion).is_none() {
+            return refuse(
+                RefusalClass::Dangling,
+                format!("entry motion '{motion}' is not a defined motion clip"),
+            );
+        }
+    }
+    let record = binding_record(inputs);
+    match project.scene_binding(&inputs.scene, &inputs.participant) {
+        Some(existing) if *existing == record => Ok(Verdict::NoOp),
+        // Rebinding is the verb's purpose (art iterates without
+        // re-authoring the scene), so a differing record applies
+        // rather than conflicting — set semantics, not upsert.
+        Some(_) => Ok(Verdict::Apply),
+        None => {
+            if project.scene_bindings.len() >= limits::SCENE_BINDINGS_MAX {
+                return refuse(RefusalClass::Range, "too many scene bindings");
+            }
+            Ok(Verdict::Apply)
+        }
+    }
+}
+
+fn decide_exit(project: &Project, inputs: &SceneExitDefineInput) -> Result<Verdict, Refusal> {
+    check_id(&inputs.scene, "scene")?;
+    check_id(&inputs.id, "id")?;
+    check_id(&inputs.target, "target")?;
+    if let Some(condition) = &inputs.condition {
+        check_id(condition, "condition")?;
+    }
+    if let Some(effect_set) = &inputs.effect_set {
+        check_id(effect_set, "effect_set")?;
+    }
+    let record = exit_record(inputs);
+    match project.scene_exit(&inputs.scene, &inputs.id) {
+        Some(existing) if *existing == record => Ok(Verdict::NoOp),
+        Some(_) => refuse(
+            RefusalClass::Conflict,
+            format!(
+                "scene '{}' already has an exit '{}' with different inputs",
+                inputs.scene, inputs.id
+            ),
+        ),
+        None => {
+            if project.scene_exits.len() >= limits::SCENE_EXITS_MAX {
+                return refuse(RefusalClass::Range, "too many scene exits");
+            }
+            Ok(Verdict::Apply)
+        }
     }
 }
 
@@ -914,10 +1913,62 @@ fn decide_schema(project: &Project, inputs: &SaveSchemaDefineInput) -> Result<Ve
 
 // ---- apply -----------------------------------------------------------
 
+/// Inserts or replaces a record in an id-sorted collection.
+fn upsert<T>(items: &mut Vec<T>, record: T, key: impl Fn(&T) -> &String) {
+    let at = items.partition_point(|item| key(item) < key(&record));
+    if items.get(at).map(&key) == Some(key(&record)) {
+        items[at] = record;
+    } else {
+        items.insert(at, record);
+    }
+}
+
 /// Apply one decided game op to the project.
 pub fn apply_game(project: &mut Project, op: &Op) {
     match op {
+        Op::ChoiceDefine(inputs) => {
+            let record = choice_record(inputs);
+            upsert(&mut project.choices, record, |choice| &choice.id);
+        }
         Op::ClockDefine(inputs) => project.clock = Some(clock_record(inputs)),
+        Op::EndingDefine(inputs) => {
+            let record = ending_record(inputs);
+            upsert(&mut project.endings, record, |ending| &ending.id);
+        }
+        Op::GalleryEntryDefine(inputs) => {
+            let record = gallery_record(inputs);
+            upsert(&mut project.gallery_entries, record, |entry| &entry.id);
+        }
+        Op::ScheduleDefine(inputs) => {
+            let record = schedule_record(inputs);
+            upsert(&mut project.schedules, record, |schedule| {
+                &schedule.character
+            });
+        }
+        Op::SceneBindRig(inputs) => {
+            let record = binding_record(inputs);
+            let key = |bind: &SceneBinding| (bind.scene.clone(), bind.participant.clone());
+            let at = project
+                .scene_bindings
+                .partition_point(|bind| key(bind) < key(&record));
+            if project.scene_bindings.get(at).map(key) == Some(key(&record)) {
+                project.scene_bindings[at] = record;
+            } else {
+                project.scene_bindings.insert(at, record);
+            }
+        }
+        Op::SceneExitDefine(inputs) => {
+            let record = exit_record(inputs);
+            let key = |exit: &SceneExit| (exit.scene.clone(), exit.id.clone());
+            let at = project
+                .scene_exits
+                .partition_point(|exit| key(exit) < key(&record));
+            if project.scene_exits.get(at).map(key) == Some(key(&record)) {
+                project.scene_exits[at] = record;
+            } else {
+                project.scene_exits.insert(at, record);
+            }
+        }
         Op::GameDefine(inputs) => project.game = Some(game_record(inputs)),
         Op::GameSaveSchemaDefine(inputs) => {
             let slot_holds = match inputs.slot_holds.as_str() {

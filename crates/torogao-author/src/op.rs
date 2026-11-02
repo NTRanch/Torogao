@@ -671,6 +671,8 @@ pub enum Op {
     AudioBindSet(crate::audio::AudioBindSetInput),
     /// `audio_track_define` (A3).
     AudioTrackDefine(crate::audio::AudioTrackDefineInput),
+    /// `choice_define` (AUTH-G).
+    ChoiceDefine(crate::game::ChoiceDefineInput),
     /// `clock_define` (AUTH-G).
     ClockDefine(crate::game::ClockDefineInput),
     /// `curve_from_samples` (A3).
@@ -687,10 +689,14 @@ pub enum Op {
     DeformerRotationCreate(RotationCreateInput),
     /// `deformer_warp_create`.
     DeformerWarpCreate(WarpCreateInput),
+    /// `ending_define` (AUTH-G).
+    EndingDefine(crate::game::EndingDefineInput),
     /// `expression_define`.
     ExpressionDefine(ExpressionDefineInput),
     /// `expression_remove`.
     ExpressionRemove(IdInput),
+    /// `gallery_entry_define` (AUTH-G).
+    GalleryEntryDefine(crate::game::GalleryEntryDefineInput),
     /// `game_define` (AUTH-G).
     GameDefine(crate::game::GameDefineInput),
     /// `game_save_schema_define` (AUTH-G).
@@ -741,6 +747,12 @@ pub enum Op {
     ProjectInit(InitInput),
     /// `rng_stream_define` (AUTH-G).
     RngStreamDefine(crate::game::RngStreamDefineInput),
+    /// `scene_bind_rig` (AUTH-G).
+    SceneBindRig(crate::game::SceneBindRigInput),
+    /// `scene_exit_define` (AUTH-G).
+    SceneExitDefine(crate::game::SceneExitDefineInput),
+    /// `schedule_define` (AUTH-G).
+    ScheduleDefine(crate::game::ScheduleDefineInput),
 }
 
 fn typed<T: for<'de> Deserialize<'de>>(verb: &str, inputs: &Value) -> Result<T, Refusal> {
@@ -759,6 +771,7 @@ impl Op {
         let op = match verb {
             "audio_bind_set" => Op::AudioBindSet(typed(verb, inputs)?),
             "audio_track_define" => Op::AudioTrackDefine(typed(verb, inputs)?),
+            "choice_define" => Op::ChoiceDefine(typed(verb, inputs)?),
             "clock_define" => Op::ClockDefine(typed(verb, inputs)?),
             "curve_from_samples" => Op::CurveFromSamples(typed(verb, inputs)?),
             "curve_set" => Op::CurveSet(typed(verb, inputs)?),
@@ -769,6 +782,8 @@ impl Op {
             "deformer_warp_create" => Op::DeformerWarpCreate(typed(verb, inputs)?),
             "expression_define" => Op::ExpressionDefine(typed(verb, inputs)?),
             "expression_remove" => Op::ExpressionRemove(typed(verb, inputs)?),
+            "ending_define" => Op::EndingDefine(typed(verb, inputs)?),
+            "gallery_entry_define" => Op::GalleryEntryDefine(typed(verb, inputs)?),
             "game_define" => Op::GameDefine(typed(verb, inputs)?),
             "game_save_schema_define" => Op::GameSaveSchemaDefine(typed(verb, inputs)?),
             "intake_image" => Op::IntakeImage(typed(verb, inputs)?),
@@ -794,6 +809,9 @@ impl Op {
             "project_import" => Op::ProjectImport(typed(verb, inputs)?),
             "project_init" => Op::ProjectInit(typed(verb, inputs)?),
             "rng_stream_define" => Op::RngStreamDefine(typed(verb, inputs)?),
+            "scene_bind_rig" => Op::SceneBindRig(typed(verb, inputs)?),
+            "scene_exit_define" => Op::SceneExitDefine(typed(verb, inputs)?),
+            "schedule_define" => Op::ScheduleDefine(typed(verb, inputs)?),
             other => return refuse_unimplemented(other),
         };
         Ok(op)
@@ -804,6 +822,7 @@ impl Op {
         match self {
             Op::AudioBindSet(_) => "audio_bind_set",
             Op::AudioTrackDefine(_) => "audio_track_define",
+            Op::ChoiceDefine(_) => "choice_define",
             Op::ClockDefine(_) => "clock_define",
             Op::CurveFromSamples(_) => "curve_from_samples",
             Op::CurveSet(_) => "curve_set",
@@ -814,6 +833,8 @@ impl Op {
             Op::DeformerWarpCreate(_) => "deformer_warp_create",
             Op::ExpressionDefine(_) => "expression_define",
             Op::ExpressionRemove(_) => "expression_remove",
+            Op::EndingDefine(_) => "ending_define",
+            Op::GalleryEntryDefine(_) => "gallery_entry_define",
             Op::GameDefine(_) => "game_define",
             Op::GameSaveSchemaDefine(_) => "game_save_schema_define",
             Op::IntakeImage(_) => "intake_image",
@@ -839,6 +860,9 @@ impl Op {
             Op::ProjectImport(_) => "project_import",
             Op::ProjectInit(_) => "project_init",
             Op::RngStreamDefine(_) => "rng_stream_define",
+            Op::SceneBindRig(_) => "scene_bind_rig",
+            Op::SceneExitDefine(_) => "scene_exit_define",
+            Op::ScheduleDefine(_) => "schedule_define",
         }
     }
 
@@ -847,6 +871,7 @@ impl Op {
         let result = match self {
             Op::AudioBindSet(inputs) => serde_json::to_value(inputs),
             Op::AudioTrackDefine(inputs) => serde_json::to_value(inputs),
+            Op::ChoiceDefine(inputs) => serde_json::to_value(inputs),
             Op::ClockDefine(inputs) => serde_json::to_value(inputs),
             Op::CurveFromSamples(inputs) => serde_json::to_value(inputs),
             Op::CurveSet(inputs) => serde_json::to_value(inputs),
@@ -857,6 +882,8 @@ impl Op {
             Op::DeformerWarpCreate(inputs) => serde_json::to_value(inputs),
             Op::ExpressionDefine(inputs) => serde_json::to_value(inputs),
             Op::ExpressionRemove(inputs) => serde_json::to_value(inputs),
+            Op::EndingDefine(inputs) => serde_json::to_value(inputs),
+            Op::GalleryEntryDefine(inputs) => serde_json::to_value(inputs),
             Op::GameDefine(inputs) => serde_json::to_value(inputs),
             Op::GameSaveSchemaDefine(inputs) => serde_json::to_value(inputs),
             Op::IntakeImage(inputs) => serde_json::to_value(inputs),
@@ -882,6 +909,9 @@ impl Op {
             Op::ProjectImport(inputs) => serde_json::to_value(inputs),
             Op::ProjectInit(inputs) => serde_json::to_value(inputs),
             Op::RngStreamDefine(inputs) => serde_json::to_value(inputs),
+            Op::SceneBindRig(inputs) => serde_json::to_value(inputs),
+            Op::SceneExitDefine(inputs) => serde_json::to_value(inputs),
+            Op::ScheduleDefine(inputs) => serde_json::to_value(inputs),
         };
         result.or_else(|err| {
             refuse(

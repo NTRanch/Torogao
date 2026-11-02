@@ -79,6 +79,25 @@ pub const SAVE_SLOTS_MAX: u32 = 64;
 /// cover of that set, so partition lists are self-bounding.
 pub const STATE_FIELDS_MAX: usize = 16;
 
+// ---- AUTH-G game-flow families (§G2.4/§G2.6) --------------------
+
+/// Maximum options on one choice.
+pub const CHOICE_OPTIONS_MAX: usize = 64;
+/// Maximum choices per project.
+pub const CHOICES_MAX: usize = 1024;
+/// Maximum ending rules per project.
+pub const ENDINGS_MAX: usize = 256;
+/// Maximum gallery entries per project.
+pub const GALLERY_ENTRIES_MAX: usize = 1024;
+/// Maximum condition overrides on one schedule.
+pub const SCHEDULE_OVERRIDES_MAX: usize = 64;
+/// Maximum character schedules per project.
+pub const SCHEDULES_MAX: usize = 256;
+/// Maximum scene rig bindings per project.
+pub const SCENE_BINDINGS_MAX: usize = 4096;
+/// Maximum scene exits per project.
+pub const SCENE_EXITS_MAX: usize = 4096;
+
 // ---- A2/A3 completion families (G-10) ---------------------------
 
 /// Maximum audio binding rows per project.

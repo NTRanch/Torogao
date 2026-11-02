@@ -25,10 +25,13 @@
 //!
 //! Slice G1 (Amendment 2, AUTH-G) adds the game family on the
 //! same pipeline: the five game-core verbs of
-//! [`game::GAME_MANIFEST`] (22 verbs; the remaining seventeen
-//! are G2's and are refused by name), the §G3.1 tick skeleton
+//! [`game::GAME_MANIFEST`] (22 verbs), the §G3.1 tick skeleton
 //! with its per-tick hash chain, and the `TG-GAME-*` refusal
-//! classes.
+//! classes. The convergence step adds the six §G2.4/§G2.6 flow
+//! verbs (`choice_define`, `ending_define`,
+//! `gallery_entry_define`, `schedule_define`, `scene_bind_rig`,
+//! `scene_exit_define`) for 11 of 22 live; the remaining
+//! eleven are G2's and are refused by name.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]

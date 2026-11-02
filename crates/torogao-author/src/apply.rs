@@ -159,10 +159,16 @@ fn apply<'a>(
             upsert(&mut project.assets, asset, |a| &a.id);
         }
         Op::IntakePsd(inputs) => apply_psd(&mut project, inputs, observed, files),
-        Op::ClockDefine(_)
+        Op::ChoiceDefine(_)
+        | Op::ClockDefine(_)
+        | Op::EndingDefine(_)
+        | Op::GalleryEntryDefine(_)
         | Op::GameDefine(_)
         | Op::GameSaveSchemaDefine(_)
-        | Op::RngStreamDefine(_) => crate::game::apply_game(&mut project, op),
+        | Op::RngStreamDefine(_)
+        | Op::SceneBindRig(_)
+        | Op::SceneExitDefine(_)
+        | Op::ScheduleDefine(_) => crate::game::apply_game(&mut project, op),
         Op::PhysicsForcesSet(_) | Op::PhysicsGroupDefine(_) | Op::PhysicsGroupRemove(_) => {
             crate::physics::apply_physics(&mut project, op)
         }

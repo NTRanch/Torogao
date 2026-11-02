@@ -105,6 +105,9 @@ pub fn sweep(project: &Project) -> Result<Project, Refusal> {
     for op in rigx_ops(project) {
         rebuilt = run(rebuilt, op)?;
     }
+    for op in gameflow_ops(project) {
+        rebuilt = run(rebuilt, op)?;
+    }
     for set in &project.variant_sets {
         check_id(&set.id, "variant set id")?;
         let all_parts = set.variants.iter().all(|id| project.part(id).is_some());
@@ -208,6 +211,36 @@ fn rigx_ops(project: &Project) -> Vec<Op> {
     }
     for bind in &project.audio_binds {
         ops.push(Op::AudioBindSet(crate::audio::bind_inputs(bind)));
+    }
+    ops
+}
+
+/// The AUTH-G game-flow sections (§G2.4/§G2.6): choices,
+/// endings, gallery entries, schedules, scene bindings, and
+/// scene exits rebuild through their define verbs. They run
+/// last in the sweep: schedules check coverage against the
+/// clock (rebuilt by `game_ops`), and scene bindings resolve
+/// against rig expressions (rebuilt by `content_ops`) and
+/// motion clips (rebuilt by `rigx_ops`).
+fn gameflow_ops(project: &Project) -> Vec<Op> {
+    let mut ops = Vec::new();
+    for choice in &project.choices {
+        ops.push(Op::ChoiceDefine(crate::game::choice_inputs(choice)));
+    }
+    for ending in &project.endings {
+        ops.push(Op::EndingDefine(crate::game::ending_inputs(ending)));
+    }
+    for entry in &project.gallery_entries {
+        ops.push(Op::GalleryEntryDefine(crate::game::gallery_inputs(entry)));
+    }
+    for schedule in &project.schedules {
+        ops.push(Op::ScheduleDefine(crate::game::schedule_inputs(schedule)));
+    }
+    for binding in &project.scene_bindings {
+        ops.push(Op::SceneBindRig(crate::game::binding_inputs(binding)));
+    }
+    for exit in &project.scene_exits {
+        ops.push(Op::SceneExitDefine(crate::game::exit_inputs(exit)));
     }
     ops
 }

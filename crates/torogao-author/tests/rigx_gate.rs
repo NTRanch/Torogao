@@ -268,7 +268,8 @@ fn census_reads_39_implemented_and_8_descoped() {
         "no manifest verb is left merely deferred: {doc}"
     );
     assert_eq!(doc["game_manifest_count"], 22);
-    assert_eq!(doc["game_implemented_count"], 5);
+    // 5 from G-01; the convergence step raised this to 11.
+    assert_eq!(doc["game_implemented_count"], 11);
 }
 
 #[test]

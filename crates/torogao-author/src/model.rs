@@ -34,14 +34,20 @@ pub struct Project {
     pub audio_binds: Vec<AudioBind>,
     /// Named audio tracks of event markers (A3), sorted by id.
     pub audio_tracks: Vec<AudioTrack>,
+    /// Branch points (AUTH-G §G2.4), sorted by id.
+    pub choices: Vec<GameChoice>,
     /// The authored game clock (AUTH-G), when one is defined.
     pub clock: Option<GameClock>,
     /// Deformers, sorted by id.
     pub deformers: Vec<Deformer>,
+    /// Ending rules (AUTH-G §G2.6), sorted by id.
+    pub endings: Vec<GameEnding>,
     /// Expressions, sorted by id.
     pub expressions: Vec<Expression>,
     /// The project as a game (AUTH-G), when defined.
     pub game: Option<GameDef>,
+    /// Gallery replay registrations (AUTH-G §G2.6), sorted by id.
+    pub gallery_entries: Vec<GalleryEntry>,
     /// Glue pairs between drawables, sorted by id.
     pub glues: Vec<Glue>,
     /// Motion clips (A3), sorted by id.
@@ -59,6 +65,13 @@ pub struct Project {
     pub rng_streams: Vec<RngStream>,
     /// The authored save schema (AUTH-G), when defined.
     pub save_schema: Option<SaveSchema>,
+    /// Character schedules (AUTH-G §G2.4), sorted by character.
+    pub schedules: Vec<SceneSchedule>,
+    /// Scene rig bindings (AUTH-G §G2.4), sorted by
+    /// (scene, participant).
+    pub scene_bindings: Vec<SceneBinding>,
+    /// Scene exits (AUTH-G §G2.4), sorted by (scene, id).
+    pub scene_exits: Vec<SceneExit>,
     /// Named variant stacks from separated art, sorted by id.
     pub variant_sets: Vec<VariantSet>,
 }
@@ -538,6 +551,192 @@ pub struct Migration {
     pub name: String,
 }
 
+// ---- AUTH-G game-flow records (Amendment 2 §G2.4/§G2.6) ---------
+//
+// Scenes, characters, conditions, and effect sets are authored
+// by their own G2 verbs; on this branch those verbs are still
+// refused by name, so references to them from these records are
+// forward references — the same posture `GameDef::start_scene`
+// carries in G1. References this branch CAN resolve are checked
+// at define time: a schedule against the clock, a scene binding
+// against the rig expressions and motions, a gallery thumbnail
+// against the assets.
+
+/// Where a choice option leads (§G2.4).
+#[derive(Clone, Debug, PartialEq)]
+pub enum ChoiceTarget {
+    /// The ending evaluation point (no id: the check itself).
+    EndingCheck,
+    /// A scene exit, by its id within the choice's scene.
+    Exit(String),
+    /// A dialogue line, by id.
+    Line(String),
+}
+
+/// Who an option belongs to (§G2.4): the alter-ego origin is
+/// what the game's veto rule (`GameDef::alter_ego_veto`) acts
+/// on when the player declines.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChoiceOrigin {
+    /// An alter-ego option.
+    AlterEgo,
+    /// A player option.
+    Player,
+}
+
+/// One option of a choice (§G2.4). Authored order is the
+/// ordinal the runtime's sort falls back to.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChoiceOption {
+    /// Option id, unique within the choice.
+    pub id: String,
+    /// Content id of the label text.
+    pub label_ref: String,
+    /// Condition id gating visibility (forward reference).
+    pub visible_if: Option<String>,
+    /// Condition id gating enablement: visible-but-disabled is
+    /// a distinct, authored state (forward reference).
+    pub enabled_if: Option<String>,
+    /// Integer sort expression: the runtime orders options by
+    /// (sort value, authored ordinal).
+    pub sort: Option<crate::game::Expr>,
+    /// Who the option belongs to.
+    pub origin: ChoiceOrigin,
+    /// Effect set applied when the option is taken (forward
+    /// reference; absent: no effects).
+    pub effect_set: Option<String>,
+    /// Where the option leads.
+    pub target: ChoiceTarget,
+}
+
+/// A branch point (`choice_define`, §G2.4).
+#[derive(Clone, Debug, PartialEq)]
+pub struct GameChoice {
+    /// Choice id.
+    pub id: String,
+    /// The scene the choice belongs to (forward reference).
+    pub scene: String,
+    /// The prompt line id, when the choice has one (forward
+    /// reference).
+    pub prompt_line: Option<String>,
+    /// The options, in authored order.
+    pub options: Vec<ChoiceOption>,
+}
+
+/// An ending rule (`ending_define`, §G2.6): evaluation is a
+/// runtime act; the rule is data.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GameEnding {
+    /// Ending id.
+    pub id: String,
+    /// The condition id that must hold (forward reference).
+    pub condition: String,
+    /// Evaluation priority: unique across endings, so the
+    /// runtime never coin-flips an ending.
+    pub priority: i64,
+    /// The epilogue scene id (forward reference).
+    pub epilogue_scene: String,
+}
+
+/// How a gallery entry unlocks (§G2.6).
+#[derive(Clone, Debug, PartialEq)]
+pub enum GalleryUnlock {
+    /// A condition id under which the entry auto-unlocks
+    /// (forward reference).
+    Condition(String),
+    /// An effect set's `unlock_gallery` atom names this entry.
+    Effect,
+}
+
+/// A replay registration (`gallery_entry_define`, §G2.6).
+#[derive(Clone, Debug, PartialEq)]
+pub struct GalleryEntry {
+    /// Entry id.
+    pub id: String,
+    /// The gallery category the entry files under.
+    pub category: String,
+    /// How the entry unlocks.
+    pub unlock: GalleryUnlock,
+    /// The replay target scene id (forward reference).
+    pub replay_scene: String,
+    /// The replay target entry line id (forward reference).
+    pub replay_line: String,
+    /// Thumbnail asset id; resolves against the project's
+    /// assets at define time.
+    pub thumbnail: Option<String>,
+}
+
+/// A scene participant's rig binding (`scene_bind_rig`,
+/// §G2.4): kept apart from the scene record so art can be
+/// rebound without re-authoring the scene's logic.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneBinding {
+    /// The scene id (forward reference).
+    pub scene: String,
+    /// The participant (character) id (forward reference).
+    pub participant: String,
+    /// The rig model id (forward reference: §G4's model
+    /// registry is not authored on this branch).
+    pub rig_model: String,
+    /// The entry expression id: resolves against the project's
+    /// rig expressions at define time.
+    pub entry_expression: String,
+    /// The entry motion id, when the binding enters moving:
+    /// resolves against the project's motions at define time.
+    pub entry_motion: Option<String>,
+}
+
+/// One exit from a scene (`scene_exit_define`, §G2.4): exits
+/// are separate records so graphs grow incrementally and the
+/// reachability sweep has named edges to check.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneExit {
+    /// The scene the exit leaves (forward reference).
+    pub scene: String,
+    /// Exit id, unique within the scene.
+    pub id: String,
+    /// The target scene id (forward reference).
+    pub target: String,
+    /// Condition id gating the exit (forward reference).
+    pub condition: Option<String>,
+    /// Effect set applied on traversal (forward reference).
+    pub effect_set: Option<String>,
+}
+
+/// One slot → scene row of a schedule.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScheduleSlot {
+    /// The clock slot name.
+    pub slot: String,
+    /// The scene id the character is in (forward reference).
+    pub scene: String,
+}
+
+/// One ordered condition override of a schedule: when the
+/// condition holds, the character is in this scene instead of
+/// the slot's.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScheduleOverride {
+    /// The condition id (forward reference).
+    pub condition: String,
+    /// The scene id (forward reference).
+    pub scene: String,
+}
+
+/// A character's recurring placement (`schedule_define`,
+/// §G2.4): the slot map covers every clock slot — the runtime
+/// must never guess a location.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneSchedule {
+    /// The character id (forward reference).
+    pub character: String,
+    /// Slot → scene rows, sorted by slot name (the map is the
+    /// meaning; row order is not).
+    pub slots: Vec<ScheduleSlot>,
+    /// Ordered condition overrides: first match wins.
+    pub overrides: Vec<ScheduleOverride>,
+}
+
 // ---- A2 physics records (BRIEF-AUTHORING, physics group) --------
 //
 // The authored shape mirrors the physics model torogao-format
@@ -788,6 +987,40 @@ impl Project {
     /// The physics group with this id.
     pub fn physics_group(&self, id: &str) -> Option<&PhysicsGroup> {
         find(&self.physics_groups, id, |group| &group.id)
+    }
+
+    /// The choice with this id.
+    pub fn choice(&self, id: &str) -> Option<&GameChoice> {
+        find(&self.choices, id, |choice| &choice.id)
+    }
+
+    /// The ending with this id.
+    pub fn ending(&self, id: &str) -> Option<&GameEnding> {
+        find(&self.endings, id, |ending| &ending.id)
+    }
+
+    /// The gallery entry with this id.
+    pub fn gallery_entry(&self, id: &str) -> Option<&GalleryEntry> {
+        find(&self.gallery_entries, id, |entry| &entry.id)
+    }
+
+    /// The schedule of this character.
+    pub fn schedule(&self, character: &str) -> Option<&SceneSchedule> {
+        find(&self.schedules, character, |schedule| &schedule.character)
+    }
+
+    /// The rig binding of this (scene, participant), if any.
+    pub fn scene_binding(&self, scene: &str, participant: &str) -> Option<&SceneBinding> {
+        self.scene_bindings
+            .iter()
+            .find(|bind| bind.scene == scene && bind.participant == participant)
+    }
+
+    /// The exit with this id in this scene, if any.
+    pub fn scene_exit(&self, scene: &str, id: &str) -> Option<&SceneExit> {
+        self.scene_exits
+            .iter()
+            .find(|exit| exit.scene == scene && exit.id == id)
     }
 
     /// The neutral value of a parameter: its pose entry when one
