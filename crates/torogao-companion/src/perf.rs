@@ -259,6 +259,105 @@ pub fn run_scripted_trace(
     })
 }
 
+// ---------------------------------------------------------------------------
+// Stage 2.1 instrument: the body-cycle performance trace.
+// A CycleDriver performance runs through the core under
+// the ambient Daydream; the run records the evaluated
+// parameter vectors (for the regional-MAD series), the
+// primary and secondary channels' evaluated internals,
+// and the authored envelope — the four series the 2.1
+// gates read.
+// ---------------------------------------------------------------------------
+
+/// One body-cycle performance run through the companion
+/// core.
+#[derive(Debug, Clone)]
+pub struct CycleRun {
+    /// The chain hash over the per-step evaluated hashes.
+    pub trace_hash: u64,
+    /// Per-step parameter vectors `(x, y)` in payload
+    /// order (the regional-MAD domain).
+    pub params: Vec<Vec<[f32; 2]>>,
+    /// Per-step evaluated ParamBodyAngleZ internal
+    /// (degrees): the primary as it landed.
+    pub primary: Vec<f64>,
+    /// Per-step evaluated ParamBodyAngleX internal
+    /// (degrees): the authored secondary as it landed.
+    pub secondary: Vec<f64>,
+    /// Per-step evaluated ParamHairSway1 internal: the
+    /// rig's physics secondary, recorded so the gate can
+    /// report what the rig data itself does.
+    pub physics_secondary: Vec<f64>,
+    /// Per-step authored envelope (normalized).
+    pub envelope: Vec<f64>,
+    /// The body region's parameter indices (regional MAD).
+    pub body_region: Vec<usize>,
+    /// The secondary region's parameter indices
+    /// (regional MAD).
+    pub secondary_region: Vec<usize>,
+    /// The hair region's parameter indices (regional MAD).
+    pub hair_region: Vec<usize>,
+}
+
+/// Runs a body-cycle performance of `frames` fixed steps
+/// on the given rig through the companion core.
+pub fn run_cycle_trace(model_path: &Path, frames: usize) -> CompanionResult<CycleRun> {
+    let mut core = CompanionCore::load(model_path, None, None, "torogao-companion cycle")?;
+    let (body_x, body_z, hair_1, body_region, secondary_region, hair_region) = {
+        let scene = core.scene()?;
+        let body_x = scene.puppet.param_index("ParamBodyAngleX");
+        let body_z = scene.puppet.param_index("ParamBodyAngleZ");
+        let hair_1 = scene.puppet.param_index("ParamHairSway1");
+        let hair_2 = scene.puppet.param_index("ParamHairSway2");
+        (
+            body_x,
+            body_z,
+            hair_1,
+            body_z.into_iter().collect(),
+            body_x.into_iter().collect(),
+            hair_1.into_iter().chain(hair_2).collect(),
+        )
+    };
+    core.start_cycle(frames as u64);
+    let mut step_hashes = Vec::with_capacity(frames);
+    let mut params = Vec::with_capacity(frames);
+    let mut primary = Vec::with_capacity(frames);
+    let mut secondary = Vec::with_capacity(frames);
+    let mut physics_secondary = Vec::with_capacity(frames);
+    let mut envelope = Vec::with_capacity(frames);
+    for step in 0..frames {
+        envelope.push(core.cycle_envelope_at(step as u64).unwrap_or(0.0));
+        step_hashes.push(core.tick()?);
+        let scene = core.scene()?;
+        params.push(
+            scene
+                .puppet
+                .params
+                .iter()
+                .map(|param| [param.last_internal.x, param.last_internal.y])
+                .collect(),
+        );
+        let read = |index: Option<usize>| match index {
+            Some(index) => f64::from(scene.puppet.params[index].last_internal.x),
+            None => 0.0,
+        };
+        primary.push(read(body_z));
+        secondary.push(read(body_x));
+        physics_secondary.push(read(hair_1));
+    }
+    Ok(CycleRun {
+        trace_hash: chain_hash(&step_hashes),
+        params,
+        primary,
+        secondary,
+        physics_secondary,
+        envelope,
+        body_region,
+        secondary_region,
+        hair_region,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

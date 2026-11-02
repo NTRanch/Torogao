@@ -25,9 +25,11 @@
 
 pub mod cast;
 pub mod core;
+pub mod cycle;
 pub mod error;
 pub mod fallback;
 pub mod gaze;
+pub mod lag;
 pub mod menu;
 pub mod perf;
 pub mod silhouette;

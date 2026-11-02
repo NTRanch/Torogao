@@ -29,6 +29,7 @@ use torogao_app::state_hash::evaluated_state_hash;
 use torogao_session::host::LiveBridge;
 
 use crate::cast::CastMember;
+use crate::cycle::{CycleChannels, CycleDriver};
 use crate::error::{CompanionError, CompanionResult};
 use crate::gaze::{GazeChannels, GazeDriver};
 
@@ -76,6 +77,13 @@ pub struct CompanionCore {
     /// Channel names the current rig does not carry (the
     /// load-time gap report; empty for the governed cast).
     gaze_gaps: Vec<&'static str>,
+    /// The Stage 2.1 body-cycle performance, when one is
+    /// running (a governed driver like the gaze driver,
+    /// started explicitly — the companion's steady state
+    /// has no cycle running).
+    cycle: Option<CycleDriver>,
+    /// The cycle driver's channels in the current scene.
+    cycle_channels: CycleChannels,
 }
 
 impl CompanionCore {
@@ -114,8 +122,11 @@ impl CompanionCore {
             gaze: GazeDriver::new(),
             gaze_channels: GazeChannels::default(),
             gaze_gaps: Vec::new(),
+            cycle: None,
+            cycle_channels: CycleChannels::default(),
         };
         core.refresh_gaze_channels()?;
+        core.refresh_cycle_channels()?;
         if let Some(dir) = session_dir {
             let port = session_port.unwrap_or(torogao_session::transport::DEFAULT_WS_PORT);
             let (rx, session_id) =
@@ -250,16 +261,29 @@ impl CompanionCore {
         self.drain_session_requests();
         self.ensure_ambient()?;
         if self.play.is_advancing() {
-            // The gaze driver advances with the scene (a
-            // paused puppet's gaze is frozen with her) and
-            // writes through the step hook, composing with
-            // the performance (see gaze.rs).
+            // The governed drivers advance with the scene
+            // (a paused puppet's drivers are frozen with
+            // her) and write through the step hook,
+            // composing with the performance (see gaze.rs
+            // and cycle.rs).
             self.gaze.step();
+            let cycle_live = matches!(&self.cycle, Some(cycle) if cycle.active());
+            if cycle_live {
+                if let Some(cycle) = &mut self.cycle {
+                    cycle.step();
+                }
+            }
             // Field-level borrows: the player, the shell,
-            // and the driver are disjoint fields, so the
+            // and the drivers are disjoint fields, so the
             // step needs no take/replace dance.
             let gaze = &self.gaze;
             let channels = &self.gaze_channels;
+            let cycle = if cycle_live {
+                self.cycle.as_ref()
+            } else {
+                None
+            };
+            let cycle_channels = &self.cycle_channels;
             let scene = self
                 .shell
                 .scene
@@ -268,6 +292,9 @@ impl CompanionCore {
             self.play
                 .step_hooked(scene, 1, &mut |scene: &mut Scene| {
                     crate::gaze::apply(gaze, channels, scene);
+                    if let Some(cycle) = cycle {
+                        crate::cycle::apply(cycle, cycle_channels, scene);
+                    }
                 })
                 .map_err(|err| CompanionError::model(err.to_string()))?;
         }
@@ -317,7 +344,41 @@ impl CompanionCore {
         self.model_path = path;
         self.cast_member = Some(member);
         self.refresh_gaze_channels()?;
+        self.refresh_cycle_channels()?;
         self.ensure_ambient()
+    }
+
+    /// Starts a body-cycle performance (Stage 2.1) of
+    /// `total_steps` fixed steps. The performance composes
+    /// under whatever the player is performing; when it
+    /// ends the driver goes quiet on its own.
+    pub fn start_cycle(&mut self, total_steps: u64) {
+        self.cycle = Some(CycleDriver::new(total_steps));
+    }
+
+    /// Whether a body-cycle performance is running.
+    pub fn cycle_active(&self) -> bool {
+        matches!(&self.cycle, Some(cycle) if cycle.active())
+    }
+
+    /// The running cycle performance's authored envelope
+    /// at `step` (the gate instrument's reference curve).
+    pub fn cycle_envelope_at(&self, step: u64) -> Option<f64> {
+        self.cycle.as_ref().map(|cycle| cycle.envelope_at(step))
+    }
+
+    /// The cycle channels the current rig does not carry
+    /// (empty for the governed cast).
+    pub fn cycle_gaps(&self) -> Vec<&'static str> {
+        self.cycle_channels.missing()
+    }
+
+    /// Re-resolves the cycle channels against the
+    /// installed scene.
+    fn refresh_cycle_channels(&mut self) -> CompanionResult<()> {
+        let scene = self.scene()?;
+        self.cycle_channels = CycleChannels::resolve(scene);
+        Ok(())
     }
 
     /// Feeds the pointer to the gaze driver: `pointer` is
