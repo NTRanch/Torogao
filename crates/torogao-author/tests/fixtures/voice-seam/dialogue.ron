@@ -1,0 +1,25 @@
+// FIXTURE STUB — dialogue records in a fixture-local dialect
+// (the landed dialogue record family is Amendment 2 §Item G4,
+// built on the slices branch). Each line carries the §3 chain
+// links: text_ref into content.ron, audio_binding into
+// project.ron's audio_bindings. speaker is the character id
+// the binding must agree with.
+Dialogue(
+    scene: "scene.pier-rain",
+    lines: [
+        DialogueLine(
+            audio_binding: "voice-prima-001",
+            id: "line.001",
+            next: "line.002",
+            speaker: "prima",
+            text_ref: "line.001",
+        ),
+        DialogueLine(
+            audio_binding: "voice-prima-002",
+            id: "line.002",
+            next: "",
+            speaker: "prima",
+            text_ref: "line.002",
+        ),
+    ],
+)

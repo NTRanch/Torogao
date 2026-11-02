@@ -1,0 +1,57 @@
+// The voice seam fixture project (voice plan §3): a rig-family
+// project carrying two voice bindings for the character
+// `prima`, voiced as the torori trial identity
+// `voice.trial.prima-1` (the S1 identity; lock state Designed
+// in torori's registry at fixture time — the snapshots under
+// this directory state it three ways for the sweep tests).
+// Structure and references only: no prose (prose lives in
+// content.ron, ruling D-468), no audio, no conditioning
+// fields — the delivery records are referenced, never
+// re-defined here.
+Project(
+    header: Header(
+        consent: Consent(
+            adult: true,
+            schema: "torogao-consent/1",
+            wants_selected_scenes: true,
+        ),
+        format: "torogao-author-project",
+        format_version: 1,
+        model_format: "torogao-rig-model",
+        name: "voice-seam-fixture",
+        stamp: Stamp(
+            basis: "voice plan §3 seam fixture",
+            lane: "adult",
+            pack: "voice-seam",
+            rating: "adult",
+        ),
+    ),
+    assets: [],
+    audio_bindings: [
+        AudioBinding(
+            id: "voice-prima-001",
+            character: "prima",
+            delivery: DeliveryRef(
+                identity: "voice.trial.prima-1",
+                record: "cond.prima.greet.1",
+            ),
+            kind: Voice,
+        ),
+        AudioBinding(
+            id: "voice-prima-002",
+            character: "prima",
+            delivery: DeliveryRef(
+                identity: "voice.trial.prima-1",
+                record: "cond.prima.train.1",
+            ),
+            kind: Voice,
+        ),
+    ],
+    deformers: [],
+    expressions: [],
+    glues: [],
+    parameters: [],
+    parts: [],
+    pose: [],
+    variant_sets: [],
+)

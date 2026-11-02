@@ -1,0 +1,12 @@
+// A torori registry snapshot (voice plan §3 seam contract):
+// the trial identity as torori's registry actually states it
+// after S1 — designed, not yet anchored. Shippable builds
+// refuse it; authoring accepts it.
+VoiceRegistrySnapshot(
+    identities: [
+        VoiceIdentityState(
+            identity: "voice.trial.prima-1",
+            lock_state: Designed,
+        ),
+    ],
+)
