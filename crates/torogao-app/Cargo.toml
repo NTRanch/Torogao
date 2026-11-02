@@ -20,6 +20,7 @@ torogao = { path = "../torogao-cli" }
 torogao-engine = { path = "../torogao-engine" }
 torogao-format = { path = "../torogao-format" }
 torogao-session = { path = "../torogao-session" }
+torogao-vmc = { path = "../torogao-vmc" }
 wgpu = "29"
 winit = "0.30"
 

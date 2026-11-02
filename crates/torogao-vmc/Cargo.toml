@@ -1,0 +1,13 @@
+[package]
+name = "torogao-vmc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "VMC over OSC for Torogao's live VTuber mode (Stage 3.3): a bounded OSC 1.0 codec, the VMC frame model, the ARKit-to-governed expression mapping, and the tracking driver whose loss policy holds the last governed state."
+
+[dependencies]
+
+[lib]
+name = "torogao_vmc"
+path = "src/lib.rs"
