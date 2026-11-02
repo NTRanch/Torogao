@@ -41,6 +41,9 @@ use crate::wayland::{RunOptions, RunSummary};
 /// Left-press distance (px) under which a release is a
 /// click rather than a drag — mirrors the Wayland route.
 const DRAG_THRESHOLD_PX: f64 = 6.0;
+/// Two clicks on her closer than this are one
+/// double-click (the area invocation).
+const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(400);
 /// Silhouette re-measure cadence, presented frames.
 const SILHOUETTE_REFRESH_FRAMES: u64 = 30;
 
@@ -53,6 +56,13 @@ struct FallbackApp {
     surface_format: Option<wgpu::TextureFormat>,
     size: (u32, u32),
     cursor: (f64, f64),
+    /// Whether the cursor is inside the window (winit
+    /// CursorEntered / CursorLeft): the gaze driver's
+    /// attention signal.
+    cursor_inside: bool,
+    /// When the last click on her landed (double-click
+    /// detection for the area invocation).
+    last_click_at: Option<Instant>,
     press: Option<((f64, f64), bool)>,
     menu: Option<MenuUi>,
     current_silhouette: Option<(Silhouette, (u32, u32))>,
@@ -89,6 +99,20 @@ impl FallbackApp {
     fn tick_and_present(&mut self) {
         if self.failed.is_some() {
             return;
+        }
+        // Attention: the cursor's window fractions feed
+        // the gaze driver before the step.
+        if self.size.0 > 0 && self.size.1 > 0 {
+            let pointer = if self.cursor_inside {
+                Some((
+                    self.cursor.0 / f64::from(self.size.0),
+                    self.cursor.1 / f64::from(self.size.1),
+                ))
+            } else {
+                None
+            };
+            self.core
+                .set_pointer(pointer, f64::from(self.size.0) / f64::from(self.size.1));
         }
         let hash = match self.core.tick() {
             Ok(hash) => hash,
@@ -159,13 +183,7 @@ impl FallbackApp {
         );
         let mut actions: Vec<MenuAction> = Vec::new();
         if let Some(menu) = &mut self.menu {
-            actions = menu.draw(
-                renderer.device(),
-                renderer.queue(),
-                &view,
-                self.size,
-                &self.options.character_name,
-            );
+            actions = menu.draw(renderer.device(), renderer.queue(), &view, self.size);
         }
         frame.present();
         if !actions.is_empty() {
@@ -206,8 +224,34 @@ impl FallbackApp {
             return;
         };
         let mut menu = MenuUi::new(renderer.device(), format, self.cursor);
-        menu.click_through_locked = self.options.placement.click_through_locked;
+        menu.model = self.menu_model();
         self.menu = Some(menu);
+    }
+
+    /// The menu's model, read from the core and the
+    /// placement at open time. The fallback is a single
+    /// window: it offers no Display section (send-to-
+    /// display is a layer-shell-route capability at this
+    /// stage — the named limit of this presentation).
+    fn menu_model(&self) -> crate::menu::MenuModel {
+        let active = self.core.cast_member();
+        crate::menu::MenuModel {
+            character_name: active
+                .map(|member| member.name.to_string())
+                .unwrap_or_else(|| self.options.character_name.clone()),
+            cast: crate::cast::CAST
+                .iter()
+                .map(|member| {
+                    (
+                        member.name.to_string(),
+                        active.map(|on_stage| on_stage.id) == Some(member.id),
+                    )
+                })
+                .collect(),
+            click_through_locked: self.options.placement.click_through_locked,
+            outputs: Vec::new(),
+            quiet: self.options.placement.quiet_mode,
+        }
     }
 
     fn apply_menu_actions(&mut self, actions: Vec<MenuAction>) {
@@ -226,14 +270,38 @@ impl FallbackApp {
                     }
                     self.menu = None;
                 }
+                MenuAction::SwitchCharacter(index) => {
+                    if let Some(member) = crate::cast::CAST.get(index) {
+                        if let Err(err) = self.core.switch_character(member) {
+                            eprintln!("torogao-companion: character switch refused: {err}");
+                        }
+                    }
+                    self.menu = None;
+                }
+                MenuAction::SendToOutput(_) => {
+                    // Unreachable: the fallback's menu model
+                    // offers no Display section (one window).
+                    eprintln!(
+                        "torogao-companion: send-to-display is a layer-shell-route capability"
+                    );
+                    self.menu = None;
+                }
                 MenuAction::OpenTorogao => {
                     self.open_torogao();
                     self.menu = None;
                 }
+                MenuAction::ToggleQuiet => {
+                    placement.quiet_mode = !placement.quiet_mode;
+                    self.core.set_quiet(placement.quiet_mode);
+                    if let Some(menu) = &mut self.menu {
+                        menu.model.quiet = placement.quiet_mode;
+                    }
+                    self.placement_dirty = true;
+                }
                 MenuAction::ToggleClickThrough => {
                     placement.click_through_locked = !placement.click_through_locked;
                     if let Some(menu) = &mut self.menu {
-                        menu.click_through_locked = placement.click_through_locked;
+                        menu.model.click_through_locked = placement.click_through_locked;
                     }
                     self.placement_dirty = true;
                 }
@@ -418,6 +486,8 @@ impl ApplicationHandler for FallbackApp {
     ) {
         match event {
             WindowEvent::CloseRequested => self.leave(event_loop),
+            WindowEvent::CursorEntered { .. } => self.cursor_inside = true,
+            WindowEvent::CursorLeft { .. } => self.cursor_inside = false,
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x, position.y);
                 if let Some(menu) = &mut self.menu {
@@ -447,8 +517,27 @@ impl ApplicationHandler for FallbackApp {
                                 && delta.0.abs() <= DRAG_THRESHOLD_PX
                                 && delta.1.abs() <= DRAG_THRESHOLD_PX
                             {
-                                if let Err(err) = self.core.play(CLICK_ANIMATION, false) {
-                                    eprintln!("torogao-companion: greeting refused: {err}");
+                                // A click on her: a second
+                                // click inside the
+                                // double-click window invokes
+                                // her area; a single click is
+                                // the reaction (suppressed in
+                                // quiet mode by the core).
+                                let now = Instant::now();
+                                let double = self.last_click_at.is_some_and(|last| {
+                                    now.duration_since(last) <= DOUBLE_CLICK_WINDOW
+                                });
+                                if double {
+                                    self.last_click_at = None;
+                                    self.open_torogao();
+                                } else {
+                                    self.last_click_at = Some(now);
+                                    match self.core.click_reaction() {
+                                        Ok(_) => {}
+                                        Err(err) => {
+                                            eprintln!("torogao-companion: greeting refused: {err}");
+                                        }
+                                    }
                                 }
                             }
                             // Dragging the *window* itself is
@@ -520,6 +609,7 @@ pub fn run(options: RunOptions) -> CompanionResult<RunSummary> {
         options.session_port,
         &options.held_by,
     )?;
+    core.set_quiet(options.placement.quiet_mode);
     let size = {
         let scene = core.scene_mut()?;
         let prepared =
@@ -535,6 +625,8 @@ pub fn run(options: RunOptions) -> CompanionResult<RunSummary> {
         surface_format: None,
         size,
         cursor: (0.0, 0.0),
+        cursor_inside: false,
+        last_click_at: None,
         press: None,
         menu: None,
         current_silhouette: None,

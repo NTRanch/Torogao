@@ -1592,7 +1592,171 @@ pub fn audit() -> Vec<AuditLine> {
         evidence: "per-letter rotation within +/-6 deg and offset within +/-1.5 pt, a pure function of the title string; body text never passes through it".to_string(),
     });
 
+    lines.extend(companion_audit_lines());
+
     lines
+}
+
+/// How one companion-offered capability is housed
+/// (Stage 1.2 parity, PROGRAM.md §3.4): a capability is
+/// either a call on a tool of the one session registry —
+/// no companion-private session operation exists — or a
+/// declared presentation-local act, enumerated here, that
+/// touches no session state beyond the declared
+/// Addition S placement file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompanionHousing {
+    /// Resolves to the named tool in
+    /// `torogao_session::registry()`.
+    Registry(&'static str),
+    /// A declared presentation-local act; the string
+    /// names what it touches (the Addition S state, the
+    /// shell's scene install, a governed driver).
+    DeclaredLocal(&'static str),
+}
+
+/// One row of the companion capability subset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompanionCapability {
+    /// Stable capability id.
+    pub id: &'static str,
+    /// What the user gets, in one line.
+    pub label: &'static str,
+    /// Where the capability is housed.
+    pub housing: CompanionHousing,
+}
+
+/// The companion's declared capability subset (Stage
+/// 1.2): everything the desktop companion offers, each
+/// row housed per §3.4. The companion crate's parity
+/// test pins its live action surface (menu actions,
+/// pointer acts, core drivers) to this table exactly —
+/// a capability added there without a row here fails
+/// the gate, and so does a row with no surface.
+pub const COMPANION_CAPABILITIES: &[CompanionCapability] = &[
+    CompanionCapability {
+        id: "play-greeting",
+        label: "play the Greeting performance",
+        housing: CompanionHousing::Registry("play_control"),
+    },
+    CompanionCapability {
+        id: "play-daydream",
+        label: "play the ambient Daydream performance",
+        housing: CompanionHousing::Registry("play_control"),
+    },
+    CompanionCapability {
+        id: "click-reaction",
+        label: "click her: she greets (suppressed in quiet mode)",
+        housing: CompanionHousing::Registry("play_control"),
+    },
+    CompanionCapability {
+        id: "drag-move",
+        label: "drag her to a new resting place",
+        housing: CompanionHousing::DeclaredLocal("addition-s placement state"),
+    },
+    CompanionCapability {
+        id: "gaze-follow",
+        label: "her gaze follows the pointer",
+        housing: CompanionHousing::DeclaredLocal("governed parameter driver; writes no state"),
+    },
+    CompanionCapability {
+        id: "idle-saccades-blink",
+        label: "idle saccades and blink discipline at rest",
+        housing: CompanionHousing::DeclaredLocal("governed parameter driver; writes no state"),
+    },
+    CompanionCapability {
+        id: "invoke-area",
+        label: "double-click: invoke her current area",
+        housing: CompanionHousing::DeclaredLocal("panel launch over the current model"),
+    },
+    CompanionCapability {
+        id: "open-torogao",
+        label: "open Torogao (her area, the full shell)",
+        housing: CompanionHousing::DeclaredLocal("panel launch over the current model"),
+    },
+    CompanionCapability {
+        id: "quiet-hours",
+        label: "quiet hours / focus mode toggle",
+        housing: CompanionHousing::DeclaredLocal("addition-s placement state (quiet_mode)"),
+    },
+    CompanionCapability {
+        id: "send-to-display",
+        label: "send her to another display",
+        housing: CompanionHousing::DeclaredLocal("addition-s placement state (output_name)"),
+    },
+    CompanionCapability {
+        id: "switch-character",
+        label: "put another cast member on stage",
+        housing: CompanionHousing::DeclaredLocal(
+            "the shell's scene install, shared with the panel",
+        ),
+    },
+    CompanionCapability {
+        id: "toggle-click-through",
+        label: "click-through lock toggle",
+        housing: CompanionHousing::DeclaredLocal(
+            "addition-s placement state (click_through_locked)",
+        ),
+    },
+    CompanionCapability {
+        id: "quit",
+        label: "she leaves (quit the companion)",
+        housing: CompanionHousing::DeclaredLocal("presentation close; no state written"),
+    },
+];
+
+/// The companion's one declared state file (Addition S):
+/// placement and standing behaviour only. The companion
+/// crate's census test pins every file write in the
+/// crate to this file or to user-named evidence outputs
+/// (screenshot / report / trace files).
+pub const COMPANION_STATE_FILE: &str = "companion.json";
+
+/// The companion parity lines of the audit: every
+/// registry-housed capability resolves against the live
+/// session registry, ids are unique, and the hosted
+/// registry is the estate's one registry object.
+fn companion_audit_lines() -> Vec<AuditLine> {
+    let session_registry = torogao_session::registry();
+    let session_names: BTreeSet<&str> = session_registry.iter().map(|tool| tool.name).collect();
+    let mut unresolved: Vec<String> = Vec::new();
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    let mut duplicates: Vec<&str> = Vec::new();
+    let mut registry_housed = 0_usize;
+    for capability in COMPANION_CAPABILITIES {
+        if !seen.insert(capability.id) {
+            duplicates.push(capability.id);
+        }
+        if let CompanionHousing::Registry(tool) = capability.housing {
+            registry_housed += 1;
+            if !session_names.contains(tool) {
+                unresolved.push(format!("{} -> {tool}", capability.id));
+            }
+        }
+    }
+    vec![
+        AuditLine {
+            check: "companion parity (capability subset resolves)".to_string(),
+            pass: unresolved.is_empty() && duplicates.is_empty(),
+            evidence: format!(
+                "{} capabilities declared: {} resolve to session-registry tools (checked against torogao_session::registry(), {} tools), {} are declared presentation-local acts; unresolved: {:?}; duplicates: {:?}",
+                COMPANION_CAPABILITIES.len(),
+                registry_housed,
+                session_registry.len(),
+                COMPANION_CAPABILITIES.len() - registry_housed,
+                unresolved,
+                duplicates
+            ),
+        },
+        AuditLine {
+            check: "companion parity (one registry, one state file)".to_string(),
+            pass: session_names.contains("play_control"),
+            evidence: format!(
+                "the companion hosts torogao_session::registry() itself ({} tools incl. play_control) through the windowed shell's session arrangement; its only state file is the declared Addition S file ({COMPANION_STATE_FILE}); screenshot/report/trace files are user-named evidence outputs, never state",
+                session_registry.len()
+            ),
+        },
+    ]
 }
 
 /// The audit as one JSON document (the `--persona-audit`

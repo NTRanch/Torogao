@@ -245,6 +245,23 @@ impl PlayHost {
     /// evaluation step sequence (physics and automations
     /// still run).
     pub fn step(&mut self, scene: &mut Scene, steps: u64) -> AppResult<()> {
+        self.step_hooked(scene, steps, &mut |_| {})
+    }
+
+    /// Advances like `step`, running `hook` against the
+    /// scene once per step after the player's frame render
+    /// and before the engine evaluation — the frame-order
+    /// seam where a host's governed drivers (the desktop
+    /// companion's gaze/blink driver is the first consumer)
+    /// compose with the playing performance through the
+    /// parameter combinators instead of fighting its lanes
+    /// for the base values.
+    pub fn step_hooked(
+        &mut self,
+        scene: &mut Scene,
+        steps: u64,
+        hook: &mut dyn FnMut(&mut Scene),
+    ) -> AppResult<()> {
         if steps > STEP_CALL_MAX {
             return Err(AppError::Param(format!(
                 "step count {steps} exceeds the per-call bound {STEP_CALL_MAX}"
@@ -253,6 +270,7 @@ impl PlayHost {
         for _ in 0..steps {
             scene.advance_clock();
             self.player.update(STEP_SECONDS as f32, &mut scene.puppet);
+            hook(scene);
             scene.run_update()?;
             self.step_count += 1;
         }
