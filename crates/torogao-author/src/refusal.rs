@@ -66,6 +66,12 @@ pub enum RefusalClass {
     /// declared range, or its names do not number thresholds + 1
     /// (`TG-GAME-TIER`).
     GameTier,
+    /// A shippable-build check cannot show a voice binding's
+    /// torori identity as ear-admitted: its lock state in the
+    /// supplied registry snapshot is below `EarAdmitted`, the
+    /// identity is absent from the snapshot, or no snapshot was
+    /// supplied at all (the check refuses closed).
+    VoiceUnadmitted,
 }
 
 impl RefusalClass {
@@ -90,6 +96,7 @@ impl RefusalClass {
             RefusalClass::GameSaveSchema => "TG-GAME-SAVE-SCHEMA",
             RefusalClass::GameTable => "TG-GAME-TABLE",
             RefusalClass::GameTier => "TG-GAME-TIER",
+            RefusalClass::VoiceUnadmitted => "TG-AUTH-VOICE-UNADMITTED",
         }
     }
 }

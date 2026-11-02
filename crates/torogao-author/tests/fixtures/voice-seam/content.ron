@@ -1,0 +1,19 @@
+// FIXTURE STUB — the content.ron sidecar (ruling D-468) in a
+// fixture-local dialect. The landed sidecar format is the
+// slices branch's slice 1; this stub carries exactly what the
+// seam chain needs: line id -> prose, authored locale en
+// (ruling D-472). Editing the text below must never change
+// project.ron or its hash — the prose-edit test proves it.
+Content(
+    locale: "en",
+    lines: [
+        ContentLine(
+            id: "line.001",
+            text: "The rain has stopped. Shall we go?",
+        ),
+        ContentLine(
+            id: "line.002",
+            text: "Wait. Listen — the night train is coming.",
+        ),
+    ],
+)

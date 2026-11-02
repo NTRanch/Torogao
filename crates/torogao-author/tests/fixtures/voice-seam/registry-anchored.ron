@@ -1,0 +1,12 @@
+// A torori registry snapshot (voice plan §3 seam contract):
+// the trial identity anchored — a locked reference exists,
+// but the Owner's ear has not admitted it. Shippable builds
+// refuse it.
+VoiceRegistrySnapshot(
+    identities: [
+        VoiceIdentityState(
+            identity: "voice.trial.prima-1",
+            lock_state: Anchored,
+        ),
+    ],
+)

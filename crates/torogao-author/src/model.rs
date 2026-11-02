@@ -30,6 +30,10 @@ pub struct Project {
     pub header: Header,
     /// Intaken art, sorted by id.
     pub assets: Vec<Asset>,
+    /// Audio-binding rows (the rig family's audio group),
+    /// sorted by id. Absent from the file when empty: a project
+    /// with no audio bindings carries no section.
+    pub audio_bindings: Vec<AudioBinding>,
     /// Audio-reactive binding rows (A3), sorted by (track, marker).
     pub audio_binds: Vec<AudioBind>,
     /// Named audio tracks of event markers (A3), sorted by id.
@@ -614,6 +618,55 @@ pub enum AudioBindTarget {
     },
 }
 
+/// One audio-binding row: what a named sound slot in the rig
+/// family's audio group is. A dialogue line's reaction hook
+/// names a row by id (Amendment 2 §Item G4); the row says what
+/// the sound is. Rows are references only — no audio data, and
+/// no foreign record's fields, ever enter the project.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AudioBinding {
+    /// Stable id.
+    pub id: String,
+    /// What kind of sound the row binds.
+    pub kind: AudioBindingKind,
+}
+
+/// Audio-binding kinds. The voice kind is the torori seam
+/// (voice plan §3); the audio-reactive kinds belong to slice
+/// A3's `audio_track_define` / `audio_bind_set` and land with
+/// that slice, not here.
+#[derive(Clone, Debug, PartialEq)]
+pub enum AudioBindingKind {
+    /// A spoken line: one character, voiced by torori from the
+    /// delivery record the row references.
+    Voice(VoiceBinding),
+}
+
+/// A voice binding's payload: who speaks, and which torori
+/// conditioning-v1 record says how.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VoiceBinding {
+    /// The speaking character's id (a game-layer character
+    /// record; resolution joins when the game layer lands).
+    pub character: String,
+    /// The torori delivery reference.
+    pub delivery: DeliveryRef,
+}
+
+/// A reference into torori's namespace: the estate
+/// VoiceIdentity a line is voiced as, and the conditioning-v1
+/// record that steers the performance. Both are opaque
+/// reference strings — torori owns their meaning; this crate
+/// never models a conditioning field.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeliveryRef {
+    /// The torori VoiceIdentity id (`identity_ref` in torori's
+    /// registry).
+    pub identity: String,
+    /// The torori conditioning-v1 record reference.
+    pub record: String,
+}
+
 impl Project {
     /// The part with this id.
     pub fn part(&self, id: &str) -> Option<&Part> {
@@ -665,6 +718,11 @@ impl Project {
     /// The physics group with this id.
     pub fn physics_group(&self, id: &str) -> Option<&PhysicsGroup> {
         find(&self.physics_groups, id, |group| &group.id)
+    }
+
+    /// The audio-binding row with this id.
+    pub fn audio_binding(&self, id: &str) -> Option<&AudioBinding> {
+        find(&self.audio_bindings, id, |binding| &binding.id)
     }
 
     /// The neutral value of a parameter: its pose entry when one

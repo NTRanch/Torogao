@@ -1,0 +1,12 @@
+// A torori registry snapshot (voice plan §3 seam contract):
+// the lock states a caller vouches for at check time. This
+// one states the trial identity as the Owner's ear admitted
+// it — the only state a shippable build accepts.
+VoiceRegistrySnapshot(
+    identities: [
+        VoiceIdentityState(
+            identity: "voice.trial.prima-1",
+            lock_state: EarAdmitted,
+        ),
+    ],
+)

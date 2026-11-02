@@ -11,6 +11,8 @@ pub use torogao_format::limits::{
 
 /// Maximum assets per project (one per separated layer at most).
 pub const ASSETS_MAX: usize = 1024;
+/// Maximum audio-binding rows per project.
+pub const AUDIO_BINDINGS_MAX: usize = 256;
 /// Maximum draw-order band number (inclusive); bands are 0..=99.
 pub const DRAW_BAND_MAX: u32 = 99;
 /// Maximum index within a draw-order band (inclusive).

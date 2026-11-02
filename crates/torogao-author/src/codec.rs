@@ -10,12 +10,14 @@
 //! are `TG-AUTH-MALFORMED`.
 
 use crate::model::{
-    AnchorKind, ArtBind, Asset, AssetKind, AudioBind, AudioBindTarget, AudioMarker, AudioTrack,
-    Blend, Clip, Completion, Consent, Deformer, DeformerKind, Draw, Expression, ExpressionValue,
+    AnchorKind, ArtBind, Asset, AssetKind, AudioBind, AudioBindTarget, AudioBinding,
+    AudioBindingKind, AudioMarker, AudioTrack,
+    Blend, Clip, Completion, Consent, Deformer, DeformerKind, DeliveryRef, Draw, Expression, ExpressionValue,
     ExpressionVisibility, Glue, Header, Keyform, Keyforms, Mesh, MeshForm, Motion, MotionCurve,
     MotionKeyframe, PROJECT_FORMAT, PROJECT_FORMAT_VERSION, Parameter, Part, PhysicsAnchor,
     PhysicsGroup, PhysicsInput, PhysicsOutput, PhysicsParticle, PhysicsStrand, Point, PoseEntry,
-    Project, Provenance, Rect, Rotation, RotationForm, Stamp, VariantSet, Warp, WarpForm,
+    Project, Provenance, Rect, Rotation, RotationForm, Stamp, VariantSet, VoiceBinding, Warp,
+    WarpForm,
 };
 use crate::refusal::{Refusal, RefusalClass, refuse};
 use crate::ron::{Ron, emit_document, parse_document};
@@ -92,6 +94,18 @@ fn project_to_ron(project: &Project) -> Ron {
             Ron::List(project.assets.iter().map(asset_to_ron).collect()),
         ),
     ];
+    if !project.audio_bindings.is_empty() {
+        fields.push((
+            "audio_bindings",
+            Ron::List(
+                project
+                    .audio_bindings
+                    .iter()
+                    .map(audio_binding_to_ron)
+                    .collect(),
+            ),
+        ));
+    }
     if !project.audio_binds.is_empty() {
         fields.push((
             "audio_binds",
@@ -708,6 +722,29 @@ fn audio_marker_to_ron(marker: &AudioMarker) -> Ron {
     )
 }
 
+fn audio_binding_to_ron(binding: &AudioBinding) -> Ron {
+    match &binding.kind {
+        AudioBindingKind::Voice(voice) => record(
+            "AudioBinding",
+            vec![
+                ("id", text(&binding.id)),
+                ("character", text(&voice.character)),
+                (
+                    "delivery",
+                    record(
+                        "DeliveryRef",
+                        vec![
+                            ("identity", text(&voice.delivery.identity)),
+                            ("record", text(&voice.delivery.record)),
+                        ],
+                    ),
+                ),
+                ("kind", Ron::Ident("Voice".to_string())),
+            ],
+        ),
+    }
+}
+
 fn audio_bind_to_ron(bind: &AudioBind) -> Ron {
     record(
         "AudioBind",
@@ -975,6 +1012,7 @@ fn project_from_ron(value: Ron) -> Result<Project, Refusal> {
     let mut fields = open(value, "Project")?;
     let header = header_from_ron(fields.take("header")?)?;
     let assets = collect(fields.list("assets")?, asset_from_ron)?;
+    let audio_bindings = list_section(&mut fields, "audio_bindings", audio_binding_from_ron)?;
     let audio_binds = list_section(&mut fields, "audio_binds", audio_bind_from_ron)?;
     let audio_tracks = list_section(&mut fields, "audio_tracks", audio_track_from_ron)?;
     let deformers = collect(fields.list("deformers")?, deformer_from_ron)?;
@@ -1016,6 +1054,7 @@ fn project_from_ron(value: Ron) -> Result<Project, Refusal> {
     Ok(Project {
         header,
         assets: sorted_unique(assets, "assets", |item| &item.id)?,
+        audio_bindings: sorted_unique(audio_bindings, "audio bindings", |item| &item.id)?,
         audio_binds,
         audio_tracks: sorted_unique(audio_tracks, "audio tracks", |item| &item.id)?,
         deformers: sorted_unique(deformers, "deformers", |item| &item.id)?,
@@ -1165,6 +1204,29 @@ fn audio_marker_from_ron(value: Ron) -> Result<AudioMarker, Refusal> {
     };
     fields.done()?;
     Ok(marker)
+}
+
+fn audio_binding_from_ron(value: Ron) -> Result<AudioBinding, Refusal> {
+    let mut fields = open(value, "AudioBinding")?;
+    let id = fields.string("id")?;
+    let kind = match fields.ident("kind")?.as_str() {
+        "Voice" => {
+            let character = fields.string("character")?;
+            let mut delivery_fields = open(fields.take("delivery")?, "DeliveryRef")?;
+            let delivery = DeliveryRef {
+                identity: delivery_fields.string("identity")?,
+                record: delivery_fields.string("record")?,
+            };
+            delivery_fields.done()?;
+            AudioBindingKind::Voice(VoiceBinding {
+                character,
+                delivery,
+            })
+        }
+        other => return unknown_variant("kind", other),
+    };
+    fields.done()?;
+    Ok(AudioBinding { id, kind })
 }
 
 fn audio_bind_from_ron(value: Ron) -> Result<AudioBind, Refusal> {
