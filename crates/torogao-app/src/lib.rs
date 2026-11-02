@@ -32,6 +32,7 @@ pub mod take;
 pub mod textures;
 pub mod tools;
 pub mod video_bridge;
+pub mod vtuber;
 pub mod windowed;
 
 pub use error::{AppError, AppResult};

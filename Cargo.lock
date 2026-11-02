@@ -3136,6 +3136,7 @@ dependencies = [
  "torogao-engine",
  "torogao-format",
  "torogao-session",
+ "torogao-vmc",
  "wgpu",
  "winit",
 ]
@@ -3212,6 +3213,10 @@ dependencies = [
  "serde_json",
  "torogao-author",
 ]
+
+[[package]]
+name = "torogao-vmc"
+version = "1.0.0"
 
 [[package]]
 name = "torogao-voice"
