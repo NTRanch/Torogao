@@ -28,6 +28,7 @@ pub mod scene;
 pub mod session_host;
 pub mod state;
 pub mod state_hash;
+pub mod take;
 pub mod textures;
 pub mod tools;
 pub mod video_bridge;

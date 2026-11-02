@@ -12,6 +12,8 @@
 //!   torogao-app --session-replay <record-dir>
 //!   torogao-app --play-export <model.inx> --animation <name>
 //!       --out <dir> [--force]
+//!   torogao-app --take-export <model.inx> --take <take.json>
+//!       --out <dir> [--force]
 //!   torogao-app --persona-audit
 
 #![forbid(unsafe_code)]
@@ -29,7 +31,7 @@ const USAGE: &str = "usage: torogao-app [model.inx] \
                      [--session-dir <dir>] [--session-port <port>] [--held-by <name>]\n       torogao-app --headless-eval <model.inx> \
                      [--param name=value ...] [--render out.png] [--state-hash] \
                      [--debug-physics]\n       torogao-app --session-serve <model.inx> --session-dir <dir> \
-                     [--session-port <port>] [--held-by <name>]\n       torogao-app --session-replay <record-dir>\n       torogao-app --play-export <model.inx> --animation <name> --out <dir> [--force]";
+                     [--session-port <port>] [--held-by <name>]\n       torogao-app --session-replay <record-dir>\n       torogao-app --play-export <model.inx> --animation <name> --out <dir> [--force]\n       torogao-app --take-export <model.inx> --take <take.json> --out <dir> [--force]";
 
 fn main() -> ExitCode {
     match run() {
@@ -54,6 +56,8 @@ fn run() -> Result<i32, AppError> {
     let mut held_by = "torogao-app session host".to_string();
     let mut model: Option<PathBuf> = None;
     let mut play_export = false;
+    let mut take_export = false;
+    let mut take_file: Option<PathBuf> = None;
     let mut persona_audit = false;
     let mut animation: Option<String> = None;
     let mut out_dir: Option<PathBuf> = None;
@@ -99,6 +103,14 @@ fn run() -> Result<i32, AppError> {
             "--debug-physics" => options.debug_physics = true,
             "--persona-audit" => persona_audit = true,
             "--play-export" => play_export = true,
+            "--take-export" => take_export = true,
+            "--take" => {
+                index += 1;
+                let value = args.get(index).ok_or_else(|| {
+                    AppError::Cli("--take requires a take document argument".to_string())
+                })?;
+                take_file = Some(PathBuf::from(value));
+            }
             "--animation" => {
                 index += 1;
                 let value = args.get(index).ok_or_else(|| {
@@ -180,6 +192,15 @@ fn run() -> Result<i32, AppError> {
                 force,
             },
         );
+    }
+    if take_export {
+        let (Some(model), Some(take), Some(out_dir)) = (model, take_file, out_dir) else {
+            return Err(AppError::Cli(
+                "--take-export requires a model path, --take <take.json> and --out <dir>"
+                    .to_string(),
+            ));
+        };
+        return torogao_app::take::run_take_export(&take, &model, &out_dir, force);
     }
     if session_serve {
         let Some(model) = model else {

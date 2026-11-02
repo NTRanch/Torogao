@@ -73,7 +73,7 @@ pub struct BridgeReport {
 
 /// SHA-256 of a byte string, hex (the same digest the
 /// workspace's session stack reports).
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::Digest;
     let mut hasher = sha2::Sha256::new();
     hasher.update(bytes);
@@ -83,7 +83,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 /// Runs one ffmpeg invocation with separate argv values,
 /// captured output, and a typed failure carrying a
 /// bounded stderr excerpt.
-fn run_ffmpeg(args: &[String]) -> AppResult<()> {
+pub(crate) fn run_ffmpeg(args: &[String]) -> AppResult<()> {
     let output = Command::new("ffmpeg")
         .args(args)
         .output()
@@ -111,7 +111,7 @@ fn run_ffmpeg(args: &[String]) -> AppResult<()> {
 }
 
 /// Whether the local ffmpeg offers libx264.
-fn ffmpeg_has_libx264() -> bool {
+pub(crate) fn ffmpeg_has_libx264() -> bool {
     Command::new("ffmpeg")
         .args(["-hide_banner", "-encoders"])
         .output()
