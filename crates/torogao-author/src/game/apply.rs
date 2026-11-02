@@ -7,18 +7,20 @@
 //! precedent).
 
 use crate::game::model::{
-    Atom, CharacterDef, Clock, ConditionDef, DialogueLine, Direction, EffectSetDef, FlagDef,
-    FlagEdge, FlagScope, GAME_FORMAT_VERSION, Game, Lifetime, OfferDef, Overflow, Repetition,
-    RngStreamDef, SceneDef, StatDef, StatInitial, StatKind, StatScope, TableDef, TableOutcome,
-    TableWeight, TierDef, TriggerDef, TriggerKind, ValueDef,
+    AppearanceDef, AppearanceEntry, AppearanceKind, AppearanceSlot, AppearanceValue, Atom,
+    CharacterDef, Clock, ConditionDef, DialogueLine, Direction, EffectSetDef, FlagDef, FlagEdge,
+    FlagScope, GAME_FORMAT_VERSION, Game, Lifetime, OfferDef, Overflow, Repetition, RngStreamDef,
+    SceneDef, StatDef, StatInitial, StatKind, StatScope, TableDef, TableOutcome, TableWeight,
+    TierDef, TriggerDef, TriggerKind, ValueDef, VisualStateDef,
 };
 use crate::game::op::{
-    AtomInput, CharacterDefineInput, ClockDefineInput, ConditionDefineInput,
+    AppearanceDefineInput, AppearanceEntryInput, AppearanceKindInput, AppearanceSlotInput,
+    AppearanceValueInput, AtomInput, CharacterDefineInput, ClockDefineInput, ConditionDefineInput,
     DialogueLineDefineInput, DirectionInput, EffectSetDefineInput, FlagDefineInput, FlagEdgeInput,
     FlagScopeInput, GameDefineInput, GameOp, OverflowInput, PresentationInput, RepetitionInput,
     RngStreamDefineInput, SceneDefineInput, StatDefineInput, StatKindInput, StatScopeInput,
     StatTierDefineInput, TableDefineInput, TableOutcomeInput, TriggerDefineInput, TriggerKindInput,
-    ValueDefineInput, WeightInput,
+    ValueDefineInput, VisualStateDefineInput, WeightInput,
 };
 use crate::model::{Project, locate};
 use crate::refusal::Refusal;
@@ -432,6 +434,118 @@ pub(crate) fn table_input_of(table: &TableDef) -> TableDefineInput {
     }
 }
 
+fn appearance_kind_of(input: AppearanceKindInput) -> AppearanceKind {
+    match input {
+        AppearanceKindInput::Ints => AppearanceKind::Ints,
+        AppearanceKindInput::Text => AppearanceKind::Text,
+    }
+}
+
+fn appearance_kind_input(kind: AppearanceKind) -> AppearanceKindInput {
+    match kind {
+        AppearanceKind::Ints => AppearanceKindInput::Ints,
+        AppearanceKind::Text => AppearanceKindInput::Text,
+    }
+}
+
+fn appearance_entry_of(input: &AppearanceEntryInput) -> AppearanceEntry {
+    AppearanceEntry {
+        slot: input.slot.clone(),
+        value: match &input.value {
+            AppearanceValueInput::Ints(values) => AppearanceValue::Ints(values.clone()),
+            AppearanceValueInput::Text(token) => AppearanceValue::Text(token.clone()),
+        },
+    }
+}
+
+fn appearance_entry_input(entry: &AppearanceEntry) -> AppearanceEntryInput {
+    AppearanceEntryInput {
+        slot: entry.slot.clone(),
+        value: match &entry.value {
+            AppearanceValue::Ints(values) => AppearanceValueInput::Ints(values.clone()),
+            AppearanceValue::Text(token) => AppearanceValueInput::Text(token.clone()),
+        },
+    }
+}
+
+/// The appearance record an `appearance_define` produces:
+/// slots and baseline entries are stored sorted by id, so the
+/// record is canonical however the author ordered the inputs.
+pub(crate) fn appearance_record(inputs: &AppearanceDefineInput) -> AppearanceDef {
+    let mut slots: Vec<AppearanceSlot> = inputs
+        .slots
+        .iter()
+        .map(|slot| AppearanceSlot {
+            id: slot.id.clone(),
+            kind: appearance_kind_of(slot.kind),
+        })
+        .collect();
+    slots.sort_by(|left, right| left.id.cmp(&right.id));
+    let mut base: Vec<AppearanceEntry> = inputs.base.iter().map(appearance_entry_of).collect();
+    base.sort_by(|left, right| left.slot.cmp(&right.slot));
+    AppearanceDef {
+        base,
+        character: inputs.character.clone(),
+        slots,
+    }
+}
+
+/// The input form of a stored appearance (for the sweep).
+pub(crate) fn appearance_input_of(appearance: &AppearanceDef) -> AppearanceDefineInput {
+    AppearanceDefineInput {
+        character: appearance.character.clone(),
+        slots: appearance
+            .slots
+            .iter()
+            .map(|slot| AppearanceSlotInput {
+                id: slot.id.clone(),
+                kind: appearance_kind_input(slot.kind),
+            })
+            .collect(),
+        base: appearance.base.iter().map(appearance_entry_input).collect(),
+    }
+}
+
+/// The visual-state record a `visual_state_define` produces:
+/// delta entries are stored sorted by slot id.
+pub(crate) fn visual_state_record(inputs: &VisualStateDefineInput) -> VisualStateDef {
+    let mut delta: Vec<AppearanceEntry> = inputs.delta.iter().map(appearance_entry_of).collect();
+    delta.sort_by(|left, right| left.slot.cmp(&right.slot));
+    VisualStateDef {
+        character: inputs.character.clone(),
+        delta,
+        state: inputs.state.clone(),
+    }
+}
+
+/// The input form of a stored visual state (for the sweep).
+pub(crate) fn visual_state_input_of(state: &VisualStateDef) -> VisualStateDefineInput {
+    VisualStateDefineInput {
+        character: state.character.clone(),
+        state: state.state.clone(),
+        delta: state.delta.iter().map(appearance_entry_input).collect(),
+    }
+}
+
+/// Inserts or replaces a visual state in the (character,
+/// state)-sorted collection.
+fn upsert_visual_state(states: &mut Vec<VisualStateDef>, record: VisualStateDef) {
+    let key = (record.character.as_str(), record.state.as_str());
+    match states
+        .iter()
+        .position(|row| row.character == record.character && row.state == record.state)
+    {
+        Some(index) => states[index] = record,
+        None => {
+            let index = states
+                .iter()
+                .position(|row| (row.character.as_str(), row.state.as_str()) > key)
+                .unwrap_or(states.len());
+            states.insert(index, record);
+        }
+    }
+}
+
 /// The format migration, applied whenever a game op lands on a
 /// section written under an older game format: v1 → v2 changes
 /// no record (v2 only adds optional fields and the interpreter's
@@ -539,6 +653,16 @@ pub fn apply_game(project: &mut Project, op: &GameOp) -> Result<(), Refusal> {
             let record = table_record(inputs)?;
             let game = game_mut(project);
             upsert(&mut game.tables, record, |t| &t.id);
+        }
+        GameOp::AppearanceDefine(inputs) => {
+            let record = appearance_record(inputs);
+            let game = game_mut(project);
+            upsert(&mut game.appearances, record, |a| &a.character);
+        }
+        GameOp::VisualStateDefine(inputs) => {
+            let record = visual_state_record(inputs);
+            let game = game_mut(project);
+            upsert_visual_state(&mut game.visual_states, record);
         }
     }
     if let Some(game) = &mut project.game {

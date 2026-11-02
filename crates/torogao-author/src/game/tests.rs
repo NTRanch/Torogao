@@ -557,6 +557,44 @@ fn game_section_codec_round_trips_every_record_shape() {
             next: None,
             hook_expression: None,
         }],
+        appearances: vec![AppearanceDef {
+            base: vec![
+                AppearanceEntry {
+                    slot: "body".to_string(),
+                    value: AppearanceValue::Text("base_body".to_string()),
+                },
+                AppearanceEntry {
+                    slot: "scale".to_string(),
+                    value: AppearanceValue::Ints(vec![1000]),
+                },
+            ],
+            character: "amy".to_string(),
+            slots: vec![
+                AppearanceSlot {
+                    id: "body".to_string(),
+                    kind: AppearanceKind::Text,
+                },
+                AppearanceSlot {
+                    id: "scale".to_string(),
+                    kind: AppearanceKind::Ints,
+                },
+            ],
+        }],
+        visual_states: vec![
+            VisualStateDef {
+                character: "amy".to_string(),
+                delta: vec![AppearanceEntry {
+                    slot: "body".to_string(),
+                    value: AppearanceValue::Text("grown_body".to_string()),
+                }],
+                state: "Growth-1".to_string(),
+            },
+            VisualStateDef {
+                character: "amy".to_string(),
+                delta: vec![],
+                state: "MindControl-1".to_string(),
+            },
+        ],
         streams: vec![RngStreamDef {
             id: "battle".to_string(),
             algorithm: RNG_ALGORITHM.to_string(),
@@ -2116,4 +2154,278 @@ fn ledger_pattern_evaluates_identically_across_three_replays() {
         let again = verb(&root, "game_simulate", inputs.clone());
         assert_eq!(again.doc, first.doc, "replay evidence is byte-identical");
     }
+}
+
+// ---- P2-6: visual-state delta table (Modification App) ----------------
+//
+// The parity fixture is the pilot's measured MiaStates
+// census: 39 rows — the `Default` baseline (which sets all
+// seven slots) plus 38 path-stage states. The slot vocabulary
+// {BODY, EXTRAS, FACE, SCHEDULE, POSITION, SCALE,
+// FACE_POSITION}, the state key set, the per-state delta
+// SHAPES (which slots each state touches), the empty
+// MindControl deltas, and the baseline SCHEDULE vector
+// [5.0, 4.0, 2.0, 1.0] are measured; the part-name tokens are
+// representative (the study reports shapes, not part names).
+// The one float vector enters as fixed-point integers
+// ([5000, 4000, 2000, 1000]) — floats never enter the format.
+
+/// The measured path census: (path, stage count, delta shape).
+/// Shapes: "body" touches BODY; "late-face" adds FACE at the
+/// final stages; "transform" adds POSITION and SCALE;
+/// "empty" is the MindControl shape — no entries at all.
+const MIA_PATHS: [(&str, u32, &str); 10] = [
+    ("AssExpansion", 4, "body"),
+    ("Bimbo", 4, "late-face"),
+    ("BreastExpansion", 4, "body"),
+    ("Goth", 3, "late-face"),
+    ("Growth", 5, "transform"),
+    ("Milk", 4, "body"),
+    ("MindControl", 4, "empty"),
+    ("Pet", 4, "body"),
+    ("Shrink", 5, "transform"),
+    ("Vampire", 1, "body"),
+];
+
+fn mia_delta_json(path: &str, stage: u32, count: u32, shape: &str) -> Value {
+    let lower = path.to_lowercase();
+    let mut delta = vec![json!({
+        "slot": "body",
+        "value": format!("body_{lower}_{stage}"),
+    })];
+    match shape {
+        "body" => {}
+        "empty" => return json!([]),
+        "late-face" => {
+            if stage >= 3 || stage == count {
+                delta.push(json!({
+                    "slot": "face",
+                    "value": format!("face_{lower}_{stage}"),
+                }));
+            }
+        }
+        "transform" => {
+            let scale = if path == "Growth" {
+                1000 + 100 * i64::from(stage)
+            } else {
+                1000 - 80 * i64::from(stage)
+            };
+            delta.push(json!({"slot": "position", "value": [10 * i64::from(stage), 0]}));
+            delta.push(json!({"slot": "scale", "value": [scale]}));
+        }
+        _ => unreachable!("fixture shapes are fixed"),
+    }
+    Value::Array(delta)
+}
+
+/// Authors the MiaStates fixture: Mia's appearance table
+/// (seven slots, total baseline) plus all 38 path-stage
+/// visual states.
+fn author_mia(root: &Path) {
+    let mut ops: Vec<(&'static str, Value)> = vec![
+        ("project_init", init_inputs()),
+        (
+            "game_define",
+            json!({"id": "mia_fixture", "start_scene": "room"}),
+        ),
+        (
+            "character_define",
+            json!({"id": "mia", "name_ref": "name_mia", "name_text": "Mia"}),
+        ),
+        (
+            "scene_define",
+            json!({"id": "room", "presentation": "room"}),
+        ),
+        (
+            "appearance_define",
+            json!({
+                "character": "mia",
+                "slots": [
+                    {"id": "body", "kind": "text"},
+                    {"id": "extras", "kind": "text"},
+                    {"id": "face", "kind": "text"},
+                    {"id": "face_position", "kind": "ints"},
+                    {"id": "position", "kind": "ints"},
+                    {"id": "scale", "kind": "ints"},
+                    {"id": "schedule", "kind": "ints"},
+                ],
+                "base": [
+                    {"slot": "body", "value": "mia_default"},
+                    {"slot": "extras", "value": "none"},
+                    {"slot": "face", "value": "default_face"},
+                    {"slot": "face_position", "value": [0, 0]},
+                    {"slot": "position", "value": [0, 0]},
+                    {"slot": "scale", "value": [1000]},
+                    {"slot": "schedule", "value": [5000, 4000, 2000, 1000]},
+                ],
+            }),
+        ),
+    ];
+    for (path, count, shape) in MIA_PATHS {
+        for stage in 1..=count {
+            ops.push((
+                "visual_state_define",
+                json!({
+                    "character": "mia",
+                    "state": format!("{path}-{stage}"),
+                    "delta": mia_delta_json(path, stage, count, shape),
+                }),
+            ));
+        }
+    }
+    let answer = script(root, ops);
+    assert_eq!(answer.status, Status::Ok, "mia fixture: {}", answer.doc);
+    assert!(
+        validate_codes(root).is_empty(),
+        "mia fixture validates: {:?}",
+        validate_codes(root)
+    );
+}
+
+#[test]
+fn mia_states_fixture_validates_and_every_state_resolves_to_its_measured_delta() {
+    use crate::game::model::AppearanceValue;
+    use crate::game::visual::resolve_appearance;
+    let root = test_root("mia-states");
+    author_mia(&root);
+    let loaded = load_project(&root);
+    let game = loaded.project.game.as_ref().expect("game section");
+    assert_eq!(
+        game.visual_states.len(),
+        38,
+        "38 path-stage rows plus the baseline"
+    );
+    // The baseline: all seven slots at their Default values.
+    let base = resolve_appearance(game, "mia", None).expect("baseline resolves");
+    assert_eq!(base.len(), 7);
+    assert!(
+        base.contains(&(
+            "schedule".to_string(),
+            AppearanceValue::Ints(vec![5000, 4000, 2000, 1000])
+        )),
+        "the measured SCHEDULE vector resolves: {base:?}"
+    );
+    // Every state resolves to exactly its measured sparse
+    // override set: the slots whose resolved value differs
+    // from the baseline are the delta's slots, no more.
+    for (path, count, shape) in MIA_PATHS {
+        for stage in 1..=count {
+            let name = format!("{path}-{stage}");
+            let resolved = resolve_appearance(game, "mia", Some(&name))
+                .unwrap_or_else(|err| panic!("{name} resolves: {err:?}"));
+            let overridden: Vec<&str> = resolved
+                .iter()
+                .filter(|(slot, value)| {
+                    base.iter().find(|(s, _)| s == slot).map(|(_, v)| v) != Some(value)
+                })
+                .map(|(slot, _)| slot.as_str())
+                .collect();
+            let expected: Vec<&str> = match shape {
+                "body" => vec!["body"],
+                "empty" => vec![],
+                "late-face" if stage >= 3 || stage == count => vec!["body", "face"],
+                "late-face" => vec!["body"],
+                "transform" => vec!["body", "position", "scale"],
+                _ => unreachable!(),
+            };
+            assert_eq!(overridden, expected, "{name} overrides exactly its delta");
+            assert_eq!(resolved.len(), 7, "{name} resolves all seven slots");
+        }
+    }
+    // The measured negative space: every MindControl stage
+    // resolves to EXACTLY the baseline — the empty delta is a
+    // row that changes nothing, auditable in the data.
+    for stage in 1..=4 {
+        let name = format!("MindControl-{stage}");
+        let resolved = resolve_appearance(game, "mia", Some(&name)).expect("resolves");
+        assert_eq!(resolved, base, "{name} is the empty delta made visible");
+    }
+    // A state the table does not carry refuses, never a
+    // silent baseline.
+    assert!(resolve_appearance(game, "mia", Some("Nope-1")).is_err());
+    assert!(resolve_appearance(game, "nobody", None).is_err());
+}
+
+#[test]
+fn visual_state_gates_refuse_typed() {
+    let root = test_root("visual-gates");
+    author_mia(&root);
+    // A delta naming an undeclared slot dangles.
+    let bad = verb(
+        &root,
+        "visual_state_define",
+        json!({"character": "mia", "state": "Winged-1", "delta": [{"slot": "wings", "value": "big"}]}),
+    );
+    assert_eq!(bad.doc["code"], "TG-AUTH-DANGLING", "{}", bad.doc);
+    // A value whose form mismatches the slot's kind is
+    // ill-typed (the expression class, as for table weights).
+    let bad = verb(
+        &root,
+        "visual_state_define",
+        json!({"character": "mia", "state": "Bad-1", "delta": [{"slot": "body", "value": [1, 2]}]}),
+    );
+    assert_eq!(bad.doc["code"], "TG-GAME-EXPR", "{}", bad.doc);
+    // One slot assigned twice in a delta is malformed.
+    let bad = verb(
+        &root,
+        "visual_state_define",
+        json!({
+            "character": "mia", "state": "Bad-2",
+            "delta": [
+                {"slot": "body", "value": "a"},
+                {"slot": "body", "value": "b"},
+            ],
+        }),
+    );
+    assert_eq!(bad.doc["code"], "TG-AUTH-MALFORMED", "{}", bad.doc);
+    // A state for a character with no appearance table.
+    let ok = verb(
+        &root,
+        "character_define",
+        json!({"id": "bob", "name_ref": "name_bob", "name_text": "Bob"}),
+    );
+    assert_eq!(ok.status, Status::Ok, "{}", ok.doc);
+    let bad = verb(
+        &root,
+        "visual_state_define",
+        json!({"character": "bob", "state": "Any-1", "delta": []}),
+    );
+    assert_eq!(bad.doc["code"], "TG-AUTH-DANGLING", "{}", bad.doc);
+    // An appearance table for a character that does not exist.
+    let bad = verb(
+        &root,
+        "appearance_define",
+        json!({
+            "character": "ghost",
+            "slots": [{"id": "body", "kind": "text"}],
+            "base": [{"slot": "body", "value": "x"}],
+        }),
+    );
+    assert_eq!(bad.doc["code"], "TG-AUTH-DANGLING", "{}", bad.doc);
+    // A baseline that omits a declared slot is malformed —
+    // the baseline is total by construction.
+    let bad = verb(
+        &root,
+        "appearance_define",
+        json!({
+            "character": "bob",
+            "slots": [{"id": "body", "kind": "text"}, {"id": "face", "kind": "text"}],
+            "base": [{"slot": "body", "value": "x"}],
+        }),
+    );
+    assert_eq!(bad.doc["code"], "TG-AUTH-MALFORMED", "{}", bad.doc);
+    // The upsert law: identical redefinition is a no-op, a
+    // differing one conflicts.
+    let same = verb(
+        &root,
+        "visual_state_define",
+        json!({"character": "mia", "state": "MindControl-1", "delta": []}),
+    );
+    assert_eq!(same.status, Status::Ok, "{}", same.doc);
+    let bad = verb(
+        &root,
+        "visual_state_define",
+        json!({"character": "mia", "state": "MindControl-1", "delta": [{"slot": "body", "value": "other"}]}),
+    );
+    assert_eq!(bad.doc["code"], "TG-AUTH-CONFLICT", "{}", bad.doc);
 }

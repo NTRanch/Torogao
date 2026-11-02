@@ -596,6 +596,30 @@ fn game_ops(project: &Project) -> Vec<Op> {
             })),
         );
     }
+    for appearance in &game.appearances {
+        push(
+            format!("appearance:{}", appearance.character),
+            vec![
+                "game".to_string(),
+                format!("character:{}", appearance.character),
+            ],
+            Op::Game(GameOp::AppearanceDefine(
+                crate::game::apply::appearance_input_of(appearance),
+            )),
+        );
+    }
+    for state in &game.visual_states {
+        push(
+            format!("vstate:{}:{}", state.character, state.state),
+            vec![
+                "game".to_string(),
+                format!("appearance:{}", state.character),
+            ],
+            Op::Game(GameOp::VisualStateDefine(
+                crate::game::apply::visual_state_input_of(state),
+            )),
+        );
+    }
     for scene in &game.scenes {
         push(
             format!("scene:{}", scene.id),

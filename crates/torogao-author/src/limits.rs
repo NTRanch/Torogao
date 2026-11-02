@@ -58,6 +58,8 @@ pub const VARIANT_SETS_MAX: usize = 256;
 
 /// Maximum characters in one game.
 pub const GAME_CHARACTERS_MAX: usize = 256;
+/// Maximum appearance slots on one character's doll.
+pub const GAME_APPEARANCE_SLOTS_MAX: usize = 64;
 /// Maximum conditions in one game.
 pub const GAME_CONDITIONS_MAX: usize = 1024;
 /// Maximum size of `content.ron`, in bytes (64 MiB).
@@ -103,6 +105,8 @@ pub const GAME_TABLE_NESTING_MAX: u32 = 8;
 pub const GAME_TIER_THRESHOLDS_MAX: usize = 64;
 /// Maximum triggers in one game.
 pub const GAME_TRIGGERS_MAX: usize = 1024;
+/// Maximum visual-state rows in one game.
+pub const GAME_VISUAL_STATES_MAX: usize = 4096;
 /// Maximum named values in one game.
 pub const GAME_VALUES_MAX: usize = 1024;
 /// Maximum ticks in one `game_simulate` run.
