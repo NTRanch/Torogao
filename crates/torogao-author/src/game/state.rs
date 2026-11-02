@@ -74,6 +74,10 @@ pub struct GameState {
     /// A counter exists only while its stat's value differs
     /// from the stat's default.
     pub lifetimes: BTreeMap<StatKey, u32>,
+    /// Per-stream RNG state (the SplitMix64 state word), by
+    /// stream id. Seeded at genesis from the run seed; a draw
+    /// advances exactly one stream by exactly one step.
+    pub rng: BTreeMap<String, u64>,
     /// Run-scope flag values.
     pub flags_run: BTreeMap<String, bool>,
     /// Globals-scope flag values (the globals partition).
@@ -95,107 +99,129 @@ pub struct GameState {
 /// Emits the canonical state document (the save partition
 /// image and the hash-chain input).
 pub fn state_to_ron(state: &GameState) -> Ron {
-    record(
-        "State",
-        vec![
-            (
-                "current_scene",
-                opt(state.current_scene.as_ref(), |id| text(id)),
+    let mut fields: Vec<(&str, Ron)> = vec![
+        (
+            "current_scene",
+            opt(state.current_scene.as_ref(), |id| text(id)),
+        ),
+        ("day", Ron::Int(state.day)),
+        ("flags_globals", Ron::List(flag_list(&state.flags_globals))),
+        ("flags_run", Ron::List(flag_list(&state.flags_run))),
+        (
+            "lifetimes",
+            Ron::List(
+                state
+                    .lifetimes
+                    .iter()
+                    .map(|(key, days)| {
+                        record(
+                            "LifetimeState",
+                            vec![
+                                ("character", opt(key.character.as_ref(), |id| text(id))),
+                                ("days", Ron::Int(i64::from(*days))),
+                                ("stat", text(&key.stat)),
+                            ],
+                        )
+                    })
+                    .collect(),
             ),
-            ("day", Ron::Int(state.day)),
-            ("flags_globals", Ron::List(flag_list(&state.flags_globals))),
-            ("flags_run", Ron::List(flag_list(&state.flags_run))),
+        ),
+        ("line", opt(state.line.as_ref(), |id| text(id))),
+        ("slot", Ron::Int(i64::from(state.slot))),
+        (
+            "stats",
+            Ron::List(
+                state
+                    .stats
+                    .iter()
+                    .map(|(key, value)| {
+                        record(
+                            "StatState",
+                            vec![
+                                ("character", opt(key.character.as_ref(), |id| text(id))),
+                                ("stat", text(&key.stat)),
+                                ("value", Ron::Int(*value)),
+                            ],
+                        )
+                    })
+                    .collect(),
+            ),
+        ),
+        (
+            "tick",
+            Ron::Int(i64::try_from(state.tick).unwrap_or(i64::MAX)),
+        ),
+        (
+            "triggers",
+            Ron::List(
+                state
+                    .triggers
+                    .iter()
+                    .map(|(id, trigger)| {
+                        record(
+                            "TriggerState",
+                            vec![
+                                ("above", Ron::Bool(trigger.above)),
+                                (
+                                    "deferred_day",
+                                    opt(trigger.deferred_day.as_ref(), |day| Ron::Int(*day)),
+                                ),
+                                ("flag_was", Ron::Bool(trigger.flag_was)),
+                                ("fired", Ron::Bool(trigger.fired)),
+                                ("id", text(id)),
+                                (
+                                    "next_tick",
+                                    Ron::Int(i64::try_from(trigger.next_tick).unwrap_or(i64::MAX)),
+                                ),
+                                (
+                                    "offer",
+                                    opt(trigger.offer.as_ref(), |offer| {
+                                        record(
+                                            "OfferState",
+                                            vec![
+                                                ("age_days", Ron::Int(i64::from(offer.age_days))),
+                                                ("offered_day", Ron::Int(offer.offered_day)),
+                                            ],
+                                        )
+                                    }),
+                                ),
+                            ],
+                        )
+                    })
+                    .collect(),
+            ),
+        ),
+    ];
+    // The rng partition is emitted only when a stream has
+    // state (absent means absent): a state document written
+    // before streams existed — every P2-2/P2-3 save — keeps
+    // its bytes and its hash. The state word rides as an i64
+    // bit-cast (RON integers are i64; the cast is exact).
+    if !state.rng.is_empty() {
+        let pos = fields
+            .iter()
+            .position(|(name, _)| *name == "line")
+            .unwrap_or(fields.len());
+        fields.insert(
+            pos,
             (
-                "lifetimes",
+                "rng",
                 Ron::List(
                     state
-                        .lifetimes
+                        .rng
                         .iter()
-                        .map(|(key, days)| {
+                        .map(|(stream, word)| {
                             record(
-                                "LifetimeState",
-                                vec![
-                                    ("character", opt(key.character.as_ref(), |id| text(id))),
-                                    ("days", Ron::Int(i64::from(*days))),
-                                    ("stat", text(&key.stat)),
-                                ],
+                                "RngState",
+                                vec![("state", Ron::Int(*word as i64)), ("stream", text(stream))],
                             )
                         })
                         .collect(),
                 ),
             ),
-            ("line", opt(state.line.as_ref(), |id| text(id))),
-            ("slot", Ron::Int(i64::from(state.slot))),
-            (
-                "stats",
-                Ron::List(
-                    state
-                        .stats
-                        .iter()
-                        .map(|(key, value)| {
-                            record(
-                                "StatState",
-                                vec![
-                                    ("character", opt(key.character.as_ref(), |id| text(id))),
-                                    ("stat", text(&key.stat)),
-                                    ("value", Ron::Int(*value)),
-                                ],
-                            )
-                        })
-                        .collect(),
-                ),
-            ),
-            (
-                "tick",
-                Ron::Int(i64::try_from(state.tick).unwrap_or(i64::MAX)),
-            ),
-            (
-                "triggers",
-                Ron::List(
-                    state
-                        .triggers
-                        .iter()
-                        .map(|(id, trigger)| {
-                            record(
-                                "TriggerState",
-                                vec![
-                                    ("above", Ron::Bool(trigger.above)),
-                                    (
-                                        "deferred_day",
-                                        opt(trigger.deferred_day.as_ref(), |day| Ron::Int(*day)),
-                                    ),
-                                    ("flag_was", Ron::Bool(trigger.flag_was)),
-                                    ("fired", Ron::Bool(trigger.fired)),
-                                    ("id", text(id)),
-                                    (
-                                        "next_tick",
-                                        Ron::Int(
-                                            i64::try_from(trigger.next_tick).unwrap_or(i64::MAX),
-                                        ),
-                                    ),
-                                    (
-                                        "offer",
-                                        opt(trigger.offer.as_ref(), |offer| {
-                                            record(
-                                                "OfferState",
-                                                vec![
-                                                    (
-                                                        "age_days",
-                                                        Ron::Int(i64::from(offer.age_days)),
-                                                    ),
-                                                    ("offered_day", Ron::Int(offer.offered_day)),
-                                                ],
-                                            )
-                                        }),
-                                    ),
-                                ],
-                            )
-                        })
-                        .collect(),
-                ),
-            ),
-        ],
-    )
+        );
+    }
+    record("State", fields)
 }
 
 fn flag_list(flags: &BTreeMap<String, bool>) -> Vec<Ron> {
@@ -333,12 +359,34 @@ pub fn state_from_ron(value: Ron, format_version: i64) -> Result<GameState, Refu
             );
         }
     }
+    // The rng partition is absent in state documents written
+    // before streams existed; it reads as empty.
+    let mut rng = BTreeMap::new();
+    match fields.try_take("rng") {
+        None => {}
+        Some(Ron::List(items)) => {
+            for item in items {
+                let mut row = open(item, "RngState")?;
+                let word = row.int("state")?;
+                let stream = row.string("stream")?;
+                row.done()?;
+                if rng.insert(stream.clone(), word as u64).is_some() {
+                    return refuse(
+                        RefusalClass::Malformed,
+                        format!("state carries stream '{stream}' twice"),
+                    );
+                }
+            }
+        }
+        Some(_) => return wrong_type("rng", "a list"),
+    }
     let state = GameState {
         tick: as_u64(fields.take("tick")?, "tick")?,
         day: fields.int("day")?,
         slot: fields.uint("slot")?,
         stats,
         lifetimes,
+        rng,
         flags_run: flag_map(fields.list("flags_run")?, "flags_run")?,
         flags_globals: flag_map(fields.list("flags_globals")?, "flags_globals")?,
         current_scene: fields.opt_string("current_scene")?,

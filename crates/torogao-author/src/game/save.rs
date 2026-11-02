@@ -191,6 +191,11 @@ fn verify_state_against_project(game: &Game, state: &GameState) -> Result<(), Re
             return schema_refusal(format!("save names undefined trigger '{id}'"));
         }
     }
+    for id in state.rng.keys() {
+        if game.stream(id).is_none() {
+            return schema_refusal(format!("save names undefined RNG stream '{id}'"));
+        }
+    }
     if let Some(scene) = &state.current_scene
         && game.scene(scene).is_none()
     {

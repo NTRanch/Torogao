@@ -7,21 +7,23 @@
 use crate::decide::{Verdict, check_id};
 use crate::game::apply::{
     character_record, clock_record, condition_record, dialogue_record, effect_set_record,
-    flag_record, save_schema_version_of, scene_record, stat_record, tier_record, trigger_record,
-    value_record,
+    flag_record, save_schema_version_of, scene_record, stat_record, stream_record, table_record,
+    tier_record, trigger_record, value_record,
 };
 use crate::game::model::{GAME_FORMAT_VERSION, GAME_FORMAT_VERSION_FIRST, Game};
 use crate::game::op::{
     AtomInput, CharacterDefineInput, ClockDefineInput, ConditionDefineInput,
     DialogueLineDefineInput, EffectSetDefineInput, ExprInput, FlagDefineInput, GameDefineInput,
-    GameOp, SceneDefineInput, StatDefineInput, StatKindInput, StatTierDefineInput,
-    TriggerDefineInput, TriggerKindInput, ValueDefineInput,
+    GameOp, RngStreamDefineInput, SceneDefineInput, StatDefineInput, StatKindInput,
+    StatTierDefineInput, TableDefineInput, TriggerDefineInput, TriggerKindInput, ValueDefineInput,
+    WeightInput,
 };
 use crate::limits::{
     GAME_CHARACTERS_MAX, GAME_CONDITIONS_MAX, GAME_CONTENT_TEXT_BYTES_MAX, GAME_DIALOGUE_LINES_MAX,
     GAME_EFFECT_ATOMS_MAX, GAME_EFFECT_SETS_MAX, GAME_FLAGS_MAX, GAME_LIFETIME_DAYS_MAX,
-    GAME_OFFER_DAYS_MAX, GAME_SCENES_MAX, GAME_SLOTS_MAX, GAME_STATS_MAX, GAME_TIER_THRESHOLDS_MAX,
-    GAME_TRIGGERS_MAX, GAME_VALUES_MAX,
+    GAME_OFFER_DAYS_MAX, GAME_RNG_STREAMS_MAX, GAME_SCENES_MAX, GAME_SLOTS_MAX, GAME_STATS_MAX,
+    GAME_TABLE_OUTCOMES_MAX, GAME_TABLES_MAX, GAME_TIER_THRESHOLDS_MAX, GAME_TRIGGERS_MAX,
+    GAME_VALUES_MAX,
 };
 use crate::model::Project;
 use crate::refusal::{Refusal, RefusalClass, refuse};
@@ -166,7 +168,122 @@ pub fn decide_game(project: &Project, op: &GameOp) -> Result<Verdict, Refusal> {
             let game = section(project)?;
             decide_trigger(game, inputs)
         }
+        GameOp::RngStreamDefine(inputs) => {
+            let game = section(project)?;
+            decide_stream(game, inputs)
+        }
+        GameOp::TableDefine(inputs) => {
+            let game = section(project)?;
+            decide_table(game, inputs)
+        }
     }
+}
+
+fn game_table<T>(message: impl Into<String>) -> Result<T, Refusal> {
+    refuse(RefusalClass::GameTable, message)
+}
+
+fn decide_stream(game: &Game, inputs: &RngStreamDefineInput) -> Result<Verdict, Refusal> {
+    check_id(&inputs.id, "stream id")?;
+    if inputs.algorithm != crate::game::model::RNG_ALGORITHM {
+        return refuse(
+            RefusalClass::UnknownKind,
+            format!(
+                "RNG algorithm '{}' is not implemented; this build implements '{}'",
+                inputs.algorithm,
+                crate::game::model::RNG_ALGORITHM
+            ),
+        );
+    }
+    let record = stream_record(inputs);
+    upsert_verdict(
+        game.stream(&inputs.id),
+        &record,
+        "rng stream",
+        &inputs.id,
+        game.streams.len() + 1,
+        GAME_RNG_STREAMS_MAX,
+    )
+}
+
+fn decide_table(game: &Game, inputs: &TableDefineInput) -> Result<Verdict, Refusal> {
+    check_id(&inputs.id, "table id")?;
+    if game.stream(&inputs.stream).is_none() {
+        return game_table(format!(
+            "table '{}' names RNG stream '{}', which is not defined",
+            inputs.id, inputs.stream
+        ));
+    }
+    if inputs.outcomes.is_empty() {
+        return game_table(format!("table '{}' has no outcomes", inputs.id));
+    }
+    check_count(
+        inputs.outcomes.len(),
+        GAME_TABLE_OUTCOMES_MAX,
+        "table outcomes",
+    )?;
+    let mut seen: Vec<&str> = Vec::new();
+    let mut all_static_total: i64 = 0;
+    let mut all_static = true;
+    for outcome in &inputs.outcomes {
+        check_id(&outcome.id, "outcome id")?;
+        if seen.contains(&outcome.id.as_str()) {
+            return game_table(format!(
+                "table '{}' names outcome '{}' twice",
+                inputs.id, outcome.id
+            ));
+        }
+        seen.push(&outcome.id);
+        if game.effect_set(&outcome.effect_set).is_none() {
+            return dangling("effect set", &outcome.effect_set);
+        }
+        if let Some(gate) = &outcome.gate
+            && game.condition(gate).is_none()
+        {
+            return dangling("gate condition", gate);
+        }
+        match &outcome.weight {
+            WeightInput::Static(weight) => {
+                if *weight <= 0 {
+                    return game_table(format!(
+                        "outcome '{}' in table '{}' has non-positive weight {weight}",
+                        outcome.id, inputs.id
+                    ));
+                }
+                all_static_total = all_static_total.saturating_add(*weight);
+            }
+            WeightInput::Expr(expr) => {
+                all_static = false;
+                let tree = crate::game::expr::expr_from_input(expr)?;
+                if crate::game::expr::type_of(game, &tree)? != crate::game::model::ExprType::Int {
+                    return game_expr(format!(
+                        "the weight of outcome '{}' in table '{}' must be an integer expression",
+                        outcome.id, inputs.id
+                    ));
+                }
+                if let crate::game::model::Expr::Lit(value) = tree
+                    && value <= 0
+                {
+                    return game_table(format!(
+                        "outcome '{}' in table '{}' has non-positive weight {value}",
+                        outcome.id, inputs.id
+                    ));
+                }
+            }
+        }
+    }
+    if all_static && all_static_total <= 0 {
+        return game_table(format!("table '{}' has a zero total weight", inputs.id));
+    }
+    let record = table_record(inputs)?;
+    upsert_verdict(
+        game.table(&inputs.id),
+        &record,
+        "table",
+        &inputs.id,
+        game.tables.len() + 1,
+        GAME_TABLES_MAX,
+    )
 }
 
 fn game_expr<T>(message: impl Into<String>) -> Result<T, Refusal> {
@@ -431,6 +548,12 @@ fn check_atom(game: &Game, atom: &AtomInput) -> Result<(), Refusal> {
         AtomInput::FlagClear { flag } | AtomInput::FlagSet { flag } => {
             if game.flag(flag).is_none() {
                 return dangling("flag", flag);
+            }
+            Ok(())
+        }
+        AtomInput::RollTable { table } => {
+            if game.table(table).is_none() {
+                return dangling("table", table);
             }
             Ok(())
         }

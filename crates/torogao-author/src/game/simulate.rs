@@ -67,8 +67,18 @@ pub struct Run {
     pub events: Vec<String>,
 }
 
+/// Derives a stream's genesis state word from the run seed:
+/// the first eight bytes (little-endian) of
+/// `sha256("estate-rng/1:<run_seed>:<stream_id>")`. The
+/// derivation is part of the interpreter contract — fixed by
+/// the algorithm name, never by the project.
+fn stream_seed(run_seed: i64, stream_id: &str) -> u64 {
+    let digest = sha256_hex(format!("estate-rng/1:{run_seed}:{stream_id}").as_bytes());
+    u64::from_str_radix(&digest[..16], 16).unwrap_or(0)
+}
+
 /// Genesis: the state before tick 1.
-pub fn genesis(project: &Project) -> Result<GameState, Refusal> {
+pub fn genesis(project: &Project, run_seed: i64) -> Result<GameState, Refusal> {
     let game = crate::game::decide::section(project)?;
     let Some(clock) = &game.clock else {
         return refuse(
@@ -121,6 +131,11 @@ pub fn genesis(project: &Project) -> Result<GameState, Refusal> {
                 state.flags_run.insert(flag.id.clone(), flag.default);
             }
         }
+    }
+    for stream in &game.streams {
+        state
+            .rng
+            .insert(stream.id.clone(), stream_seed(run_seed, &stream.id));
     }
     state.current_scene = game.start_scene.clone();
     state.line = game.start_scene.as_deref().and_then(|scene| {
@@ -489,9 +504,14 @@ fn apply_effect_set(
         return;
     };
     let mut working = state.clone();
-    match apply_atoms(game, &mut working, &set.atoms) {
+    let mut notes = Vec::new();
+    match apply_atoms(game, &mut working, &set.atoms, &mut notes, 0) {
         Ok(()) => {
             *state = working;
+            // Draw notes commit with the transaction; a refused
+            // set's notes die with its working copy, like its
+            // state changes.
+            events.extend(notes);
             events.push(format!(
                 "tick {}: trigger '{}' fired effect set '{}'",
                 state.tick, def.id, set.id
@@ -507,16 +527,30 @@ fn apply_effect_set(
     settle_trigger(state, def);
 }
 
-/// Applies an effect set on behalf of a named source (used for
-/// input events whose triggers are the transaction).
-fn apply_atoms(game: &Game, state: &mut GameState, atoms: &[Atom]) -> Result<(), String> {
+/// Applies atoms in order on behalf of a named source (used
+/// for input events whose triggers are the transaction).
+/// `notes` collects trace lines (table draws) that commit only
+/// if the whole transaction does.
+fn apply_atoms(
+    game: &Game,
+    state: &mut GameState,
+    atoms: &[Atom],
+    notes: &mut Vec<String>,
+    depth: u32,
+) -> Result<(), String> {
     for atom in atoms {
-        apply_atom(game, state, atom)?;
+        apply_atom(game, state, atom, notes, depth)?;
     }
     Ok(())
 }
 
-fn apply_atom(game: &Game, state: &mut GameState, atom: &Atom) -> Result<(), String> {
+fn apply_atom(
+    game: &Game,
+    state: &mut GameState,
+    atom: &Atom,
+    notes: &mut Vec<String>,
+    depth: u32,
+) -> Result<(), String> {
     match atom {
         Atom::EmitEvent { event } => {
             state.emitted.push(event.clone());
@@ -534,6 +568,7 @@ fn apply_atom(game: &Game, state: &mut GameState, atom: &Atom) -> Result<(), Str
             set_flag(game, state, flag, true);
             Ok(())
         }
+        Atom::RollTable { table } => draw_table(game, state, table, notes, depth),
         Atom::StatAdd {
             character,
             stat,
@@ -558,6 +593,92 @@ fn apply_atom(game: &Game, state: &mut GameState, atom: &Atom) -> Result<(), Str
             write_stat(game, state, character.as_deref(), stat, value)
         }
     }
+}
+
+/// One step of a stream's SplitMix64 (`estate-rng/1`): the
+/// state word advances by the golden gamma and the output is
+/// the new word, mixed. A draw consumes exactly one step,
+/// regardless of the weights it is drawn against — that is
+/// what makes stream consumption weight-independent.
+fn rng_next(state: &mut GameState, stream: &str) -> u64 {
+    let word = state.rng.entry(stream.to_string()).or_insert(0);
+    *word = word.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *word;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// Draws on a weighted table: evaluates outcome weights
+/// against the drawing state (D-469 — static weights are
+/// already values; expression weights evaluate now), excludes
+/// gated-out and non-positive outcomes, consumes exactly one
+/// step of the table's stream, and applies the winning
+/// outcome's effect set inside the same transaction. When no
+/// outcome is eligible the draw is a trace event, never a
+/// state change (and no stream step is consumed — there was
+/// no draw).
+fn draw_table(
+    game: &Game,
+    state: &mut GameState,
+    table_id: &str,
+    notes: &mut Vec<String>,
+    depth: u32,
+) -> Result<(), String> {
+    if depth >= crate::limits::GAME_TABLE_NESTING_MAX {
+        return Err(format!(
+            "table draw nesting exceeds {}",
+            crate::limits::GAME_TABLE_NESTING_MAX
+        ));
+    }
+    let Some(table) = game.table(table_id) else {
+        return Err(format!("unknown table '{table_id}'"));
+    };
+    let mut eligible: Vec<(&crate::game::model::TableOutcome, u128)> = Vec::new();
+    let mut total: u128 = 0;
+    for outcome in &table.outcomes {
+        if let Some(gate) = &outcome.gate {
+            match eval_condition(game, state, gate) {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(refusal) => return Err(refusal.message),
+            }
+        }
+        let weight = match &outcome.weight {
+            crate::game::model::TableWeight::Expr(expr) => eval_int(game, state, expr)?,
+            crate::game::model::TableWeight::Static(weight) => *weight,
+        };
+        if weight > 0 {
+            total += weight as u128;
+            eligible.push((outcome, weight as u128));
+        }
+    }
+    if eligible.is_empty() {
+        notes.push(format!(
+            "tick {}: table '{}' drew nothing (no eligible outcomes)",
+            state.tick, table.id
+        ));
+        return Ok(());
+    }
+    let roll = u128::from(rng_next(state, &table.stream)) % total;
+    let mut cumulative: u128 = 0;
+    for (outcome, weight) in &eligible {
+        cumulative += weight;
+        if roll < cumulative {
+            notes.push(format!(
+                "tick {}: table '{}' drew outcome '{}'",
+                state.tick, table.id, outcome.id
+            ));
+            let Some(set) = game.effect_set(&outcome.effect_set) else {
+                return Err(format!(
+                    "table '{}' outcome '{}' names missing effect set '{}'",
+                    table.id, outcome.id, outcome.effect_set
+                ));
+            };
+            return apply_atoms(game, state, &set.atoms, notes, depth + 1);
+        }
+    }
+    Ok(())
 }
 
 fn eval_int(
@@ -890,7 +1011,7 @@ pub fn run_simulation(
             format!("a simulation runs at most {GAME_SIM_TICKS_MAX} ticks"),
         );
     }
-    let mut state = genesis(project)?;
+    let mut state = genesis(project, inputs.run_seed)?;
     let content_sha256 = if project.content.is_empty() {
         None
     } else {

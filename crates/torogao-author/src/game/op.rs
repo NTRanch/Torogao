@@ -26,6 +26,8 @@ pub enum GameSlice {
     P22,
     /// Phase 2 slice 3: deferral semantics (D-464).
     P23,
+    /// Phase 2 slice 4: expression table weights (D-469).
+    P24,
     /// AUTH-G slice G1 remainder (core records not yet needed by
     /// a Phase 2 slice).
     G1,
@@ -41,6 +43,7 @@ impl GameSlice {
             GameSlice::P21 => "Phase 2 slice 1 (content sidecar)",
             GameSlice::P22 => "Phase 2 slice 2 (state lifetime)",
             GameSlice::P23 => "Phase 2 slice 3 (deferral)",
+            GameSlice::P24 => "Phase 2 slice 4 (expression table weights)",
             GameSlice::G1 => "AUTH-G G1",
             GameSlice::G2 => "AUTH-G G2",
         }
@@ -89,7 +92,7 @@ pub const GAME_MANIFEST: [GameVerbSpec; 22] = [
         true,
         false,
     ),
-    verb("rng_stream_define", "game core", GameSlice::G1, true, false),
+    verb("rng_stream_define", "game core", GameSlice::P24, true, true),
     verb("condition_define", "game state", GameSlice::P22, true, true),
     verb(
         "effect_set_define",
@@ -101,7 +104,7 @@ pub const GAME_MANIFEST: [GameVerbSpec; 22] = [
     verb("flag_define", "game state", GameSlice::P22, true, true),
     verb("stat_define", "game state", GameSlice::P22, true, true),
     verb("stat_tier_define", "game state", GameSlice::P22, true, true),
-    verb("table_define", "game state", GameSlice::G1, true, false),
+    verb("table_define", "game state", GameSlice::P24, true, true),
     verb("value_define", "game state", GameSlice::P22, true, true),
     verb("character_define", "game flow", GameSlice::P21, true, true),
     verb("choice_define", "game flow", GameSlice::G2, true, false),
@@ -297,6 +300,11 @@ pub enum AtomInput {
     FlagSet {
         /// The flag id.
         flag: String,
+    },
+    /// `{"kind": "roll_table", "table": "id"}`.
+    RollTable {
+        /// The table id.
+        table: String,
     },
     /// `{"kind": "stat_add", "stat": "id", "character": "id"?,
     /// "amount": expr}`.
@@ -687,6 +695,56 @@ fn default_repetition() -> RepetitionInput {
     RepetitionInput::Repeat
 }
 
+/// `rng_stream_define` inputs.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RngStreamDefineInput {
+    /// Stream id.
+    pub id: String,
+    /// The algorithm name; this build implements exactly
+    /// `estate-rng/1`.
+    pub algorithm: String,
+}
+
+/// One table outcome's weight, as input: a bare positive
+/// integer (the static form), or an expression tree evaluated
+/// at draw time (the D-469 form).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum WeightInput {
+    /// An expression tree.
+    Expr(ExprInput),
+    /// A positive integer literal.
+    Static(i64),
+}
+
+/// One table outcome, as input.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TableOutcomeInput {
+    /// Outcome id (unique within the table).
+    pub id: String,
+    /// The outcome's weight.
+    pub weight: WeightInput,
+    /// An optional named gate condition.
+    #[serde(default)]
+    pub gate: Option<String>,
+    /// The effect set applied when the outcome is drawn.
+    pub effect_set: String,
+}
+
+/// `table_define` inputs.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TableDefineInput {
+    /// Table id.
+    pub id: String,
+    /// The RNG stream draws consume.
+    pub stream: String,
+    /// The outcomes, in authored (draw-walk) order.
+    pub outcomes: Vec<TableOutcomeInput>,
+}
+
 /// One choice-log entry, as input to `game_simulate`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -738,12 +796,16 @@ pub enum GameOp {
     FlagDefine(FlagDefineInput),
     /// `game_define`.
     GameDefine(GameDefineInput),
+    /// `rng_stream_define`.
+    RngStreamDefine(RngStreamDefineInput),
     /// `scene_define`.
     SceneDefine(SceneDefineInput),
     /// `stat_define`.
     StatDefine(StatDefineInput),
     /// `stat_tier_define`.
     StatTierDefine(StatTierDefineInput),
+    /// `table_define`.
+    TableDefine(TableDefineInput),
     /// `trigger_define`.
     TriggerDefine(TriggerDefineInput),
     /// `value_define`.
@@ -771,9 +833,11 @@ pub fn parse_game_op(verb: &str, inputs: &Value) -> Result<crate::op::Op, Refusa
         "effect_set_define" => GameOp::EffectSetDefine(typed(verb, inputs)?),
         "flag_define" => GameOp::FlagDefine(typed(verb, inputs)?),
         "game_define" => GameOp::GameDefine(typed(verb, inputs)?),
+        "rng_stream_define" => GameOp::RngStreamDefine(typed(verb, inputs)?),
         "scene_define" => GameOp::SceneDefine(typed(verb, inputs)?),
         "stat_define" => GameOp::StatDefine(typed(verb, inputs)?),
         "stat_tier_define" => GameOp::StatTierDefine(typed(verb, inputs)?),
+        "table_define" => GameOp::TableDefine(typed(verb, inputs)?),
         "trigger_define" => GameOp::TriggerDefine(typed(verb, inputs)?),
         "value_define" => GameOp::ValueDefine(typed(verb, inputs)?),
         other => return refuse_game_unimplemented(other),
@@ -792,9 +856,11 @@ impl GameOp {
             GameOp::EffectSetDefine(_) => "effect_set_define",
             GameOp::FlagDefine(_) => "flag_define",
             GameOp::GameDefine(_) => "game_define",
+            GameOp::RngStreamDefine(_) => "rng_stream_define",
             GameOp::SceneDefine(_) => "scene_define",
             GameOp::StatDefine(_) => "stat_define",
             GameOp::StatTierDefine(_) => "stat_tier_define",
+            GameOp::TableDefine(_) => "table_define",
             GameOp::TriggerDefine(_) => "trigger_define",
             GameOp::ValueDefine(_) => "value_define",
         }
@@ -810,9 +876,11 @@ impl GameOp {
             GameOp::EffectSetDefine(inputs) => serde_json::to_value(inputs),
             GameOp::FlagDefine(inputs) => serde_json::to_value(inputs),
             GameOp::GameDefine(inputs) => serde_json::to_value(inputs),
+            GameOp::RngStreamDefine(inputs) => serde_json::to_value(inputs),
             GameOp::SceneDefine(inputs) => serde_json::to_value(inputs),
             GameOp::StatDefine(inputs) => serde_json::to_value(inputs),
             GameOp::StatTierDefine(inputs) => serde_json::to_value(inputs),
+            GameOp::TableDefine(inputs) => serde_json::to_value(inputs),
             GameOp::TriggerDefine(inputs) => serde_json::to_value(inputs),
             GameOp::ValueDefine(inputs) => serde_json::to_value(inputs),
         };
@@ -856,6 +924,6 @@ mod tests {
             .count();
         assert_eq!(p21, 4);
         let implemented = GAME_MANIFEST.iter().filter(|spec| spec.implemented).count();
-        assert_eq!(implemented, 13);
+        assert_eq!(implemented, 15);
     }
 }

@@ -84,12 +84,21 @@ pub const GAME_FLAGS_MAX: usize = 1024;
 pub const GAME_LIFETIME_DAYS_MAX: u32 = 36_500;
 /// Maximum offer expiry window on a trigger, in days.
 pub const GAME_OFFER_DAYS_MAX: u32 = 36_500;
+/// Maximum RNG streams in one game.
+pub const GAME_RNG_STREAMS_MAX: usize = 256;
 /// Maximum scenes in one game.
 pub const GAME_SCENES_MAX: usize = 1024;
 /// Maximum slots in one clock (periods per day).
 pub const GAME_SLOTS_MAX: usize = 64;
 /// Maximum stats in one game.
 pub const GAME_STATS_MAX: usize = 1024;
+/// Maximum weighted tables in one game.
+pub const GAME_TABLES_MAX: usize = 1024;
+/// Maximum outcomes in one weighted table.
+pub const GAME_TABLE_OUTCOMES_MAX: usize = 256;
+/// Maximum table-draw nesting inside one effect transaction
+/// (a drawn outcome's set may itself roll, bounded).
+pub const GAME_TABLE_NESTING_MAX: u32 = 8;
 /// Maximum thresholds in one tier definition.
 pub const GAME_TIER_THRESHOLDS_MAX: usize = 64;
 /// Maximum triggers in one game.

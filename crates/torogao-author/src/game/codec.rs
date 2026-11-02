@@ -18,8 +18,8 @@ use crate::codec::{
 use crate::game::model::{
     Atom, CharacterDef, Clock, ClockField, CmpOp, ConditionDef, ContentEntry, DialogueLine,
     Direction, EffectSetDef, Expr, FlagDef, FlagEdge, FlagScope, Game, Lifetime, OfferDef,
-    Overflow, Presentation, Repetition, SceneDef, StatDef, StatInitial, StatKind, StatScope,
-    TierDef, TriggerDef, TriggerKind, ValueDef,
+    Overflow, Presentation, Repetition, RngStreamDef, SceneDef, StatDef, StatInitial, StatKind,
+    StatScope, TableDef, TableOutcome, TableWeight, TierDef, TriggerDef, TriggerKind, ValueDef,
 };
 use crate::refusal::{Refusal, RefusalClass, refuse};
 use crate::ron::Ron;
@@ -28,71 +28,138 @@ use crate::ron::Ron;
 
 /// Emits the game section as a `Game(...)` RON value.
 pub(crate) fn game_to_ron(game: &Game) -> Ron {
+    let mut fields: Vec<(&str, Ron)> = vec![
+        ("id", text(&game.id)),
+        (
+            "characters",
+            Ron::List(game.characters.iter().map(character_to_ron).collect()),
+        ),
+        (
+            "clock",
+            opt(game.clock.as_ref(), |clock| {
+                record(
+                    "Clock",
+                    vec![
+                        (
+                            "day_limit",
+                            opt(clock.day_limit.as_ref(), |v| Ron::Int(i64::from(*v))),
+                        ),
+                        (
+                            "days_per_week",
+                            opt(clock.days_per_week.as_ref(), |v| Ron::Int(i64::from(*v))),
+                        ),
+                        ("slots", texts(&clock.slots)),
+                    ],
+                )
+            }),
+        ),
+        (
+            "conditions",
+            Ron::List(game.conditions.iter().map(condition_to_ron).collect()),
+        ),
+        (
+            "dialogue",
+            Ron::List(game.dialogue.iter().map(dialogue_to_ron).collect()),
+        ),
+        (
+            "effect_sets",
+            Ron::List(game.effect_sets.iter().map(effect_set_to_ron).collect()),
+        ),
+        (
+            "flags",
+            Ron::List(game.flags.iter().map(flag_to_ron).collect()),
+        ),
+        ("format_version", Ron::Int(game.format_version)),
+        ("save_schema_version", Ron::Int(game.save_schema_version)),
+        (
+            "scenes",
+            Ron::List(game.scenes.iter().map(scene_to_ron).collect()),
+        ),
+        ("start_scene", opt(game.start_scene.as_ref(), |id| text(id))),
+        (
+            "stats",
+            Ron::List(game.stats.iter().map(stat_to_ron).collect()),
+        ),
+        (
+            "tiers",
+            Ron::List(game.tiers.iter().map(tier_to_ron).collect()),
+        ),
+        (
+            "triggers",
+            Ron::List(game.triggers.iter().map(trigger_to_ron).collect()),
+        ),
+        (
+            "values",
+            Ron::List(game.values.iter().map(value_def_to_ron).collect()),
+        ),
+    ];
+    // Streams and tables are emitted only when present (absent
+    // means absent): a project authored before this surface —
+    // the plain-VN fixture is one — keeps its exact bytes.
+    if !game.streams.is_empty() || !game.tables.is_empty() {
+        let pos = fields
+            .iter()
+            .position(|(name, _)| *name == "tiers")
+            .unwrap_or(fields.len());
+        if !game.tables.is_empty() {
+            fields.insert(
+                pos,
+                (
+                    "tables",
+                    Ron::List(game.tables.iter().map(table_to_ron).collect()),
+                ),
+            );
+        }
+        if !game.streams.is_empty() {
+            fields.insert(
+                pos,
+                (
+                    "streams",
+                    Ron::List(game.streams.iter().map(stream_to_ron).collect()),
+                ),
+            );
+        }
+    }
+    record("Game", fields)
+}
+
+fn stream_to_ron(stream: &RngStreamDef) -> Ron {
     record(
-        "Game",
+        "RngStream",
         vec![
-            ("id", text(&game.id)),
+            ("algorithm", text(&stream.algorithm)),
+            ("id", text(&stream.id)),
+        ],
+    )
+}
+
+fn table_to_ron(table: &TableDef) -> Ron {
+    record(
+        "Table",
+        vec![
+            ("id", text(&table.id)),
             (
-                "characters",
-                Ron::List(game.characters.iter().map(character_to_ron).collect()),
+                "outcomes",
+                Ron::List(table.outcomes.iter().map(outcome_to_ron).collect()),
             ),
+            ("stream", text(&table.stream)),
+        ],
+    )
+}
+
+fn outcome_to_ron(outcome: &TableOutcome) -> Ron {
+    record(
+        "TableOutcome",
+        vec![
+            ("effect_set", text(&outcome.effect_set)),
+            ("gate", opt(outcome.gate.as_ref(), |id| text(id))),
+            ("id", text(&outcome.id)),
             (
-                "clock",
-                opt(game.clock.as_ref(), |clock| {
-                    record(
-                        "Clock",
-                        vec![
-                            (
-                                "day_limit",
-                                opt(clock.day_limit.as_ref(), |v| Ron::Int(i64::from(*v))),
-                            ),
-                            (
-                                "days_per_week",
-                                opt(clock.days_per_week.as_ref(), |v| Ron::Int(i64::from(*v))),
-                            ),
-                            ("slots", texts(&clock.slots)),
-                        ],
-                    )
-                }),
-            ),
-            (
-                "conditions",
-                Ron::List(game.conditions.iter().map(condition_to_ron).collect()),
-            ),
-            (
-                "dialogue",
-                Ron::List(game.dialogue.iter().map(dialogue_to_ron).collect()),
-            ),
-            (
-                "effect_sets",
-                Ron::List(game.effect_sets.iter().map(effect_set_to_ron).collect()),
-            ),
-            (
-                "flags",
-                Ron::List(game.flags.iter().map(flag_to_ron).collect()),
-            ),
-            ("format_version", Ron::Int(game.format_version)),
-            ("save_schema_version", Ron::Int(game.save_schema_version)),
-            (
-                "scenes",
-                Ron::List(game.scenes.iter().map(scene_to_ron).collect()),
-            ),
-            ("start_scene", opt(game.start_scene.as_ref(), |id| text(id))),
-            (
-                "stats",
-                Ron::List(game.stats.iter().map(stat_to_ron).collect()),
-            ),
-            (
-                "tiers",
-                Ron::List(game.tiers.iter().map(tier_to_ron).collect()),
-            ),
-            (
-                "triggers",
-                Ron::List(game.triggers.iter().map(trigger_to_ron).collect()),
-            ),
-            (
-                "values",
-                Ron::List(game.values.iter().map(value_def_to_ron).collect()),
+                "weight",
+                match &outcome.weight {
+                    TableWeight::Expr(expr) => expr_to_ron(expr),
+                    TableWeight::Static(weight) => Ron::Int(*weight),
+                },
             ),
         ],
     )
@@ -173,6 +240,7 @@ fn atom_to_ron(atom: &Atom) -> Ron {
         Atom::EnterScene { scene } => record("EnterScene", vec![("scene", text(scene))]),
         Atom::FlagClear { flag } => record("FlagClear", vec![("flag", text(flag))]),
         Atom::FlagSet { flag } => record("FlagSet", vec![("flag", text(flag))]),
+        Atom::RollTable { table } => record("RollTable", vec![("table", text(table))]),
         Atom::StatAdd {
             character,
             stat,
@@ -541,6 +609,18 @@ pub(crate) fn game_from_ron(value: Ron) -> Result<Game, Refusal> {
     let flags = collect(fields.list("flags")?, flag_from_ron)?;
     let scenes = collect(fields.list("scenes")?, scene_from_ron)?;
     let stats = collect(fields.list("stats")?, stat_from_ron)?;
+    // Streams/tables are absent-means-absent fields: a section
+    // written before this surface has neither key.
+    let streams = match fields.try_take("streams") {
+        None => Vec::new(),
+        Some(Ron::List(items)) => collect(items, stream_from_ron)?,
+        Some(_) => return wrong_type("streams", "a list"),
+    };
+    let tables = match fields.try_take("tables") {
+        None => Vec::new(),
+        Some(Ron::List(items)) => collect(items, table_from_ron)?,
+        Some(_) => return wrong_type("tables", "a list"),
+    };
     let tiers = collect(fields.list("tiers")?, tier_from_ron)?;
     let triggers = collect(fields.list("triggers")?, trigger_from_ron)?;
     let values = collect(fields.list("values")?, value_def_from_ron)?;
@@ -550,6 +630,8 @@ pub(crate) fn game_from_ron(value: Ron) -> Result<Game, Refusal> {
         save_schema_version: fields.int("save_schema_version")?,
         start_scene: fields.opt_string("start_scene")?,
         clock,
+        streams: sorted_unique(streams, "streams", |item| &item.id)?,
+        tables: sorted_unique(tables, "tables", |item| &item.id)?,
         stats: sorted_unique(stats, "stats", |item| &item.id)?,
         tiers: sorted_unique(tiers, "tiers", |item| &item.stat)?,
         flags: sorted_unique(flags, "flags", |item| &item.id)?,
@@ -563,6 +645,47 @@ pub(crate) fn game_from_ron(value: Ron) -> Result<Game, Refusal> {
     };
     fields.done()?;
     Ok(game)
+}
+
+fn stream_from_ron(value: Ron) -> Result<RngStreamDef, Refusal> {
+    let mut fields = open(value, "RngStream")?;
+    let stream = RngStreamDef {
+        algorithm: fields.string("algorithm")?,
+        id: fields.string("id")?,
+    };
+    fields.done()?;
+    Ok(stream)
+}
+
+fn table_from_ron(value: Ron) -> Result<TableDef, Refusal> {
+    let mut fields = open(value, "Table")?;
+    let outcomes = collect(fields.list("outcomes")?, outcome_from_ron)?;
+    let table = TableDef {
+        id: fields.string("id")?,
+        stream: fields.string("stream")?,
+        outcomes,
+    };
+    fields.done()?;
+    Ok(table)
+}
+
+fn outcome_from_ron(value: Ron) -> Result<TableOutcome, Refusal> {
+    let mut fields = open(value, "TableOutcome")?;
+    // The weight is a bare integer (static form) or an
+    // expression record (the D-469 form); the two encodings are
+    // disjoint by construction.
+    let weight = match fields.take("weight")? {
+        Ron::Int(weight) => TableWeight::Static(weight),
+        other => TableWeight::Expr(expr_from_ron(other)?),
+    };
+    let outcome = TableOutcome {
+        effect_set: fields.string("effect_set")?,
+        gate: fields.opt_string("gate")?,
+        id: fields.string("id")?,
+        weight,
+    };
+    fields.done()?;
+    Ok(outcome)
 }
 
 fn clock_from_ron(value: Ron) -> Result<Clock, Refusal> {
@@ -653,6 +776,9 @@ fn atom_from_ron(value: Ron) -> Result<Atom, Refusal> {
         },
         "FlagSet" => Atom::FlagSet {
             flag: fields.string("flag")?,
+        },
+        "RollTable" => Atom::RollTable {
+            table: fields.string("table")?,
         },
         "StatAdd" => Atom::StatAdd {
             character: fields.opt_string("character")?,

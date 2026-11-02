@@ -347,7 +347,7 @@ fn dialogue_references_to_missing_scene_and_speaker_refuse_dangling() {
 #[test]
 fn deferred_game_verbs_refuse_by_name() {
     let root = test_root("deferred");
-    for name in ["choice_define", "ending_define", "table_define"] {
+    for name in ["choice_define", "ending_define"] {
         let answer = verb(&root, name, json!({}));
         assert_eq!(answer.status, Status::Refused, "{name}");
         assert_eq!(
@@ -557,6 +557,34 @@ fn game_section_codec_round_trips_every_record_shape() {
             next: None,
             hook_expression: None,
         }],
+        streams: vec![RngStreamDef {
+            id: "battle".to_string(),
+            algorithm: RNG_ALGORITHM.to_string(),
+        }],
+        tables: vec![TableDef {
+            id: "encounter".to_string(),
+            stream: "battle".to_string(),
+            outcomes: vec![
+                TableOutcome {
+                    id: "glimpse".to_string(),
+                    weight: TableWeight::Expr(Expr::Add(
+                        Box::new(Expr::Lit(12)),
+                        Box::new(Expr::Stat {
+                            character: None,
+                            stat: "control_level".to_string(),
+                        }),
+                    )),
+                    gate: Some("is_morning".to_string()),
+                    effect_set: "apply_control".to_string(),
+                },
+                TableOutcome {
+                    id: "calm".to_string(),
+                    weight: TableWeight::Static(88),
+                    gate: None,
+                    effect_set: "apply_control".to_string(),
+                },
+            ],
+        }],
         triggers: vec![
             TriggerDef {
                 id: "level_watch".to_string(),
@@ -721,7 +749,7 @@ fn changr_decay_holds_five_rollovers_and_resets_on_the_sixth() {
     let loaded = load_project(&root);
     let project = &loaded.project;
     let log = event_log(&[(1, "apply_control")], 56);
-    let mut state = genesis(project).expect("genesis");
+    let mut state = genesis(project, 7).expect("genesis");
     let key = control_key();
     // Applied on tick 1 (day 1): level 1, counter armed at 6.
     let (_events, _chain) = run_to(project, &mut state, &log, 1);
@@ -755,7 +783,7 @@ fn changr_refresh_rearms_the_full_window() {
     let project = &loaded.project;
     // Re-application on day 3 (tick 20) re-arms the counter.
     let log = event_log(&[(1, "apply_control"), (20, "apply_control")], 72);
-    let mut state = genesis(project).expect("genesis");
+    let mut state = genesis(project, 7).expect("genesis");
     let key = control_key();
     let (_e, _c) = run_to(project, &mut state, &log, 20);
     assert_eq!(state.stats[&key], 1);
@@ -799,11 +827,11 @@ fn save_round_trip_across_the_expiry_tick_reproduces_the_chain() {
     let project = &loaded.project;
     let log = event_log(&[(1, "apply_control")], 56);
     // Uninterrupted reference run.
-    let mut reference = genesis(project).expect("genesis");
+    let mut reference = genesis(project, 7).expect("genesis");
     let (_e, reference_chain) = run_to(project, &mut reference, &log, 56);
     // Interrupted run: save at tick 24 (mid-window), load,
     // continue across the tick-48 expiry.
-    let mut state = genesis(project).expect("genesis");
+    let mut state = genesis(project, 7).expect("genesis");
     let (_e, mut chain) = run_to(project, &mut state, &log, 24);
     let text = save_game(project, &loaded.sha256, &state, 7).expect("save");
     let saved = load_game(project, &loaded.sha256, &text).expect("load");
@@ -822,7 +850,7 @@ fn v1_save_loads_through_the_migration_step() {
     author_changr(&root);
     let loaded = load_project(&root);
     let project = &loaded.project;
-    let state = genesis(project).expect("genesis");
+    let state = genesis(project, 7).expect("genesis");
     let text = save_game(project, &loaded.sha256, &state, 3).expect("save");
     assert!(text.contains("format_version: 2"), "{text}");
     // A v1 save of the same genesis state (no lifetimes armed,
@@ -868,7 +896,7 @@ fn adversarial_saves_refuse_typed_and_load_nothing() {
     author_changr(&root);
     let loaded = load_project(&root);
     let project = &loaded.project;
-    let state = genesis(project).expect("genesis");
+    let state = genesis(project, 7).expect("genesis");
     let text = save_game(project, &loaded.sha256, &state, 7).expect("save");
     // Newer format version.
     let newer = text.replacen("format_version: 2", "format_version: 3", 1);
@@ -1058,7 +1086,7 @@ fn stats_without_a_lifetime_never_decay() {
     let loaded = load_project(&root);
     let project = &loaded.project;
     let log = event_log(&[(1, "warm")], 40);
-    let mut state = genesis(project).expect("genesis");
+    let mut state = genesis(project, 7).expect("genesis");
     let key = StatKey {
         character: Some("amy".to_string()),
         stat: "affection".to_string(),
@@ -1181,7 +1209,7 @@ fn decline_defers_for_the_day_and_reoffers_the_next_matching_day() {
     let loaded = load_project(&root);
     let project = &loaded.project;
     let log = offer_log(&[(3, "gift", "decline"), (11, "gift", "accept")], 20);
-    let mut state = genesis(project).expect("genesis");
+    let mut state = genesis(project, 7).expect("genesis");
     let key = StatKey {
         character: Some("amy".to_string()),
         stat: "affection".to_string(),
@@ -1275,7 +1303,7 @@ fn decline_suppresses_even_an_every_tick_trigger_for_the_whole_day() {
     let loaded = load_project(&root);
     let project = &loaded.project;
     let log = offer_log(&[(2, "daily_visit", "decline")], 8);
-    let mut state = genesis(project).expect("genesis");
+    let mut state = genesis(project, 7).expect("genesis");
     let (events, _c) = run_to(project, &mut state, &log, 2);
     assert_eq!(
         offered_count(&events),
@@ -1305,7 +1333,7 @@ fn offer_expiry_fires_on_the_lifetime_clock_at_the_boundary_tick() {
     let loaded = load_project(&root);
     let project = &loaded.project;
     let log = parse_log(&[], 24).expect("empty log");
-    let mut state = genesis(project).expect("genesis");
+    let mut state = genesis(project, 7).expect("genesis");
     // Offered tick 2 (day 1, age 0). Rollover tick 8: age 1.
     // Rollover tick 16: age 2 reaches expires_days — the offer
     // dies at exactly that tick, through the rollover path.
@@ -1342,7 +1370,7 @@ fn offer_inputs_without_a_pending_offer_refuse_the_run() {
     let project = &loaded.project;
     // Deciding an offer on tick 1, before any offer exists.
     let log = offer_log(&[(1, "gift", "accept")], 4);
-    let mut state = genesis(project).expect("genesis");
+    let mut state = genesis(project, 7).expect("genesis");
     let mut events = Vec::new();
     let mut chain = Vec::new();
     let err = run_ticks(project, &mut state, &log, 4, &mut events, &mut chain)
@@ -1350,7 +1378,7 @@ fn offer_inputs_without_a_pending_offer_refuse_the_run() {
     assert_eq!(err.code(), "TG-AUTH-CONFLICT", "{err}");
     // An unknown decision word, with an offer pending.
     let log = offer_log(&[(3, "gift", "maybe")], 4);
-    let mut state = genesis(project).expect("genesis");
+    let mut state = genesis(project, 7).expect("genesis");
     let mut events = Vec::new();
     let mut chain = Vec::new();
     let err = run_ticks(project, &mut state, &log, 4, &mut events, &mut chain)
@@ -1358,7 +1386,7 @@ fn offer_inputs_without_a_pending_offer_refuse_the_run() {
     assert_eq!(err.code(), "TG-AUTH-MALFORMED", "{err}");
     // Deciding a trigger the game does not define.
     let log = offer_log(&[(3, "nope", "accept")], 4);
-    let mut state = genesis(project).expect("genesis");
+    let mut state = genesis(project, 7).expect("genesis");
     let mut events = Vec::new();
     let mut chain = Vec::new();
     let err = run_ticks(project, &mut state, &log, 4, &mut events, &mut chain)
@@ -1454,7 +1482,7 @@ fn same_tick_triggers_fire_in_priority_order() {
     let loaded = load_project(&root);
     let project = &loaded.project;
     let log = event_log(&[(1, "go")], 2);
-    let mut state = genesis(project).expect("genesis");
+    let mut state = genesis(project, 7).expect("genesis");
     let (events, _c) = run_to(project, &mut state, &log, 2);
     let high = events
         .iter()
@@ -1465,4 +1493,353 @@ fn same_tick_triggers_fire_in_priority_order() {
         .position(|event| event.contains("'low' fired"))
         .expect("low fired");
     assert!(high < low, "priority order in the trace: {events:?}");
+}
+
+// ---- P2-4: expression table weights (D-469) --------------------------
+
+/// Authors the MoonDeep §G5 stress fixture: glimpse odds
+/// 12% + 1% per interval, spark 5% + 1% beyond the third
+/// interval, the remainder calm — as expression weights over a
+/// game-scope `intervals` stat, drawn on the `battle` stream.
+/// With `expr_weights` false, the same table carries static
+/// weights of 1 (the stream-consumption comparison project).
+fn author_moondeep(root: &Path, expr_weights: bool) {
+    let (glimpse_w, spark_w, calm_w) = if expr_weights {
+        (
+            json!({"kind": "add", "left": {"kind": "lit", "value": 12},
+                   "right": {"kind": "stat", "stat": "intervals"}}),
+            json!({"kind": "add", "left": {"kind": "lit", "value": 5},
+                   "right": {"kind": "max",
+                             "left": {"kind": "lit", "value": 0},
+                             "right": {"kind": "sub",
+                                       "left": {"kind": "stat", "stat": "intervals"},
+                                       "right": {"kind": "lit", "value": 3}}}}),
+            json!({"kind": "sub",
+                   "left": {"kind": "sub", "left": {"kind": "lit", "value": 83},
+                            "right": {"kind": "stat", "stat": "intervals"}},
+                   "right": {"kind": "max",
+                             "left": {"kind": "lit", "value": 0},
+                             "right": {"kind": "sub",
+                                       "left": {"kind": "stat", "stat": "intervals"},
+                                       "right": {"kind": "lit", "value": 3}}}}),
+        )
+    } else {
+        (json!(1), json!(1), json!(1))
+    };
+    let answer = script(
+        root,
+        vec![
+            ("project_init", init_inputs()),
+            (
+                "game_define",
+                json!({"id": "moondeep_fixture", "start_scene": "field"}),
+            ),
+            ("clock_define", json!({"slots": ["day"]})),
+            (
+                "rng_stream_define",
+                json!({"id": "battle", "algorithm": "estate-rng/1"}),
+            ),
+            (
+                "stat_define",
+                json!({
+                    "id": "intervals", "scope": "game", "kind": {"kind": "int"},
+                    "min": 0, "max": 100, "default": 0, "overflow": "clamp",
+                }),
+            ),
+            (
+                "stat_define",
+                json!({
+                    "id": "sparks_count", "scope": "game", "kind": {"kind": "int"},
+                    "min": 0, "max": 1000, "default": 0, "overflow": "clamp",
+                }),
+            ),
+            (
+                "flag_define",
+                json!({"id": "glimpsed", "scope": "run", "default": false}),
+            ),
+            (
+                "scene_define",
+                json!({"id": "field", "presentation": "room"}),
+            ),
+            (
+                "effect_set_define",
+                json!({"id": "glimpse_set", "atoms": [{"kind": "flag_set", "flag": "glimpsed"}]}),
+            ),
+            (
+                "effect_set_define",
+                json!({
+                    "id": "spark_set",
+                    "atoms": [{
+                        "kind": "stat_add", "stat": "sparks_count",
+                        "amount": {"kind": "lit", "value": 1},
+                    }],
+                }),
+            ),
+            (
+                "effect_set_define",
+                json!({"id": "calm_set", "atoms": [{"kind": "emit_event", "event": "calm"}]}),
+            ),
+            (
+                "table_define",
+                json!({
+                    "id": "encounter",
+                    "stream": "battle",
+                    "outcomes": [
+                        {"id": "glimpse", "weight": glimpse_w, "effect_set": "glimpse_set"},
+                        {"id": "spark", "weight": spark_w, "effect_set": "spark_set"},
+                        {"id": "calm", "weight": calm_w, "effect_set": "calm_set"},
+                    ],
+                }),
+            ),
+            (
+                "effect_set_define",
+                json!({"id": "wander_set", "atoms": [{"kind": "roll_table", "table": "encounter"}]}),
+            ),
+            (
+                "effect_set_define",
+                json!({
+                    "id": "surge_set",
+                    "atoms": [{
+                        "kind": "stat_set", "stat": "intervals",
+                        "value": {"kind": "lit", "value": 90},
+                    }],
+                }),
+            ),
+            (
+                "trigger_define",
+                json!({
+                    "id": "wander",
+                    "kind": {"kind": "on_event", "event": "wander"},
+                    "effect_set": "wander_set",
+                }),
+            ),
+            (
+                "trigger_define",
+                json!({
+                    "id": "surge",
+                    "kind": {"kind": "on_event", "event": "surge"},
+                    "effect_set": "surge_set",
+                }),
+            ),
+        ],
+    );
+    assert_eq!(
+        answer.status,
+        Status::Ok,
+        "moondeep fixture: {}",
+        answer.doc
+    );
+    assert!(
+        validate_codes(root).is_empty(),
+        "moondeep fixture validates: {:?}",
+        validate_codes(root)
+    );
+}
+
+fn drawn_outcomes(events: &[String]) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|event| {
+            event
+                .split("drew outcome '")
+                .nth(1)
+                .map(|rest| rest.trim_end_matches('\'').to_string())
+        })
+        .collect()
+}
+
+#[test]
+fn moon_deep_expression_weights_evaluate_at_draw_time() {
+    let root = test_root("moondeep-weights");
+    author_moondeep(&root, true);
+    let loaded = load_project(&root);
+    let project = &loaded.project;
+    // Surge to 90 intervals, then wander 20 times. At 90
+    // intervals the weights are glimpse 102, spark 92, calm
+    // negative — calm is ineligible at draw time, so every
+    // draw lands glimpse or spark.
+    let mut entries: Vec<(u64, &str)> = vec![(1, "surge")];
+    for tick in 2..=21 {
+        entries.push((tick, "wander"));
+    }
+    let log = event_log(&entries, 24);
+    let mut state = genesis(project, 7).expect("genesis");
+    let (events, _c) = run_to(project, &mut state, &log, 24);
+    let drawn = drawn_outcomes(&events);
+    assert_eq!(drawn.len(), 20, "every wander drew: {events:?}");
+    assert!(
+        drawn
+            .iter()
+            .all(|outcome| outcome == "glimpse" || outcome == "spark"),
+        "calm is weight-ineligible at 90 intervals: {drawn:?}"
+    );
+    assert!(
+        state.rng.contains_key("battle"),
+        "the draw consumed the named stream"
+    );
+}
+
+#[test]
+fn stream_consumption_is_identical_regardless_of_weight_values() {
+    // The stream-consumption fixture: the same seed and the
+    // same number of draws leave the stream in the same state
+    // whether the weights were expressions or static 1s — a
+    // draw is one stream step, independent of weight values.
+    let root_expr = test_root("moondeep-consume-expr");
+    author_moondeep(&root_expr, true);
+    let root_static = test_root("moondeep-consume-static");
+    author_moondeep(&root_static, false);
+    let entries: Vec<(u64, &str)> = (1..=12).map(|tick| (tick, "wander")).collect();
+    let log = event_log(&entries, 12);
+    let loaded_expr = load_project(&root_expr);
+    let mut state_expr = genesis(&loaded_expr.project, 7).expect("genesis");
+    let (events_expr, _c) = run_to(&loaded_expr.project, &mut state_expr, &log, 12);
+    let loaded_static = load_project(&root_static);
+    let mut state_static = genesis(&loaded_static.project, 7).expect("genesis");
+    let (events_static, _c) = run_to(&loaded_static.project, &mut state_static, &log, 12);
+    assert_eq!(drawn_outcomes(&events_expr).len(), 12);
+    assert_eq!(drawn_outcomes(&events_static).len(), 12);
+    assert_eq!(
+        state_expr.rng, state_static.rng,
+        "stream state after 12 draws is weight-independent"
+    );
+    assert_ne!(
+        state_expr.rng,
+        genesis(&loaded_expr.project, 7).expect("genesis").rng,
+        "the stream actually advanced"
+    );
+}
+
+#[test]
+fn moon_deep_simulation_hash_chain_is_identical_across_three_runs() {
+    let root = test_root("moondeep-chain");
+    author_moondeep(&root, true);
+    let inputs = json!({
+        "run_seed": 7,
+        "ticks": 12,
+        "choice_log": (0..12)
+            .map(|i| json!({"tick": i + 1, "kind": "event", "id": "wander"}))
+            .collect::<Vec<_>>(),
+    });
+    let first = verb(&root, "game_simulate", inputs.clone());
+    assert_eq!(first.status, Status::Ok, "{}", first.doc);
+    for _ in 0..2 {
+        let again = verb(&root, "game_simulate", inputs.clone());
+        assert_eq!(again.doc, first.doc, "run evidence is byte-identical");
+    }
+}
+
+#[test]
+fn static_weights_serialize_as_bare_integers() {
+    // The slice's negative gate: the static form is the plain
+    // encoding — a bare integer weight, no expression
+    // scaffolding — and static tables draw.
+    let root = test_root("moondeep-static-form");
+    author_moondeep(&root, false);
+    let text = read(&root, PROJECT_FILE);
+    assert!(text.contains("weight: 1"), "{text}");
+    let table_at = text.find("Table(").expect("table record present");
+    let table_text = &text[table_at..];
+    assert!(
+        !table_text.contains("Add("),
+        "static table carries expression scaffolding: {table_text}"
+    );
+    let loaded = load_project(&root);
+    let log = event_log(&[(1, "wander")], 2);
+    let mut state = genesis(&loaded.project, 7).expect("genesis");
+    let (events, _c) = run_to(&loaded.project, &mut state, &log, 2);
+    assert_eq!(drawn_outcomes(&events).len(), 1);
+}
+
+#[test]
+fn table_and_stream_gates_refuse_typed() {
+    let root = test_root("table-gates");
+    author_moondeep(&root, true);
+    // An algorithm this build does not implement.
+    let bad = verb(
+        &root,
+        "rng_stream_define",
+        json!({"id": "other", "algorithm": "lcg/9"}),
+    );
+    assert_eq!(bad.doc["code"], "TG-AUTH-UNKNOWN-KIND", "{}", bad.doc);
+    // A table on a stream that does not exist.
+    let bad = verb(
+        &root,
+        "table_define",
+        json!({
+            "id": "t_nostream", "stream": "nope",
+            "outcomes": [{"id": "x", "weight": 1, "effect_set": "glimpse_set"}],
+        }),
+    );
+    assert_eq!(bad.doc["code"], "TG-GAME-TABLE", "{}", bad.doc);
+    // A non-positive static weight.
+    let bad = verb(
+        &root,
+        "table_define",
+        json!({
+            "id": "t_zero", "stream": "battle",
+            "outcomes": [{"id": "x", "weight": 0, "effect_set": "glimpse_set"}],
+        }),
+    );
+    assert_eq!(bad.doc["code"], "TG-GAME-TABLE", "{}", bad.doc);
+    // A duplicate outcome id.
+    let bad = verb(
+        &root,
+        "table_define",
+        json!({
+            "id": "t_dup", "stream": "battle",
+            "outcomes": [
+                {"id": "x", "weight": 1, "effect_set": "glimpse_set"},
+                {"id": "x", "weight": 2, "effect_set": "spark_set"},
+            ],
+        }),
+    );
+    assert_eq!(bad.doc["code"], "TG-GAME-TABLE", "{}", bad.doc);
+    // An ill-typed (boolean) weight expression.
+    let bad = verb(
+        &root,
+        "table_define",
+        json!({
+            "id": "t_bool", "stream": "battle",
+            "outcomes": [{
+                "id": "x",
+                "weight": {"kind": "bool_lit", "value": true},
+                "effect_set": "glimpse_set",
+            }],
+        }),
+    );
+    assert_eq!(bad.doc["code"], "TG-GAME-EXPR", "{}", bad.doc);
+    // A weight naming a value that does not exist yet: cyclic
+    // or forward references are unrepresentable — the
+    // reference is unknown at define time.
+    let bad = verb(
+        &root,
+        "table_define",
+        json!({
+            "id": "t_cycle", "stream": "battle",
+            "outcomes": [{
+                "id": "x",
+                "weight": {"kind": "value", "value": "future_weight"},
+                "effect_set": "glimpse_set",
+            }],
+        }),
+    );
+    assert_eq!(bad.doc["code"], "TG-GAME-EXPR", "{}", bad.doc);
+    // An outcome naming a missing effect set dangles.
+    let bad = verb(
+        &root,
+        "table_define",
+        json!({
+            "id": "t_dangle", "stream": "battle",
+            "outcomes": [{"id": "x", "weight": 1, "effect_set": "nope"}],
+        }),
+    );
+    assert_eq!(bad.doc["code"], "TG-AUTH-DANGLING", "{}", bad.doc);
+    // A roll_table atom naming a missing table dangles.
+    let bad = verb(
+        &root,
+        "effect_set_define",
+        json!({"id": "bad_roll", "atoms": [{"kind": "roll_table", "table": "nope"}]}),
+    );
+    assert_eq!(bad.doc["code"], "TG-AUTH-DANGLING", "{}", bad.doc);
 }

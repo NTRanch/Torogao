@@ -477,19 +477,18 @@ fn lattice_findings(project: &Project) -> Vec<Refusal> {
     findings
 }
 
-/// The game section's ops, in authoring (dependency) order:
-/// the section itself, then the clock, stats, tiers, and
-/// flags, then characters and scenes, then values and
-/// conditions (both may read character stats), then effect
-/// sets, then the dialogue chains in (scene, ordinal) order,
-/// then triggers. The prose each prose-authoring op carries is
-/// read back from the stored sidecar entries; a reference with
-/// no entry synthesizes an empty text, which the gate refuses —
-/// and `game_findings` names the dangling reference itself.
+/// The game section's ops, in authoring (dependency) order —
+/// computed topologically from the records' own references,
+/// since the section's one genuine cycle (a table names its
+/// outcomes' effect sets; an effect set may roll that table)
+/// has no fixed order. The prose each prose-authoring op
+/// carries is read back from the stored sidecar entries; a
+/// reference with no entry synthesizes an empty text, which
+/// the gate refuses — and `game_findings` names the dangling
+/// reference itself.
 fn game_ops(project: &Project) -> Vec<Op> {
-    let mut ops = Vec::new();
     let Some(game) = &project.game else {
-        return ops;
+        return Vec::new();
     };
     let prose = |id: &str| {
         project
@@ -499,92 +498,187 @@ fn game_ops(project: &Project) -> Vec<Op> {
             .map(|entry| entry.text.clone())
             .unwrap_or_default()
     };
-    ops.push(Op::Game(GameOp::GameDefine(GameDefineInput {
-        id: game.id.clone(),
-        start_scene: game.start_scene.clone(),
-        save_schema_version: Some(game.save_schema_version),
-    })));
+    // The ops are collected with their record dependencies and
+    // emitted in a stable topological order (earliest canonical
+    // position first). A fixed order cannot express the game
+    // section's one genuine cycle — a table names its outcomes'
+    // effect sets, and an effect set may roll that table — so
+    // the sweep orders records the way an author could have:
+    // every record after the records it names.
+    let mut items: Vec<SweepOp> = Vec::new();
+    let mut push = |key: String, deps: Vec<String>, op: Op| {
+        items.push(SweepOp { key, deps, op });
+    };
+    push(
+        "game".to_string(),
+        Vec::new(),
+        Op::Game(GameOp::GameDefine(GameDefineInput {
+            id: game.id.clone(),
+            start_scene: game.start_scene.clone(),
+            save_schema_version: Some(game.save_schema_version),
+        })),
+    );
     if let Some(clock) = &game.clock {
-        ops.push(Op::Game(GameOp::ClockDefine(ClockDefineInput {
-            slots: clock.slots.clone(),
-            days_per_week: clock.days_per_week,
-            day_limit: clock.day_limit,
-        })));
+        push(
+            "clock".to_string(),
+            vec!["game".to_string()],
+            Op::Game(GameOp::ClockDefine(ClockDefineInput {
+                slots: clock.slots.clone(),
+                days_per_week: clock.days_per_week,
+                day_limit: clock.day_limit,
+            })),
+        );
+    }
+    for stream in &game.streams {
+        push(
+            format!("stream:{}", stream.id),
+            vec!["game".to_string()],
+            Op::Game(GameOp::RngStreamDefine(
+                crate::game::op::RngStreamDefineInput {
+                    id: stream.id.clone(),
+                    algorithm: stream.algorithm.clone(),
+                },
+            )),
+        );
     }
     for stat in &game.stats {
-        ops.push(Op::Game(GameOp::StatDefine(
-            crate::game::apply::stat_input_of(stat),
-        )));
+        push(
+            format!("stat:{}", stat.id),
+            vec!["game".to_string()],
+            Op::Game(GameOp::StatDefine(crate::game::apply::stat_input_of(stat))),
+        );
     }
     for tier in &game.tiers {
-        ops.push(Op::Game(GameOp::StatTierDefine(StatTierDefineInput {
-            stat: tier.stat.clone(),
-            thresholds: tier.thresholds.clone(),
-            names: tier.names.clone(),
-        })));
+        push(
+            format!("tier:{}", tier.stat),
+            vec![format!("stat:{}", tier.stat)],
+            Op::Game(GameOp::StatTierDefine(StatTierDefineInput {
+                stat: tier.stat.clone(),
+                thresholds: tier.thresholds.clone(),
+                names: tier.names.clone(),
+            })),
+        );
     }
     for flag in &game.flags {
-        ops.push(Op::Game(GameOp::FlagDefine(FlagDefineInput {
-            id: flag.id.clone(),
-            scope: match flag.scope {
-                crate::game::model::FlagScope::Globals => FlagScopeInput::Globals,
-                crate::game::model::FlagScope::Run => FlagScopeInput::Run,
-            },
-            default: flag.default,
-        })));
+        push(
+            format!("flag:{}", flag.id),
+            vec!["game".to_string()],
+            Op::Game(GameOp::FlagDefine(FlagDefineInput {
+                id: flag.id.clone(),
+                scope: match flag.scope {
+                    crate::game::model::FlagScope::Globals => FlagScopeInput::Globals,
+                    crate::game::model::FlagScope::Run => FlagScopeInput::Run,
+                },
+                default: flag.default,
+            })),
+        );
     }
     for character in &game.characters {
-        ops.push(Op::Game(GameOp::CharacterDefine(CharacterDefineInput {
-            id: character.id.clone(),
-            name_ref: character.name_ref.clone(),
-            name_text: prose(&character.name_ref),
-            initials: character
-                .initials
-                .iter()
-                .map(|row| StatInitialInput {
-                    stat: row.stat.clone(),
-                    value: row.value,
-                })
-                .collect(),
-        })));
+        let mut deps = vec!["game".to_string()];
+        for row in &character.initials {
+            deps.push(format!("stat:{}", row.stat));
+        }
+        push(
+            format!("character:{}", character.id),
+            deps,
+            Op::Game(GameOp::CharacterDefine(CharacterDefineInput {
+                id: character.id.clone(),
+                name_ref: character.name_ref.clone(),
+                name_text: prose(&character.name_ref),
+                initials: character
+                    .initials
+                    .iter()
+                    .map(|row| StatInitialInput {
+                        stat: row.stat.clone(),
+                        value: row.value,
+                    })
+                    .collect(),
+            })),
+        );
     }
     for scene in &game.scenes {
-        ops.push(Op::Game(GameOp::SceneDefine(SceneDefineInput {
-            id: scene.id.clone(),
-            presentation: match scene.presentation {
-                crate::game::model::Presentation::Event => PresentationInput::Event,
-                crate::game::model::Presentation::Room => PresentationInput::Room,
-                crate::game::model::Presentation::Vn => PresentationInput::Vn,
-            },
-        })));
+        push(
+            format!("scene:{}", scene.id),
+            vec!["game".to_string()],
+            Op::Game(GameOp::SceneDefine(SceneDefineInput {
+                id: scene.id.clone(),
+                presentation: match scene.presentation {
+                    crate::game::model::Presentation::Event => PresentationInput::Event,
+                    crate::game::model::Presentation::Room => PresentationInput::Room,
+                    crate::game::model::Presentation::Vn => PresentationInput::Vn,
+                },
+            })),
+        );
     }
     for value in &game.values {
-        ops.push(Op::Game(GameOp::ValueDefine(ValueDefineInput {
-            id: value.id.clone(),
-            expr: crate::game::expr::expr_to_input(&value.expr),
-        })));
+        let mut deps = vec!["game".to_string()];
+        expr_deps(&value.expr, &mut deps);
+        push(
+            format!("value:{}", value.id),
+            deps,
+            Op::Game(GameOp::ValueDefine(ValueDefineInput {
+                id: value.id.clone(),
+                expr: crate::game::expr::expr_to_input(&value.expr),
+            })),
+        );
     }
     for condition in &game.conditions {
-        ops.push(Op::Game(GameOp::ConditionDefine(ConditionDefineInput {
-            id: condition.id.clone(),
-            expr: crate::game::expr::expr_to_input(&condition.expr),
-        })));
+        let mut deps = vec!["game".to_string()];
+        expr_deps(&condition.expr, &mut deps);
+        push(
+            format!("condition:{}", condition.id),
+            deps,
+            Op::Game(GameOp::ConditionDefine(ConditionDefineInput {
+                id: condition.id.clone(),
+                expr: crate::game::expr::expr_to_input(&condition.expr),
+            })),
+        );
     }
     for set in &game.effect_sets {
-        ops.push(Op::Game(GameOp::EffectSetDefine(EffectSetDefineInput {
-            id: set.id.clone(),
-            atoms: set
-                .atoms
-                .iter()
-                .map(crate::game::apply::atom_input_of)
-                .collect(),
-        })));
+        let mut deps = vec!["game".to_string()];
+        for atom in &set.atoms {
+            atom_deps(atom, &mut deps);
+        }
+        push(
+            format!("set:{}", set.id),
+            deps,
+            Op::Game(GameOp::EffectSetDefine(EffectSetDefineInput {
+                id: set.id.clone(),
+                atoms: set
+                    .atoms
+                    .iter()
+                    .map(crate::game::apply::atom_input_of)
+                    .collect(),
+            })),
+        );
+    }
+    for table in &game.tables {
+        let mut deps = vec!["game".to_string(), format!("stream:{}", table.stream)];
+        for outcome in &table.outcomes {
+            deps.push(format!("set:{}", outcome.effect_set));
+            if let Some(gate) = &outcome.gate {
+                deps.push(format!("condition:{gate}"));
+            }
+        }
+        push(
+            format!("table:{}", table.id),
+            deps,
+            Op::Game(GameOp::TableDefine(crate::game::apply::table_input_of(
+                table,
+            ))),
+        );
     }
     let mut lines: Vec<&crate::game::model::DialogueLine> = game.dialogue.iter().collect();
     lines.sort_by(|a, b| (a.scene.as_str(), a.ordinal).cmp(&(b.scene.as_str(), b.ordinal)));
     for line in lines {
-        ops.push(Op::Game(GameOp::DialogueLineDefine(
-            DialogueLineDefineInput {
+        let mut deps = vec!["game".to_string(), format!("scene:{}", line.scene)];
+        if line.speaker != "narrator" {
+            deps.push(format!("character:{}", line.speaker));
+        }
+        push(
+            format!("line:{}", line.id),
+            deps,
+            Op::Game(GameOp::DialogueLineDefine(DialogueLineDefineInput {
                 id: line.id.clone(),
                 scene: line.scene.clone(),
                 ordinal: line.ordinal,
@@ -593,30 +687,163 @@ fn game_ops(project: &Project) -> Vec<Op> {
                 text: prose(&line.text_ref),
                 next: line.next.clone(),
                 hook_expression: line.hook_expression.clone(),
-            },
-        )));
+            })),
+        );
     }
     for trigger in &game.triggers {
-        ops.push(Op::Game(GameOp::TriggerDefine(TriggerDefineInput {
-            id: trigger.id.clone(),
-            kind: crate::game::apply::trigger_kind_input_of(&trigger.kind),
-            effect_set: trigger.effect_set.clone(),
-            gate: trigger.gate.clone(),
-            priority: trigger.priority,
-            repetition: match trigger.repetition {
-                crate::game::model::Repetition::Once => RepetitionInput::Once,
-                crate::game::model::Repetition::Repeat => RepetitionInput::Repeat,
-            },
-            cooldown_ticks: trigger.cooldown_ticks,
-            offer: trigger
-                .offer
-                .as_ref()
-                .map(|offer| crate::game::op::OfferInput {
-                    expires_days: offer.expires_days,
-                }),
-        })));
+        let mut deps = vec!["game".to_string(), format!("set:{}", trigger.effect_set)];
+        if let Some(gate) = &trigger.gate {
+            deps.push(format!("condition:{gate}"));
+        }
+        match &trigger.kind {
+            crate::game::model::TriggerKind::OnEnterScene { scene } => {
+                deps.push(format!("scene:{scene}"));
+            }
+            crate::game::model::TriggerKind::OnFlag { flag, .. } => {
+                deps.push(format!("flag:{flag}"));
+            }
+            crate::game::model::TriggerKind::OnThreshold {
+                character, stat, ..
+            } => {
+                deps.push(format!("stat:{stat}"));
+                if let Some(who) = character {
+                    deps.push(format!("character:{who}"));
+                }
+            }
+            crate::game::model::TriggerKind::OnTick { .. } => {
+                deps.push("clock".to_string());
+            }
+            crate::game::model::TriggerKind::OnEvent { .. } => {}
+        }
+        push(
+            format!("trigger:{}", trigger.id),
+            deps,
+            Op::Game(GameOp::TriggerDefine(TriggerDefineInput {
+                id: trigger.id.clone(),
+                kind: crate::game::apply::trigger_kind_input_of(&trigger.kind),
+                effect_set: trigger.effect_set.clone(),
+                gate: trigger.gate.clone(),
+                priority: trigger.priority,
+                repetition: match trigger.repetition {
+                    crate::game::model::Repetition::Once => RepetitionInput::Once,
+                    crate::game::model::Repetition::Repeat => RepetitionInput::Repeat,
+                },
+                cooldown_ticks: trigger.cooldown_ticks,
+                offer: trigger
+                    .offer
+                    .as_ref()
+                    .map(|offer| crate::game::op::OfferInput {
+                        expires_days: offer.expires_days,
+                    }),
+            })),
+        );
     }
-    ops
+    topo_order(items)
+}
+
+/// One sweep op with the record keys it depends on.
+struct SweepOp {
+    key: String,
+    deps: Vec<String>,
+    op: Op,
+}
+
+/// Stable topological order: repeatedly emit the earliest op
+/// whose dependencies are all emitted. When no op can proceed
+/// (a dependency cycle or a reference to a record the section
+/// does not carry), the rest are emitted in canonical order —
+/// the sweep's own `run` then surfaces the refusal that names
+/// the problem, as it did before the ordering existed.
+fn topo_order(mut items: Vec<SweepOp>) -> Vec<Op> {
+    let mut emitted: Vec<Op> = Vec::new();
+    let mut done: Vec<String> = Vec::new();
+    while !items.is_empty() {
+        let Some(pos) = items
+            .iter()
+            .position(|item| item.deps.iter().all(|dep| done.contains(dep)))
+        else {
+            emitted.extend(items.into_iter().map(|item| item.op));
+            return emitted;
+        };
+        let item = items.remove(pos);
+        done.push(item.key);
+        emitted.push(item.op);
+    }
+    emitted
+}
+
+/// The record keys an expression reads.
+fn expr_deps(expr: &crate::game::model::Expr, deps: &mut Vec<String>) {
+    use crate::game::model::Expr;
+    match expr {
+        Expr::Add(left, right)
+        | Expr::Max(left, right)
+        | Expr::Min(left, right)
+        | Expr::Mul(left, right)
+        | Expr::Sub(left, right) => {
+            expr_deps(left, deps);
+            expr_deps(right, deps);
+        }
+        Expr::And(args) | Expr::Or(args) => {
+            for arg in args {
+                expr_deps(arg, deps);
+            }
+        }
+        Expr::Clamp(value, lo, hi) => {
+            expr_deps(value, deps);
+            expr_deps(lo, deps);
+            expr_deps(hi, deps);
+        }
+        Expr::Cmp(_, left, right) => {
+            expr_deps(left, deps);
+            expr_deps(right, deps);
+        }
+        Expr::Flag(flag) => deps.push(format!("flag:{flag}")),
+        Expr::Neg(inner) | Expr::Not(inner) => expr_deps(inner, deps),
+        Expr::Stat { character, stat } | Expr::TierOf { character, stat } => {
+            deps.push(format!("stat:{stat}"));
+            if let Some(who) = character {
+                deps.push(format!("character:{who}"));
+            }
+        }
+        Expr::Value(id) => deps.push(format!("value:{id}")),
+        Expr::BoolLit(_) | Expr::Clock(_) | Expr::Lit(_) => {}
+    }
+}
+
+/// The record keys an effect atom touches.
+fn atom_deps(atom: &crate::game::model::Atom, deps: &mut Vec<String>) {
+    use crate::game::model::Atom;
+    match atom {
+        Atom::EmitEvent { .. } => {}
+        Atom::EnterScene { scene } => deps.push(format!("scene:{scene}")),
+        Atom::FlagClear { flag } | Atom::FlagSet { flag } => {
+            deps.push(format!("flag:{flag}"));
+        }
+        Atom::RollTable { table } => deps.push(format!("table:{table}")),
+        Atom::StatAdd {
+            character,
+            stat,
+            amount,
+        } => {
+            deps.push(format!("stat:{stat}"));
+            if let Some(who) = character {
+                deps.push(format!("character:{who}"));
+            }
+            expr_deps(amount, deps);
+        }
+        Atom::StatSet {
+            character,
+            stat,
+            value,
+        } => {
+            deps.push(format!("stat:{stat}"));
+            if let Some(who) = character {
+                deps.push(format!("character:{who}"));
+            }
+            expr_deps(value, deps);
+        }
+    }
 }
 
 /// The game reference sweeps `decide()` cannot see at define
