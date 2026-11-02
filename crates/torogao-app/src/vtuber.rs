@@ -15,12 +15,18 @@
 //!   and plays viseme curve sets (the Stage 3.4 front
 //!   door: audio analysis bakes curves, this driver applies
 //!   them) with frame-exact timing.
+//! - A take also preserves the raw 52-channel ARKit frame
+//!   beside each governed frame (D-553): the governed
+//!   view discards the 37 channels with no governed
+//!   counterpart, the take does not — the raw frames are
+//!   measurements only, privileged corpus data, never
+//!   replayed and never a training set.
 //! - Tracking loss degrades to hold: when no frame
 //!   applies, the scene is not touched at all.
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 
 use torogao_cli::curves::CurveSet;
@@ -61,6 +67,57 @@ pub struct MimicryTake {
     pub format: String,
     /// One map per frame: parameter name → (x, y) value.
     pub frames: Vec<BTreeMap<String, [f32; 2]>>,
+    /// One raw ARKit frame per governed frame (D-553):
+    /// all 52 blendshape channels as received, in
+    /// `torogao_vmc::arkit::ARKIT_BLENDSHAPES` order —
+    /// including the 37 channels with no governed
+    /// counterpart, which the governed frames above drop.
+    /// Measurements only: privileged corpus data,
+    /// preserved for study, never replayed and never a
+    /// training set. Takes recorded before D-553 carry
+    /// none: the field defaults to empty on load, and a
+    /// non-empty `raw_frames` must match `frames`
+    /// one-for-one (`from_json` refuses otherwise).
+    #[serde(
+        default,
+        serialize_with = "serialize_raw_frames",
+        deserialize_with = "deserialize_raw_frames"
+    )]
+    pub raw_frames: Vec<[f32; 52]>,
+}
+
+/// Serializes the raw frames as one 52-number array per
+/// frame (serde's built-in array support stops at 32
+/// elements, so the 52-wide frames go through slices).
+fn serialize_raw_frames<S>(frames: &[[f32; 52]], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    use serde::ser::SerializeSeq;
+    let mut seq = serializer.serialize_seq(Some(frames.len()))?;
+    for frame in frames {
+        seq.serialize_element(frame.as_slice())?;
+    }
+    seq.end()
+}
+
+/// Deserializes the raw frames, refusing any frame that
+/// does not carry exactly 52 channels (a parse refusal
+/// at the `from_json` seam).
+fn deserialize_raw_frames<'de, D>(deserializer: D) -> Result<Vec<[f32; 52]>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let frames = Vec::<Vec<f32>>::deserialize(deserializer)?;
+    frames
+        .into_iter()
+        .map(|frame| {
+            let count = frame.len();
+            frame.try_into().map_err(|_| {
+                serde::de::Error::custom(format!("a raw frame carries {count} channels, not 52"))
+            })
+        })
+        .collect()
 }
 
 impl MimicryTake {
@@ -87,6 +144,13 @@ impl MimicryTake {
                 take.frames.len()
             )));
         }
+        if !take.raw_frames.is_empty() && take.raw_frames.len() != take.frames.len() {
+            return Err(invalid(format!(
+                "TG-MIMICRY-RAW-BOUND refused: {} raw frames do not match {} governed frames one-for-one",
+                take.raw_frames.len(),
+                take.frames.len()
+            )));
+        }
         Ok(take)
     }
 }
@@ -96,6 +160,7 @@ impl MimicryTake {
 #[derive(Debug, Default)]
 pub struct MimicryRecorder {
     frames: Vec<BTreeMap<String, [f32; 2]>>,
+    raw_frames: Vec<[f32; 52]>,
 }
 
 impl MimicryRecorder {
@@ -104,10 +169,13 @@ impl MimicryRecorder {
         MimicryRecorder::default()
     }
 
-    /// Records one applied frame (the governed parameters'
-    /// post-application values on the puppet).
-    pub fn record_frame(&mut self, frame: BTreeMap<String, [f32; 2]>) {
+    /// Records one applied frame: the governed parameters'
+    /// post-application values on the puppet, alongside
+    /// the raw 52-channel ARKit frame they were mapped
+    /// from (D-553, in `ARKIT_BLENDSHAPES` order).
+    pub fn record_frame(&mut self, frame: BTreeMap<String, [f32; 2]>, raw_frame: [f32; 52]) {
         self.frames.push(frame);
+        self.raw_frames.push(raw_frame);
     }
 
     /// Frames recorded so far.
@@ -120,6 +188,7 @@ impl MimicryRecorder {
         MimicryTake {
             format: MIMICRY_FORMAT.to_string(),
             frames: self.frames,
+            raw_frames: self.raw_frames,
         }
     }
 }
@@ -153,6 +222,7 @@ impl LiveTracking {
         MimicryTake {
             format: MIMICRY_FORMAT.to_string(),
             frames: self.recorder.frames.clone(),
+            raw_frames: self.recorder.raw_frames.clone(),
         }
     }
 
@@ -192,7 +262,7 @@ impl LiveTracking {
                 recorded.insert(name, [value.x, value.y]);
             }
         }
-        self.recorder.record_frame(recorded);
+        self.recorder.record_frame(recorded, applied.raw_frame);
         Ok(Some(applied))
     }
 }
@@ -306,5 +376,85 @@ impl VisemeDriver {
         scene.assign_and_step(&assignments)?;
         self.step += 1;
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MIMICRY_FORMAT, MimicryRecorder, MimicryTake};
+    use std::collections::BTreeMap;
+
+    fn governed_frame() -> BTreeMap<String, [f32; 2]> {
+        BTreeMap::from([("Eye:: Left:: Blink".to_string(), [0.25, 0.0])])
+    }
+
+    /// A raw frame whose unmapped channels carry the
+    /// distinctive values: cheekSquintLeft (index 6 in
+    /// `ARKIT_BLENDSHAPES` order) at 0.73, eyeSquintLeft
+    /// (index 18) at 0.41, the mapped eyeBlinkLeft
+    /// (index 8) at 0.25.
+    fn raw_frame() -> [f32; 52] {
+        let mut raw = [0.0_f32; 52];
+        raw[6] = 0.73;
+        raw[8] = 0.25;
+        raw[18] = 0.41;
+        raw[51] = -0.0;
+        raw
+    }
+
+    #[test]
+    fn recorder_preserves_raw_frames_alongside_governed() {
+        let mut recorder = MimicryRecorder::new();
+        recorder.record_frame(governed_frame(), raw_frame());
+        let take = recorder.into_take();
+        assert_eq!(take.raw_frames.len(), 1);
+        for (actual, expected) in take.raw_frames[0].iter().zip(raw_frame()) {
+            assert_eq!(actual.to_bits(), expected.to_bits(), "raw values are exact");
+        }
+        assert!(
+            !take.frames[0].contains_key("cheekSquintLeft"),
+            "the governed frame does not contain the unmapped channel"
+        );
+        assert_eq!(take.frames[0]["Eye:: Left:: Blink"], [0.25, 0.0]);
+    }
+
+    #[test]
+    fn raw_frames_survive_the_json_round_trip_bit_exactly() {
+        let take = MimicryTake {
+            format: MIMICRY_FORMAT.to_string(),
+            frames: vec![governed_frame(), governed_frame()],
+            raw_frames: vec![raw_frame(), raw_frame()],
+        };
+        let parsed =
+            MimicryTake::from_json(&take.to_json().expect("take serializes")).expect("take parses");
+        assert_eq!(parsed.frames.len(), take.frames.len());
+        for (actual_frames, expected_frames) in parsed.raw_frames.iter().zip(&take.raw_frames) {
+            for (actual, expected) in actual_frames.iter().zip(expected_frames) {
+                assert_eq!(actual.to_bits(), expected.to_bits());
+            }
+        }
+    }
+
+    #[test]
+    fn from_json_refuses_raw_frames_that_do_not_match_governed() {
+        let take = MimicryTake {
+            format: MIMICRY_FORMAT.to_string(),
+            frames: vec![governed_frame()],
+            raw_frames: vec![raw_frame(), raw_frame()],
+        };
+        let error = MimicryTake::from_json(&take.to_json().expect("take serializes"))
+            .expect_err("a length-mismatched document refuses");
+        assert!(
+            error.to_string().contains("TG-MIMICRY-RAW-BOUND"),
+            "the refusal is typed: {error}"
+        );
+    }
+
+    #[test]
+    fn takes_recorded_before_raw_frames_still_load() {
+        let parsed =
+            MimicryTake::from_json("{\"format\": \"torogao-mimicry-take/1\", \"frames\": []}")
+                .expect("a pre-D-553 take loads");
+        assert!(parsed.raw_frames.is_empty(), "raw frames default to empty");
     }
 }

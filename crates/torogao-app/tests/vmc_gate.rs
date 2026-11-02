@@ -12,9 +12,9 @@ use std::path::PathBuf;
 use serde_json::json;
 
 use torogao_app::scene::Scene;
-use torogao_app::vtuber::{LiveTracking, VisemeDriver, replay_mimicry};
+use torogao_app::vtuber::{LiveTracking, MimicryTake, VisemeDriver, replay_mimicry};
 use torogao_cli::viseme::{VisemeContract, bake_visemes};
-use torogao_vmc::arkit::{GOVERNED_PARAMETERS, governed_values};
+use torogao_vmc::arkit::{ARKIT_BLENDSHAPES, GOVERNED_PARAMETERS, governed_values};
 use torogao_vmc::vmc::{BonePose, VmcFrame};
 
 fn model_path(folder: &str, file: &str) -> PathBuf {
@@ -271,4 +271,58 @@ fn viseme_bake_drives_the_mouth_on_the_recorded_frames() {
     assert_eq!(seen[30], 1.0);
     assert_eq!(seen[89], 1.0);
     assert_eq!(seen[90], 0.0);
+}
+
+/// D-553: a take preserves the raw 52-channel ARKit frame
+/// beside the governed frame. The unmapped channels —
+/// cheekSquintLeft at 0.73 here — survive the recording
+/// exactly, even though the governed view drops them.
+#[test]
+fn raw_frames_preserve_all_52_channels_alongside_the_governed_view() {
+    let mut scene = load_primed("aka", "Aka.inx");
+    let mut live = LiveTracking::new();
+    let mut frame = VmcFrame::default();
+    let mut expected = [0.0_f32; 52];
+    for (index, name) in ARKIT_BLENDSHAPES.iter().enumerate() {
+        let value = (index as f32 + 1.0) / 100.0;
+        expected[index] = value;
+        frame.blends.push((name.to_string(), value));
+    }
+    let slot = |name: &str| {
+        ARKIT_BLENDSHAPES
+            .iter()
+            .position(|channel| *channel == name)
+            .expect("channel is in the table")
+    };
+    expected[slot("cheekSquintLeft")] = 0.73;
+    frame.blends[slot("cheekSquintLeft")].1 = 0.73;
+    frame.bones.push(BonePose {
+        name: "Head".to_string(),
+        position: [0.0, 1.6, 0.0],
+        rotation: [0.0, 0.0, 0.0, 1.0],
+    });
+    live.ingest(0, frame);
+    live.tick(&mut scene, 0).expect("tick applies");
+    let take = live.take();
+    assert_eq!(take.frames.len(), 1, "one governed frame recorded");
+    assert_eq!(take.raw_frames.len(), 1, "one raw frame recorded");
+    for (actual, wanted) in take.raw_frames[0].iter().zip(expected) {
+        assert_eq!(
+            actual.to_bits(),
+            wanted.to_bits(),
+            "every one of the 52 raw values is preserved exactly"
+        );
+    }
+    assert!(
+        !take.frames[0].contains_key("cheekSquintLeft"),
+        "the governed frame does not contain the unmapped channel: \
+         the discard is a governed-view discard, not a data loss"
+    );
+    assert!(
+        take.frames[0].contains_key("Eye:: Left:: Blink"),
+        "the governed frame still carries the mapped channels"
+    );
+    let parsed =
+        MimicryTake::from_json(&take.to_json().expect("take serializes")).expect("take parses");
+    assert_eq!(parsed, take, "raw frames survive the JSON round-trip");
 }

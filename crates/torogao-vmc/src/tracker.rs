@@ -12,7 +12,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use crate::arkit::{GovernedValue, governed_values};
+use crate::arkit::{GovernedValue, governed_values, raw_blendshape_frame};
 use crate::vmc::VmcFrame;
 
 /// Largest number of unapplied frames the driver queues.
@@ -29,6 +29,12 @@ pub struct AppliedFrame {
     pub latency_frames: u64,
     /// The governed values the frame carried.
     pub values: BTreeMap<String, GovernedValue>,
+    /// The frame's raw ARKit blendshape values, in
+    /// `ARKIT_BLENDSHAPES` order (D-553): all 52 channels
+    /// as received, mapped or not — the measurements view
+    /// the mimicry recorder preserves alongside the
+    /// governed values.
+    pub raw_frame: [f32; 52],
 }
 
 /// The tracking driver state.
@@ -65,6 +71,7 @@ impl TrackingDriver {
     /// empty — the state then holds, untouched.
     pub fn tick(&mut self, now: u64) -> Option<AppliedFrame> {
         let (stamp, frame) = self.queue.pop_front()?;
+        let raw_frame = raw_blendshape_frame(&frame);
         let values = governed_values(&frame);
         for (name, value) in &values {
             self.state.entry(name.clone()).or_default().merge(*value);
@@ -74,6 +81,7 @@ impl TrackingDriver {
             stamp,
             latency_frames: now.saturating_sub(stamp),
             values,
+            raw_frame,
         })
     }
 
@@ -142,6 +150,29 @@ mod tests {
         assert_eq!(driver.queued(), super::TRACKING_QUEUE_CAPACITY);
         let first = driver.tick(12).expect("a frame applies");
         assert_eq!(first.stamp, 4, "the oldest surviving frame applies first");
+    }
+
+    #[test]
+    fn applied_frames_carry_the_raw_channels() {
+        let mut driver = TrackingDriver::new();
+        let mut frame = VmcFrame::default();
+        frame.blends.push(("cheekSquintLeft".to_string(), 0.73));
+        frame.blends.push(("eyeBlinkLeft".to_string(), 0.25));
+        driver.ingest(0, frame);
+        let applied = driver.tick(0).expect("frame applies");
+        let slot = |name: &str| {
+            crate::arkit::ARKIT_BLENDSHAPES
+                .iter()
+                .position(|channel| *channel == name)
+                .expect("channel is in the table")
+        };
+        assert_eq!(applied.raw_frame[slot("cheekSquintLeft")], 0.73);
+        assert_eq!(applied.raw_frame[slot("eyeBlinkLeft")], 0.25);
+        assert_eq!(
+            applied.values["Eye:: Left:: Blink"].x,
+            Some(0.25),
+            "the governed view still maps alongside the raw frame"
+        );
     }
 
     #[test]

@@ -8,6 +8,9 @@ description = "VMC over OSC for Torogao's live VTuber mode (Stage 3.3): a bounde
 
 [dependencies]
 
+[dev-dependencies]
+sha2 = "0.10"
+
 [lib]
 name = "torogao_vmc"
 path = "src/lib.rs"
