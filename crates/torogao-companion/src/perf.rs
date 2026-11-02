@@ -439,6 +439,189 @@ pub fn run_roll_trace(model_path: &Path, afterglow_steps: usize) -> CompanionRes
     })
 }
 
+// ---------------------------------------------------------------------------
+// Stage 2.3 instrument: the duo take. Prima (A) and Yui
+// (B) share one clock through the authored turn-taking
+// script:
+//
+// - steps [0, 60): settle, both gaze forward;
+// - step 60: A starts her roll; at step 90 B reacts —
+//   her gaze turns to A (the authored reaction offset);
+// - step 990: B starts her roll and her gaze returns
+//   forward (she performs); at step 1020 A reacts —
+//   her gaze turns to B;
+// - the take ends at step 1980 (B's afterglow tail).
+//
+// Every step composes the stage frame and runs the
+// census; face reads land every 5 steps; the per-step
+// combined hash chains both partners' evaluated states.
+// ---------------------------------------------------------------------------
+
+/// Settle steps before the first performance.
+pub const DUO_SETTLE_STEPS: usize = 60;
+/// The authored reaction offset: the watcher turns to
+/// the performer this many steps after her roll starts.
+pub const DUO_REACTION_OFFSET: usize = 30;
+/// Rest steps between the two performances.
+pub const DUO_GAP_STEPS: usize = 60;
+/// Afterglow observation steps after the last roll.
+pub const DUO_TAIL_STEPS: usize = 120;
+
+/// The step A starts her roll.
+pub const DUO_A_ROLL_START: usize = DUO_SETTLE_STEPS;
+/// The step B reacts to A.
+pub const DUO_B_REACT: usize = DUO_A_ROLL_START + DUO_REACTION_OFFSET;
+/// The step B starts her roll.
+pub const DUO_B_ROLL_START: usize =
+    DUO_A_ROLL_START + crate::roll::ROLL_STEPS as usize + DUO_GAP_STEPS;
+/// The step A reacts to B.
+pub const DUO_A_REACT: usize = DUO_B_ROLL_START + DUO_REACTION_OFFSET;
+/// The full take length.
+pub const DUO_TOTAL_STEPS: usize =
+    DUO_B_ROLL_START + crate::roll::ROLL_STEPS as usize + DUO_TAIL_STEPS;
+
+/// The surface aspect both partners convert gaze with
+/// in the duo instrument (the companion portrait).
+pub const DUO_ASPECT: f64 = 0.5;
+
+/// One duo take.
+#[derive(Debug, Clone)]
+pub struct DuoRun {
+    /// The chain hash over the per-step combined hashes.
+    pub trace_hash: u64,
+    /// Per-step combined hashes.
+    pub step_hashes: Vec<u64>,
+    /// Total draw-order pops across the take.
+    pub pops: usize,
+    /// Total clipping events across the take.
+    pub clipping: usize,
+    /// Per-step evaluated ParamEyeRoll, partner A.
+    pub roll_a: Vec<f64>,
+    /// Per-step evaluated ParamEyeRoll, partner B.
+    pub roll_b: Vec<f64>,
+    /// Per-step evaluated ParamAngleX, partner A.
+    pub yaw_a: Vec<f64>,
+    /// Per-step evaluated ParamAngleX, partner B.
+    pub yaw_b: Vec<f64>,
+    /// Face reads every 5 steps: (step, A, B).
+    pub face_reads: Vec<(usize, crate::face::FaceRead, crate::face::FaceRead)>,
+    /// The stage layout the take composed under.
+    pub layout: crate::duo::StageLayout,
+    /// Partner A's canvas height (world units).
+    pub canvas_height_a: f64,
+    /// Partner B's canvas height (world units).
+    pub canvas_height_b: f64,
+}
+
+/// Runs the duo take on the two given rigs.
+pub fn run_duo_trace(model_a: &Path, model_b: &Path) -> CompanionResult<DuoRun> {
+    let mut duo = crate::duo::DuoCore::load(model_a, model_b, "torogao-companion duo")?;
+    let (layout, canvas_height_a, canvas_height_b) = {
+        let frame_a = torogao_app::render::prepare_frame(duo.a.scene_mut()?)
+            .map_err(|err| CompanionError::model(err.to_string()))?;
+        let frame_b = torogao_app::render::prepare_frame(duo.b.scene_mut()?)
+            .map_err(|err| CompanionError::model(err.to_string()))?;
+        (
+            crate::duo::layout(&frame_a, &frame_b),
+            f64::from(frame_a.canvas.height),
+            f64::from(frame_b.canvas.height),
+        )
+    };
+    let (roll_a_index, yaw_a_index) = {
+        let scene = duo.a.scene()?;
+        (
+            scene.puppet.param_index("ParamEyeRoll"),
+            scene.puppet.param_index("ParamAngleX"),
+        )
+    };
+    let (roll_b_index, yaw_b_index) = {
+        let scene = duo.b.scene()?;
+        (
+            scene.puppet.param_index("ParamEyeRoll"),
+            scene.puppet.param_index("ParamAngleX"),
+        )
+    };
+    let read = |scene: &torogao_app::scene::Scene, index: Option<usize>| match index {
+        Some(index) => f64::from(scene.puppet.params[index].last_internal.x),
+        None => 0.0,
+    };
+    let mut step_hashes = Vec::with_capacity(DUO_TOTAL_STEPS);
+    let mut roll_a = Vec::with_capacity(DUO_TOTAL_STEPS);
+    let mut roll_b = Vec::with_capacity(DUO_TOTAL_STEPS);
+    let mut yaw_a = Vec::with_capacity(DUO_TOTAL_STEPS);
+    let mut yaw_b = Vec::with_capacity(DUO_TOTAL_STEPS);
+    let mut face_reads = Vec::new();
+    let mut pops = 0;
+    let mut clipping = 0;
+    let mut previous: Option<crate::duo::ComposedFrame> = None;
+    let mut pointer_a: Option<(f64, f64)> = None;
+    let mut pointer_b: Option<(f64, f64)> = None;
+    for step in 0..DUO_TOTAL_STEPS {
+        match step {
+            DUO_A_ROLL_START => duo.a.start_roll(),
+            DUO_B_REACT => {
+                pointer_b = Some(crate::duo::partner_pointer(
+                    layout.face_b,
+                    layout.face_a,
+                    canvas_height_b,
+                    DUO_ASPECT,
+                ));
+            }
+            DUO_B_ROLL_START => {
+                duo.b.start_roll();
+                pointer_b = None;
+            }
+            DUO_A_REACT => {
+                pointer_a = Some(crate::duo::partner_pointer(
+                    layout.face_a,
+                    layout.face_b,
+                    canvas_height_a,
+                    DUO_ASPECT,
+                ));
+            }
+            _ => {}
+        }
+        duo.a.set_pointer(pointer_a, DUO_ASPECT);
+        duo.b.set_pointer(pointer_b, DUO_ASPECT);
+        step_hashes.push(duo.tick()?);
+        roll_a.push(read(duo.a.scene()?, roll_a_index));
+        yaw_a.push(read(duo.a.scene()?, yaw_a_index));
+        roll_b.push(read(duo.b.scene()?, roll_b_index));
+        yaw_b.push(read(duo.b.scene()?, yaw_b_index));
+        let frame_a = torogao_app::render::prepare_frame(duo.a.scene_mut()?)
+            .map_err(|err| CompanionError::model(err.to_string()))?;
+        let frame_b = torogao_app::render::prepare_frame(duo.b.scene_mut()?)
+            .map_err(|err| CompanionError::model(err.to_string()))?;
+        let composed = crate::duo::compose(&frame_a, &frame_b, &layout);
+        let (frame_pops, frame_clipping) = crate::duo::census(previous.as_ref(), &composed);
+        pops += frame_pops;
+        clipping += frame_clipping;
+        previous = Some(composed);
+        if step % FACE_READ_EVERY == 0 {
+            if let (Some(read_a), Some(read_b)) = (
+                crate::face::read_face(&frame_a),
+                crate::face::read_face(&frame_b),
+            ) {
+                face_reads.push((step, read_a, read_b));
+            }
+        }
+    }
+    Ok(DuoRun {
+        trace_hash: chain_hash(&step_hashes),
+        step_hashes,
+        pops,
+        clipping,
+        roll_a,
+        roll_b,
+        yaw_a,
+        yaw_b,
+        face_reads,
+        layout,
+        canvas_height_a,
+        canvas_height_b,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
