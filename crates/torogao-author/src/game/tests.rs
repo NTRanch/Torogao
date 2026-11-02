@@ -347,13 +347,7 @@ fn dialogue_references_to_missing_scene_and_speaker_refuse_dangling() {
 #[test]
 fn deferred_game_verbs_refuse_by_name() {
     let root = test_root("deferred");
-    for name in [
-        "choice_define",
-        "ending_define",
-        "game_simulate",
-        "table_define",
-        "trigger_define",
-    ] {
+    for name in ["choice_define", "ending_define", "table_define"] {
         let answer = verb(&root, name, json!({}));
         assert_eq!(answer.status, Status::Refused, "{name}");
         assert_eq!(
@@ -606,4 +600,470 @@ fn game_section_codec_round_trips_every_record_shape() {
     let parsed = parse_project(&text).expect("section parses");
     assert_eq!(parsed, project);
     assert_eq!(emit_project(&parsed), text, "emission is byte-stable");
+}
+
+// ---- P2-2: state lifetime primitive (D-463) --------------------------
+
+use crate::game::model::GAME_FORMAT_VERSION;
+use crate::game::op::LogEntryInput;
+use crate::game::save::{load_game, save_game};
+use crate::game::simulate::{genesis, parse_log, run_ticks};
+use crate::game::state::{GameState, StatKey};
+
+/// Authors the Changr parity fixture: an 8-slot clock, a
+/// character-scoped `control_level` stat (0..=5, default 0)
+/// carrying a 6-day lifetime, and an `apply_control` event whose
+/// effect set raises the level to 1 — the pilot's measured
+/// pairing (level 1, `reset_count = 6`).
+fn author_changr(root: &Path) {
+    let answer = script(
+        root,
+        vec![
+            ("project_init", init_inputs()),
+            (
+                "game_define",
+                json!({"id": "changr_fixture", "start_scene": "room"}),
+            ),
+            (
+                "clock_define",
+                json!({
+                    "slots": ["morning_1", "morning_2", "afternoon_1", "afternoon_2",
+                              "evening_1", "evening_2", "night_1", "night_2"],
+                    "days_per_week": 7,
+                }),
+            ),
+            (
+                "stat_define",
+                json!({
+                    "id": "control_level", "scope": "character", "kind": {"kind": "int"},
+                    "min": 0, "max": 5, "default": 0, "overflow": "clamp",
+                    "lifetime_days": 6,
+                }),
+            ),
+            (
+                "character_define",
+                json!({"id": "amy", "name_ref": "name_amy", "name_text": "Amy"}),
+            ),
+            (
+                "scene_define",
+                json!({"id": "room", "presentation": "room"}),
+            ),
+            (
+                "effect_set_define",
+                json!({
+                    "id": "apply_control_set",
+                    "atoms": [{
+                        "kind": "stat_set", "stat": "control_level", "character": "amy",
+                        "value": {"kind": "lit", "value": 1},
+                    }],
+                }),
+            ),
+            (
+                "trigger_define",
+                json!({
+                    "id": "apply_control",
+                    "kind": {"kind": "on_event", "event": "apply_control"},
+                    "effect_set": "apply_control_set",
+                }),
+            ),
+        ],
+    );
+    assert_eq!(answer.status, Status::Ok, "changr fixture: {}", answer.doc);
+    assert!(
+        validate_codes(root).is_empty(),
+        "changr fixture validates clean: {:?}",
+        validate_codes(root)
+    );
+}
+
+fn control_key() -> StatKey {
+    StatKey {
+        character: Some("amy".to_string()),
+        stat: "control_level".to_string(),
+    }
+}
+
+fn load_project(root: &Path) -> crate::store::Loaded {
+    crate::store::load(root)
+        .expect("project loads")
+        .expect("project exists")
+}
+
+fn event_log(entries: &[(u64, &str)], ticks: u64) -> Vec<Option<crate::game::simulate::LogEntry>> {
+    let inputs: Vec<LogEntryInput> = entries
+        .iter()
+        .map(|(tick, id)| LogEntryInput {
+            tick: *tick,
+            kind: "event".to_string(),
+            id: (*id).to_string(),
+            option: None,
+        })
+        .collect();
+    parse_log(&inputs, ticks).expect("log parses")
+}
+
+fn run_to(
+    project: &crate::model::Project,
+    state: &mut GameState,
+    log: &[Option<crate::game::simulate::LogEntry>],
+    target: u64,
+) -> (Vec<String>, Vec<String>) {
+    let mut events = Vec::new();
+    let mut chain = Vec::new();
+    run_ticks(project, state, log, target, &mut events, &mut chain).expect("run ticks");
+    (events, chain)
+}
+
+#[test]
+fn changr_decay_holds_five_rollovers_and_resets_on_the_sixth() {
+    let root = test_root("changr-decay");
+    author_changr(&root);
+    let loaded = load_project(&root);
+    let project = &loaded.project;
+    let log = event_log(&[(1, "apply_control")], 56);
+    let mut state = genesis(project).expect("genesis");
+    let key = control_key();
+    // Applied on tick 1 (day 1): level 1, counter armed at 6.
+    let (_events, _chain) = run_to(project, &mut state, &log, 1);
+    assert_eq!(state.stats[&key], 1);
+    assert_eq!(state.lifetimes[&key], 6);
+    // Five day rollovers (ticks 8..40) decrement to 1; the level
+    // holds through day 6 (tick 47 is the last tick of day 6).
+    let (_events, _chain) = run_to(project, &mut state, &log, 47);
+    assert_eq!(state.day, 6);
+    assert_eq!(state.stats[&key], 1, "level holds on day 6");
+    assert_eq!(state.lifetimes[&key], 1);
+    // The sixth rollover (tick 48, the first tick of day 7)
+    // hard-resets the stat to its default and disarms.
+    let (events, _chain) = run_to(project, &mut state, &log, 48);
+    assert_eq!(state.day, 7);
+    assert_eq!(state.stats[&key], 0, "level resets on day 7");
+    assert!(!state.lifetimes.contains_key(&key));
+    assert!(
+        events
+            .iter()
+            .any(|event| event.contains("tick 48") && event.contains("lifetime expired")),
+        "expiry is a trace event at the boundary tick: {events:?}"
+    );
+}
+
+#[test]
+fn changr_refresh_rearms_the_full_window() {
+    let root = test_root("changr-refresh");
+    author_changr(&root);
+    let loaded = load_project(&root);
+    let project = &loaded.project;
+    // Re-application on day 3 (tick 20) re-arms the counter.
+    let log = event_log(&[(1, "apply_control"), (20, "apply_control")], 72);
+    let mut state = genesis(project).expect("genesis");
+    let key = control_key();
+    let (_e, _c) = run_to(project, &mut state, &log, 20);
+    assert_eq!(state.stats[&key], 1);
+    assert_eq!(
+        state.lifetimes[&key], 6,
+        "refresh re-arms to the full window"
+    );
+    // Without the refresh the level would have died at tick 48;
+    // it now holds to tick 63 and resets at the tick-64 rollover.
+    let (_e, _c) = run_to(project, &mut state, &log, 63);
+    assert_eq!(state.stats[&key], 1);
+    let (_e, _c) = run_to(project, &mut state, &log, 64);
+    assert_eq!(state.stats[&key], 0);
+}
+
+#[test]
+fn changr_simulation_hash_chain_is_identical_across_three_runs() {
+    let root = test_root("changr-chain");
+    author_changr(&root);
+    let inputs = json!({
+        "run_seed": 7,
+        "ticks": 56,
+        "choice_log": [{"tick": 1, "kind": "event", "id": "apply_control"}],
+    });
+    let first = verb(&root, "game_simulate", inputs.clone());
+    assert_eq!(first.status, Status::Ok, "{}", first.doc);
+    for _ in 0..2 {
+        let again = verb(&root, "game_simulate", inputs.clone());
+        assert_eq!(again.doc, first.doc, "run evidence is byte-identical");
+    }
+    let chain = first.doc["chain"].as_array().expect("chain");
+    assert_eq!(chain.len(), 56);
+    assert_eq!(first.doc["final"]["day"], 8);
+}
+
+#[test]
+fn save_round_trip_across_the_expiry_tick_reproduces_the_chain() {
+    let root = test_root("changr-save");
+    author_changr(&root);
+    let loaded = load_project(&root);
+    let project = &loaded.project;
+    let log = event_log(&[(1, "apply_control")], 56);
+    // Uninterrupted reference run.
+    let mut reference = genesis(project).expect("genesis");
+    let (_e, reference_chain) = run_to(project, &mut reference, &log, 56);
+    // Interrupted run: save at tick 24 (mid-window), load,
+    // continue across the tick-48 expiry.
+    let mut state = genesis(project).expect("genesis");
+    let (_e, mut chain) = run_to(project, &mut state, &log, 24);
+    let text = save_game(project, &loaded.sha256, &state, 7).expect("save");
+    let saved = load_game(project, &loaded.sha256, &text).expect("load");
+    assert_eq!(saved.state, state, "the loaded state is the saved state");
+    assert_eq!(saved.run_seed, 7);
+    let mut resumed = saved.state;
+    let (_e, tail) = run_to(project, &mut resumed, &log, 56);
+    chain.extend(tail);
+    assert_eq!(chain, reference_chain, "the chain survives save/load");
+    assert_eq!(resumed, reference);
+}
+
+#[test]
+fn v1_save_loads_through_the_migration_step() {
+    let root = test_root("save-v1");
+    author_changr(&root);
+    let loaded = load_project(&root);
+    let project = &loaded.project;
+    let state = genesis(project).expect("genesis");
+    let text = save_game(project, &loaded.sha256, &state, 3).expect("save");
+    assert!(text.contains("format_version: 2"), "{text}");
+    // A v1 save of the same genesis state (no lifetimes armed,
+    // no offers — v1 could not carry either) loads through the
+    // named migration and yields the same state.
+    let v1 = text.replacen("format_version: 2", "format_version: 1", 1);
+    let saved = load_game(project, &loaded.sha256, &v1).expect("v1 save loads");
+    assert_eq!(saved.state, state);
+}
+
+#[test]
+fn v1_project_migrates_to_v2_on_the_first_game_op() {
+    let root = test_root("project-v1");
+    author_changr(&root);
+    let text = read(&root, PROJECT_FILE);
+    assert!(text.contains("format_version: 2"), "{text}");
+    let v1 = text.replacen("format_version: 2", "format_version: 1", 1);
+    std::fs::write(root.join(PROJECT_FILE), &v1).expect("rewrite as v1");
+    // The v1 text still validates: the sweep rebuilds it
+    // byte-identically (migration state is not op-authored).
+    assert!(
+        validate_codes(&root).is_empty(),
+        "v1 project validates clean: {:?}",
+        validate_codes(&root)
+    );
+    // The first game op to land migrates the stamp to the
+    // current version.
+    let answer = verb(
+        &root,
+        "flag_define",
+        json!({"id": "met_amy", "scope": "run"}),
+    );
+    assert_eq!(answer.status, Status::Ok, "{}", answer.doc);
+    let after = read(&root, PROJECT_FILE);
+    assert!(after.contains(&format!("format_version: {GAME_FORMAT_VERSION}")));
+    assert!(after.contains("met_amy"));
+    assert!(validate_codes(&root).is_empty());
+}
+
+#[test]
+fn adversarial_saves_refuse_typed_and_load_nothing() {
+    let root = test_root("save-adversarial");
+    author_changr(&root);
+    let loaded = load_project(&root);
+    let project = &loaded.project;
+    let state = genesis(project).expect("genesis");
+    let text = save_game(project, &loaded.sha256, &state, 7).expect("save");
+    // Newer format version.
+    let newer = text.replacen("format_version: 2", "format_version: 3", 1);
+    let err = load_game(project, &loaded.sha256, &newer).expect_err("newer format refuses");
+    assert_eq!(err.code(), "TG-GAME-SAVE-SCHEMA", "{err}");
+    // Newer authored schema version.
+    let schema = text.replacen("schema_version: 1", "schema_version: 2", 1);
+    let err = load_game(project, &loaded.sha256, &schema).expect_err("newer schema refuses");
+    assert_eq!(err.code(), "TG-GAME-SAVE-SCHEMA", "{err}");
+    // Bit-flipped state (day 1 -> day 2) breaks the state hash.
+    let flipped = text.replacen("day: 1", "day: 2", 1);
+    assert_ne!(flipped, text);
+    let err = load_game(project, &loaded.sha256, &flipped).expect_err("corrupt state refuses");
+    assert_eq!(err.code(), "TG-GAME-SAVE-SCHEMA", "{err}");
+    // A save does not cross projects.
+    let other_root = test_root("save-adversarial-other");
+    author_plain_vn(&other_root);
+    let other = load_project(&other_root);
+    let err = load_game(&other.project, &other.sha256, &text).expect_err("foreign save refuses");
+    assert_eq!(err.code(), "TG-AUTH-CONFLICT", "{err}");
+}
+
+#[test]
+fn tier_and_expression_gates_refuse_typed() {
+    let root = test_root("tier-expr-gates");
+    author_changr(&root);
+    // A well-formed tier definition lands.
+    let ok = verb(
+        &root,
+        "stat_tier_define",
+        json!({"stat": "control_level", "thresholds": [1, 3], "names": ["none", "light", "deep"]}),
+    );
+    assert_eq!(ok.status, Status::Ok, "{}", ok.doc);
+    // Non-ascending thresholds.
+    let bad = verb(
+        &root,
+        "stat_tier_define",
+        json!({"stat": "control_level", "thresholds": [3, 3], "names": ["a", "b", "c"]}),
+    );
+    assert_eq!(bad.doc["code"], "TG-GAME-TIER", "{}", bad.doc);
+    // Wrong band-name count.
+    let bad = verb(
+        &root,
+        "stat_tier_define",
+        json!({"stat": "control_level", "thresholds": [2], "names": ["only"]}),
+    );
+    assert_eq!(bad.doc["code"], "TG-GAME-TIER", "{}", bad.doc);
+    // Threshold outside (min, max].
+    let bad = verb(
+        &root,
+        "stat_tier_define",
+        json!({"stat": "control_level", "thresholds": [6], "names": ["a", "b"]}),
+    );
+    assert_eq!(bad.doc["code"], "TG-GAME-TIER", "{}", bad.doc);
+    // Tier over an unknown stat dangles.
+    let bad = verb(
+        &root,
+        "stat_tier_define",
+        json!({"stat": "nope", "thresholds": [1], "names": ["a", "b"]}),
+    );
+    assert_eq!(bad.doc["code"], "TG-AUTH-DANGLING", "{}", bad.doc);
+    // An expression naming an unknown stat.
+    let bad = verb(
+        &root,
+        "value_define",
+        json!({"id": "v_bad", "expr": {"kind": "stat", "stat": "nope"}}),
+    );
+    assert_eq!(bad.doc["code"], "TG-GAME-EXPR", "{}", bad.doc);
+    // A value naming itself: unknown at its own define time —
+    // reference cycles are unrepresentable.
+    let bad = verb(
+        &root,
+        "value_define",
+        json!({"id": "v_loop", "expr": {"kind": "value", "value": "v_loop"}}),
+    );
+    assert_eq!(bad.doc["code"], "TG-GAME-EXPR", "{}", bad.doc);
+    // A condition must be boolean.
+    let bad = verb(
+        &root,
+        "condition_define",
+        json!({"id": "c_bad", "expr": {"kind": "lit", "value": 1}}),
+    );
+    assert_eq!(bad.doc["code"], "TG-GAME-EXPR", "{}", bad.doc);
+    // A literal stat_set outside the stat's range refuses at
+    // define time.
+    let bad = verb(
+        &root,
+        "effect_set_define",
+        json!({
+            "id": "too_far",
+            "atoms": [{
+                "kind": "stat_set", "stat": "control_level", "character": "amy",
+                "value": {"kind": "lit", "value": 9},
+            }],
+        }),
+    );
+    assert_eq!(bad.doc["code"], "TG-AUTH-RANGE", "{}", bad.doc);
+    // An on_tick trigger naming a slot the clock does not have.
+    let bad = verb(
+        &root,
+        "trigger_define",
+        json!({
+            "id": "t_bad_slot",
+            "kind": {"kind": "on_tick", "slots": ["brunch"]},
+            "effect_set": "apply_control_set",
+        }),
+    );
+    assert_eq!(bad.doc["code"], "TG-AUTH-DANGLING", "{}", bad.doc);
+}
+
+#[test]
+fn enum_stat_shape_is_checked_at_define() {
+    let root = test_root("enum-shape");
+    let answer = script(
+        &root,
+        vec![
+            ("project_init", init_inputs()),
+            ("game_define", json!({"id": "enum_fixture"})),
+            (
+                "stat_define",
+                json!({
+                    "id": "mood", "scope": "game",
+                    "kind": {"kind": "enum", "values": ["calm", "tense", "wild"]},
+                    "min": 0, "max": 5, "default": 0, "overflow": "clamp",
+                }),
+            ),
+        ],
+    );
+    assert_eq!(answer.status, Status::Refused, "{}", answer.doc);
+    assert_eq!(answer.doc["code"], "TG-AUTH-RANGE", "{}", answer.doc);
+}
+
+#[test]
+fn stats_without_a_lifetime_never_decay() {
+    // The negative gate at the interpreter level: a stat with
+    // no lifetime field evaluates exactly as before the
+    // primitive — nothing arms, nothing decays, over any span.
+    let root = test_root("no-lifetime");
+    let answer = script(
+        &root,
+        vec![
+            ("project_init", init_inputs()),
+            (
+                "game_define",
+                json!({"id": "plain_fixture", "start_scene": "room"}),
+            ),
+            (
+                "clock_define",
+                json!({"slots": ["morning", "night"], "days_per_week": 7}),
+            ),
+            (
+                "stat_define",
+                json!({
+                    "id": "affection", "scope": "character", "kind": {"kind": "int"},
+                    "min": 0, "max": 10, "default": 0, "overflow": "clamp",
+                }),
+            ),
+            (
+                "character_define",
+                json!({"id": "amy", "name_ref": "name_amy", "name_text": "Amy"}),
+            ),
+            (
+                "scene_define",
+                json!({"id": "room", "presentation": "room"}),
+            ),
+            (
+                "effect_set_define",
+                json!({
+                    "id": "warm_set",
+                    "atoms": [{
+                        "kind": "stat_set", "stat": "affection", "character": "amy",
+                        "value": {"kind": "lit", "value": 4},
+                    }],
+                }),
+            ),
+            (
+                "trigger_define",
+                json!({
+                    "id": "warm",
+                    "kind": {"kind": "on_event", "event": "warm"},
+                    "effect_set": "warm_set",
+                }),
+            ),
+        ],
+    );
+    assert_eq!(answer.status, Status::Ok, "{}", answer.doc);
+    let loaded = load_project(&root);
+    let project = &loaded.project;
+    let log = event_log(&[(1, "warm")], 40);
+    let mut state = genesis(project).expect("genesis");
+    let key = StatKey {
+        character: Some("amy".to_string()),
+        stat: "affection".to_string(),
+    };
+    let (_e, _c) = run_to(project, &mut state, &log, 40);
+    assert_eq!(state.stats[&key], 4, "no lifetime, no decay");
+    assert!(state.lifetimes.is_empty());
 }

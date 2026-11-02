@@ -5,13 +5,23 @@
 //! bound lives here, and deny is final.
 
 use crate::decide::{Verdict, check_id};
-use crate::game::apply::{character_record, dialogue_record, save_schema_version_of, scene_record};
+use crate::game::apply::{
+    character_record, clock_record, condition_record, dialogue_record, effect_set_record,
+    flag_record, save_schema_version_of, scene_record, stat_record, tier_record, trigger_record,
+    value_record,
+};
 use crate::game::model::{GAME_FORMAT_VERSION, GAME_FORMAT_VERSION_FIRST, Game};
 use crate::game::op::{
-    CharacterDefineInput, DialogueLineDefineInput, GameDefineInput, GameOp, SceneDefineInput,
+    AtomInput, CharacterDefineInput, ClockDefineInput, ConditionDefineInput,
+    DialogueLineDefineInput, EffectSetDefineInput, ExprInput, FlagDefineInput, GameDefineInput,
+    GameOp, SceneDefineInput, StatDefineInput, StatKindInput, StatTierDefineInput,
+    TriggerDefineInput, TriggerKindInput, ValueDefineInput,
 };
 use crate::limits::{
-    GAME_CHARACTERS_MAX, GAME_CONTENT_TEXT_BYTES_MAX, GAME_DIALOGUE_LINES_MAX, GAME_SCENES_MAX,
+    GAME_CHARACTERS_MAX, GAME_CONDITIONS_MAX, GAME_CONTENT_TEXT_BYTES_MAX, GAME_DIALOGUE_LINES_MAX,
+    GAME_EFFECT_ATOMS_MAX, GAME_EFFECT_SETS_MAX, GAME_FLAGS_MAX, GAME_LIFETIME_DAYS_MAX,
+    GAME_SCENES_MAX, GAME_SLOTS_MAX, GAME_STATS_MAX, GAME_TIER_THRESHOLDS_MAX, GAME_TRIGGERS_MAX,
+    GAME_VALUES_MAX,
 };
 use crate::model::Project;
 use crate::refusal::{Refusal, RefusalClass, refuse};
@@ -80,7 +90,7 @@ fn check_prose_upsert(project: &Project, id: &str, text: &str) -> Result<(), Ref
 
 /// The game section, refusing when the project authors no game
 /// yet (every game op but `game_define` needs one).
-fn section(project: &Project) -> Result<&Game, Refusal> {
+pub(crate) fn section(project: &Project) -> Result<&Game, Refusal> {
     let Some(game) = &project.game else {
         return refuse(
             RefusalClass::UnknownTarget,
@@ -124,7 +134,457 @@ pub fn decide_game(project: &Project, op: &GameOp) -> Result<Verdict, Refusal> {
             section(project)?;
             decide_dialogue(project, inputs)
         }
+        GameOp::ClockDefine(inputs) => {
+            let game = section(project)?;
+            decide_clock(game, inputs)
+        }
+        GameOp::StatDefine(inputs) => {
+            let game = section(project)?;
+            decide_stat(game, inputs)
+        }
+        GameOp::StatTierDefine(inputs) => {
+            let game = section(project)?;
+            decide_tier(game, inputs)
+        }
+        GameOp::FlagDefine(inputs) => {
+            let game = section(project)?;
+            decide_flag(game, inputs)
+        }
+        GameOp::ValueDefine(inputs) => {
+            let game = section(project)?;
+            decide_value(game, inputs)
+        }
+        GameOp::ConditionDefine(inputs) => {
+            let game = section(project)?;
+            decide_condition(game, inputs)
+        }
+        GameOp::EffectSetDefine(inputs) => {
+            let game = section(project)?;
+            decide_effect_set(game, inputs)
+        }
+        GameOp::TriggerDefine(inputs) => {
+            let game = section(project)?;
+            decide_trigger(game, inputs)
+        }
     }
+}
+
+fn game_expr<T>(message: impl Into<String>) -> Result<T, Refusal> {
+    refuse(RefusalClass::GameExpr, message)
+}
+
+fn game_tier<T>(message: impl Into<String>) -> Result<T, Refusal> {
+    refuse(RefusalClass::GameTier, message)
+}
+
+/// The upsert law for a singleton or keyed record: identical is
+/// a no-op, differing is a conflict, absent applies (subject to
+/// the caller's count bound).
+fn upsert_verdict<T: PartialEq>(
+    existing: Option<&T>,
+    record: &T,
+    what: &str,
+    id: &str,
+    count: usize,
+    max: usize,
+) -> Result<Verdict, Refusal> {
+    match existing {
+        Some(found) if found == record => Ok(Verdict::NoOp),
+        Some(_) => conflict(format!(
+            "{what} '{id}' already exists with different inputs"
+        )),
+        None => {
+            check_count(count, max, what)?;
+            Ok(Verdict::Apply)
+        }
+    }
+}
+
+fn decide_clock(game: &Game, inputs: &ClockDefineInput) -> Result<Verdict, Refusal> {
+    if inputs.slots.is_empty() {
+        return refuse(RefusalClass::Malformed, "a clock needs at least one slot");
+    }
+    check_count(inputs.slots.len(), GAME_SLOTS_MAX, "clock slots")?;
+    let mut seen: Vec<&str> = Vec::new();
+    for slot in &inputs.slots {
+        check_id(slot, "clock slot")?;
+        if seen.contains(&slot.as_str()) {
+            return refuse(
+                RefusalClass::Malformed,
+                format!("clock slot '{slot}' is named twice"),
+            );
+        }
+        seen.push(slot);
+    }
+    if let Some(cycle) = inputs.days_per_week
+        && cycle == 0
+    {
+        return refuse(RefusalClass::Range, "days_per_week 0 is below 1");
+    }
+    if let Some(limit) = inputs.day_limit
+        && limit == 0
+    {
+        return refuse(RefusalClass::Range, "day_limit 0 is below 1");
+    }
+    let record = clock_record(inputs);
+    match &game.clock {
+        Some(existing) if *existing == record => Ok(Verdict::NoOp),
+        Some(_) => conflict("the game already defines a different clock"),
+        None => Ok(Verdict::Apply),
+    }
+}
+
+fn decide_stat(game: &Game, inputs: &StatDefineInput) -> Result<Verdict, Refusal> {
+    check_id(&inputs.id, "stat id")?;
+    if inputs.min > inputs.max {
+        return refuse(
+            RefusalClass::Range,
+            format!(
+                "stat '{}' has min {} above max {}",
+                inputs.id, inputs.min, inputs.max
+            ),
+        );
+    }
+    if inputs.default < inputs.min || inputs.default > inputs.max {
+        return refuse(
+            RefusalClass::Range,
+            format!(
+                "stat '{}' default {} is outside [{}, {}]",
+                inputs.id, inputs.default, inputs.min, inputs.max
+            ),
+        );
+    }
+    if let StatKindInput::Enum { values } = &inputs.kind {
+        if values.is_empty() {
+            return refuse(
+                RefusalClass::Malformed,
+                format!("enum stat '{}' names no values", inputs.id),
+            );
+        }
+        let mut seen: Vec<&str> = Vec::new();
+        for value in values {
+            check_id(value, "enum value")?;
+            if seen.contains(&value.as_str()) {
+                return refuse(
+                    RefusalClass::Malformed,
+                    format!("enum stat '{}' names value '{value}' twice", inputs.id),
+                );
+            }
+            seen.push(value);
+        }
+        let top = i64::try_from(values.len() - 1).unwrap_or(i64::MAX);
+        if inputs.min != 0 || inputs.max != top {
+            return refuse(
+                RefusalClass::Range,
+                format!(
+                    "enum stat '{}' must range over [0, {}] (its value count minus one)",
+                    inputs.id, top
+                ),
+            );
+        }
+    }
+    if let Some(days) = inputs.lifetime_days
+        && (days == 0 || days > GAME_LIFETIME_DAYS_MAX)
+    {
+        return refuse(
+            RefusalClass::Range,
+            format!(
+                "stat '{}' lifetime {days} days is outside 1..={GAME_LIFETIME_DAYS_MAX}",
+                inputs.id
+            ),
+        );
+    }
+    let record = stat_record(inputs);
+    upsert_verdict(
+        game.stat(&inputs.id),
+        &record,
+        "stat",
+        &inputs.id,
+        game.stats.len() + 1,
+        GAME_STATS_MAX,
+    )
+}
+
+fn decide_tier(game: &Game, inputs: &StatTierDefineInput) -> Result<Verdict, Refusal> {
+    let Some(stat) = game.stat(&inputs.stat) else {
+        return dangling("stat", &inputs.stat);
+    };
+    check_count(
+        inputs.thresholds.len(),
+        GAME_TIER_THRESHOLDS_MAX,
+        "tier thresholds",
+    )?;
+    for pair in inputs.thresholds.windows(2) {
+        if pair[1] <= pair[0] {
+            return game_tier(format!(
+                "tier thresholds for stat '{}' are not strictly ascending",
+                inputs.stat
+            ));
+        }
+    }
+    for threshold in &inputs.thresholds {
+        if *threshold <= stat.min || *threshold > stat.max {
+            return game_tier(format!(
+                "tier threshold {threshold} for stat '{}' is outside ({}, {}]",
+                inputs.stat, stat.min, stat.max
+            ));
+        }
+    }
+    if inputs.names.len() != inputs.thresholds.len() + 1 {
+        return game_tier(format!(
+            "tier for stat '{}' names {} bands for {} thresholds (bands are thresholds + 1)",
+            inputs.stat,
+            inputs.names.len(),
+            inputs.thresholds.len()
+        ));
+    }
+    for name in &inputs.names {
+        if name.trim().is_empty() {
+            return game_tier(format!(
+                "tier for stat '{}' carries an empty band name",
+                inputs.stat
+            ));
+        }
+    }
+    let record = tier_record(inputs);
+    upsert_verdict(
+        game.tier(&inputs.stat),
+        &record,
+        "tier definition",
+        &inputs.stat,
+        game.tiers.len() + 1,
+        GAME_STATS_MAX,
+    )
+}
+
+fn decide_flag(game: &Game, inputs: &FlagDefineInput) -> Result<Verdict, Refusal> {
+    check_id(&inputs.id, "flag id")?;
+    let record = flag_record(inputs);
+    upsert_verdict(
+        game.flag(&inputs.id),
+        &record,
+        "flag",
+        &inputs.id,
+        game.flags.len() + 1,
+        GAME_FLAGS_MAX,
+    )
+}
+
+fn decide_value(game: &Game, inputs: &ValueDefineInput) -> Result<Verdict, Refusal> {
+    check_id(&inputs.id, "value id")?;
+    let record = value_record(game, inputs)?;
+    upsert_verdict(
+        game.value(&inputs.id),
+        &record,
+        "value",
+        &inputs.id,
+        game.values.len() + 1,
+        GAME_VALUES_MAX,
+    )
+}
+
+fn decide_condition(game: &Game, inputs: &ConditionDefineInput) -> Result<Verdict, Refusal> {
+    check_id(&inputs.id, "condition id")?;
+    let record = condition_record(inputs)?;
+    if crate::game::expr::type_of(game, &record.expr)? != crate::game::model::ExprType::Bool {
+        return game_expr(format!(
+            "condition '{}' must be a boolean expression",
+            inputs.id
+        ));
+    }
+    upsert_verdict(
+        game.condition(&inputs.id),
+        &record,
+        "condition",
+        &inputs.id,
+        game.conditions.len() + 1,
+        GAME_CONDITIONS_MAX,
+    )
+}
+
+fn decide_effect_set(game: &Game, inputs: &EffectSetDefineInput) -> Result<Verdict, Refusal> {
+    check_id(&inputs.id, "effect set id")?;
+    check_count(inputs.atoms.len(), GAME_EFFECT_ATOMS_MAX, "effect atoms")?;
+    for atom in &inputs.atoms {
+        check_atom(game, atom)?;
+    }
+    let record = effect_set_record(inputs)?;
+    upsert_verdict(
+        game.effect_set(&inputs.id),
+        &record,
+        "effect set",
+        &inputs.id,
+        game.effect_sets.len() + 1,
+        GAME_EFFECT_SETS_MAX,
+    )
+}
+
+fn check_atom(game: &Game, atom: &AtomInput) -> Result<(), Refusal> {
+    match atom {
+        AtomInput::EmitEvent { event } => check_id(event, "event name"),
+        AtomInput::EnterScene { scene } => {
+            if game.scene(scene).is_none() {
+                return dangling("scene", scene);
+            }
+            Ok(())
+        }
+        AtomInput::FlagClear { flag } | AtomInput::FlagSet { flag } => {
+            if game.flag(flag).is_none() {
+                return dangling("flag", flag);
+            }
+            Ok(())
+        }
+        AtomInput::StatAdd {
+            stat,
+            character,
+            amount,
+        } => check_stat_atom(game, stat, character.as_deref(), amount, false),
+        AtomInput::StatSet {
+            stat,
+            character,
+            value,
+        } => check_stat_atom(game, stat, character.as_deref(), value, true),
+    }
+}
+
+fn check_stat_atom(
+    game: &Game,
+    stat_id: &str,
+    character: Option<&str>,
+    amount: &ExprInput,
+    is_set: bool,
+) -> Result<(), Refusal> {
+    let Some(stat) = game.stat(stat_id) else {
+        return dangling("stat", stat_id);
+    };
+    crate::game::expr::check_stat_target(game, stat_id, character)?;
+    let expr = crate::game::expr::expr_from_input(amount)?;
+    if crate::game::expr::type_of(game, &expr)? != crate::game::model::ExprType::Int {
+        return game_expr(format!(
+            "the amount for stat '{stat_id}' must be an integer expression"
+        ));
+    }
+    if is_set
+        && let ExprInput::Lit { value } = amount
+        && (*value < stat.min || *value > stat.max)
+    {
+        return refuse(
+            RefusalClass::Range,
+            format!(
+                "stat_set writes literal {value} to stat '{stat_id}', outside its range [{}, {}]",
+                stat.min, stat.max
+            ),
+        );
+    }
+    Ok(())
+}
+
+fn decide_trigger(game: &Game, inputs: &TriggerDefineInput) -> Result<Verdict, Refusal> {
+    check_id(&inputs.id, "trigger id")?;
+    if game.effect_set(&inputs.effect_set).is_none() {
+        return dangling("effect set", &inputs.effect_set);
+    }
+    if let Some(gate) = &inputs.gate
+        && game.condition(gate).is_none()
+    {
+        return dangling("gate condition", gate);
+    }
+    match &inputs.kind {
+        TriggerKindInput::OnEnterScene { scene } => {
+            if game.scene(scene).is_none() {
+                return dangling("scene", scene);
+            }
+        }
+        TriggerKindInput::OnEvent { event } => {
+            check_id(event, "event name")?;
+        }
+        TriggerKindInput::OnFlag { flag, .. } => {
+            if game.flag(flag).is_none() {
+                return dangling("flag", flag);
+            }
+        }
+        TriggerKindInput::OnThreshold {
+            stat,
+            character,
+            threshold,
+            ..
+        } => {
+            let Some(def) = game.stat(stat) else {
+                return dangling("stat", stat);
+            };
+            crate::game::expr::check_stat_target(game, stat, character.as_deref())?;
+            if *threshold < def.min || *threshold > def.max {
+                return refuse(
+                    RefusalClass::Range,
+                    format!(
+                        "threshold {threshold} for stat '{stat}' is outside its range [{}, {}]",
+                        def.min, def.max
+                    ),
+                );
+            }
+        }
+        TriggerKindInput::OnTick {
+            slots,
+            weekdays,
+            day_modulo,
+            exact_day,
+        } => {
+            let Some(clock) = &game.clock else {
+                return refuse(
+                    RefusalClass::Malformed,
+                    "an on_tick trigger needs a clock; run clock_define first",
+                );
+            };
+            if let Some(set) = slots {
+                for slot in set {
+                    if !clock.slots.contains(slot) {
+                        return dangling("clock slot", slot);
+                    }
+                }
+            }
+            if let Some(set) = weekdays {
+                let Some(cycle) = clock.days_per_week else {
+                    return refuse(
+                        RefusalClass::Malformed,
+                        "the trigger matches weekdays, but the clock names none",
+                    );
+                };
+                for day in set {
+                    if *day == 0 || *day > cycle {
+                        return refuse(
+                            RefusalClass::Range,
+                            format!("weekday {day} is outside 1..={cycle}"),
+                        );
+                    }
+                }
+            }
+            if let Some((period, remainder)) = day_modulo {
+                if *period == 0 {
+                    return refuse(RefusalClass::Range, "day_modulo period 0 is below 1");
+                }
+                if remainder >= period {
+                    return refuse(
+                        RefusalClass::Range,
+                        format!("day_modulo remainder {remainder} must be below period {period}"),
+                    );
+                }
+            }
+            if let Some(day) = exact_day
+                && *day < 1
+            {
+                return refuse(RefusalClass::Range, format!("exact_day {day} is below 1"));
+            }
+        }
+    }
+    let record = trigger_record(inputs);
+    upsert_verdict(
+        game.trigger(&inputs.id),
+        &record,
+        "trigger",
+        &inputs.id,
+        game.triggers.len() + 1,
+        GAME_TRIGGERS_MAX,
+    )
 }
 
 fn decide_game_define(project: &Project, inputs: &GameDefineInput) -> Result<Verdict, Refusal> {

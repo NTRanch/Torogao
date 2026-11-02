@@ -106,6 +106,14 @@ pub fn run_verb(
             };
             return run_requests(root, base, &[request]);
         }
+        // An implemented read-only game verb (game_simulate)
+        // goes straight to the query router; it is not in the
+        // rig manifest and must not fall into its refusal.
+        return match query(root, verb, inputs, resolve) {
+            Ok(answer) => answer,
+            Err(Failure::Refused(refusal)) => refused(verb, &refusal),
+            Err(Failure::Unloadable(refusal)) => unloadable(verb, &refusal),
+        };
     }
     match verb_spec(verb) {
         Some(spec) if spec.slice == crate::op::Slice::A1 && spec.mutating => {
@@ -157,6 +165,14 @@ fn query(
         doc,
     };
     match verb {
+        "game_simulate" => {
+            let input: crate::game::op::SimulateInput = parsed(verb, inputs)?;
+            let loaded = open(root)?;
+            let doc =
+                crate::game::simulate::run_simulation(&loaded.project, &loaded.sha256, &input)
+                    .map_err(Failure::Refused)?;
+            Ok(ok(doc))
+        }
         "project_inspect" => {
             parsed::<NoInputs>(verb, inputs)?;
             let loaded = open(root)?;

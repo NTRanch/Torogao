@@ -21,8 +21,10 @@ use crate::apply::step;
 use crate::codec::emit_project;
 use crate::decide::{Observed, check_id};
 use crate::game::op::{
-    CharacterDefineInput, DialogueLineDefineInput, GameDefineInput, GameOp, PresentationInput,
-    SceneDefineInput, StatInitialInput,
+    CharacterDefineInput, ClockDefineInput, ConditionDefineInput, DialogueLineDefineInput,
+    EffectSetDefineInput, FlagDefineInput, FlagScopeInput, GameDefineInput, GameOp,
+    PresentationInput, RepetitionInput, SceneDefineInput, StatInitialInput, StatTierDefineInput,
+    TriggerDefineInput, ValueDefineInput,
 };
 use crate::intake::sha256_hex;
 use crate::limits::{ASSETS_MAX, IMAGE_SIDE_MAX, PROVENANCE_TEXT_BYTES_MAX};
@@ -476,12 +478,13 @@ fn lattice_findings(project: &Project) -> Vec<Refusal> {
 }
 
 /// The game section's ops, in authoring (dependency) order:
-/// the section itself, then characters and scenes, then the
-/// dialogue chains in (scene, ordinal) order. The prose each
-/// prose-authoring op carries is read back from the stored
-/// sidecar entries; a reference with no entry synthesizes an
-/// empty text, which the gate refuses — and `game_findings`
-/// names the dangling reference itself.
+/// the section itself, then the clock, stats, tiers, flags,
+/// values, and conditions, then characters and scenes, then
+/// effect sets, then the dialogue chains in (scene, ordinal)
+/// order, then triggers. The prose each prose-authoring op carries is
+/// read back from the stored sidecar entries; a reference with
+/// no entry synthesizes an empty text, which the gate refuses —
+/// and `game_findings` names the dangling reference itself.
 fn game_ops(project: &Project) -> Vec<Op> {
     let mut ops = Vec::new();
     let Some(game) = &project.game else {
@@ -500,6 +503,47 @@ fn game_ops(project: &Project) -> Vec<Op> {
         start_scene: game.start_scene.clone(),
         save_schema_version: Some(game.save_schema_version),
     })));
+    if let Some(clock) = &game.clock {
+        ops.push(Op::Game(GameOp::ClockDefine(ClockDefineInput {
+            slots: clock.slots.clone(),
+            days_per_week: clock.days_per_week,
+            day_limit: clock.day_limit,
+        })));
+    }
+    for stat in &game.stats {
+        ops.push(Op::Game(GameOp::StatDefine(
+            crate::game::apply::stat_input_of(stat),
+        )));
+    }
+    for tier in &game.tiers {
+        ops.push(Op::Game(GameOp::StatTierDefine(StatTierDefineInput {
+            stat: tier.stat.clone(),
+            thresholds: tier.thresholds.clone(),
+            names: tier.names.clone(),
+        })));
+    }
+    for flag in &game.flags {
+        ops.push(Op::Game(GameOp::FlagDefine(FlagDefineInput {
+            id: flag.id.clone(),
+            scope: match flag.scope {
+                crate::game::model::FlagScope::Globals => FlagScopeInput::Globals,
+                crate::game::model::FlagScope::Run => FlagScopeInput::Run,
+            },
+            default: flag.default,
+        })));
+    }
+    for value in &game.values {
+        ops.push(Op::Game(GameOp::ValueDefine(ValueDefineInput {
+            id: value.id.clone(),
+            expr: crate::game::expr::expr_to_input(&value.expr),
+        })));
+    }
+    for condition in &game.conditions {
+        ops.push(Op::Game(GameOp::ConditionDefine(ConditionDefineInput {
+            id: condition.id.clone(),
+            expr: crate::game::expr::expr_to_input(&condition.expr),
+        })));
+    }
     for character in &game.characters {
         ops.push(Op::Game(GameOp::CharacterDefine(CharacterDefineInput {
             id: character.id.clone(),
@@ -525,6 +569,16 @@ fn game_ops(project: &Project) -> Vec<Op> {
             },
         })));
     }
+    for set in &game.effect_sets {
+        ops.push(Op::Game(GameOp::EffectSetDefine(EffectSetDefineInput {
+            id: set.id.clone(),
+            atoms: set
+                .atoms
+                .iter()
+                .map(crate::game::apply::atom_input_of)
+                .collect(),
+        })));
+    }
     let mut lines: Vec<&crate::game::model::DialogueLine> = game.dialogue.iter().collect();
     lines.sort_by(|a, b| (a.scene.as_str(), a.ordinal).cmp(&(b.scene.as_str(), b.ordinal)));
     for line in lines {
@@ -540,6 +594,20 @@ fn game_ops(project: &Project) -> Vec<Op> {
                 hook_expression: line.hook_expression.clone(),
             },
         )));
+    }
+    for trigger in &game.triggers {
+        ops.push(Op::Game(GameOp::TriggerDefine(TriggerDefineInput {
+            id: trigger.id.clone(),
+            kind: crate::game::apply::trigger_kind_input_of(&trigger.kind),
+            effect_set: trigger.effect_set.clone(),
+            gate: trigger.gate.clone(),
+            priority: trigger.priority,
+            repetition: match trigger.repetition {
+                crate::game::model::Repetition::Once => RepetitionInput::Once,
+                crate::game::model::Repetition::Repeat => RepetitionInput::Repeat,
+            },
+            cooldown_ticks: trigger.cooldown_ticks,
+        })));
     }
     ops
 }

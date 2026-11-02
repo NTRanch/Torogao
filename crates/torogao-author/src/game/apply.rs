@@ -7,11 +7,16 @@
 //! precedent).
 
 use crate::game::model::{
-    CharacterDef, DialogueLine, GAME_FORMAT_VERSION, Game, SceneDef, StatInitial,
+    Atom, CharacterDef, Clock, ConditionDef, DialogueLine, Direction, EffectSetDef, FlagDef,
+    FlagEdge, FlagScope, GAME_FORMAT_VERSION, Game, Lifetime, Overflow, Repetition, SceneDef,
+    StatDef, StatInitial, StatKind, StatScope, TierDef, TriggerDef, TriggerKind, ValueDef,
 };
 use crate::game::op::{
-    CharacterDefineInput, DialogueLineDefineInput, GameDefineInput, GameOp, PresentationInput,
-    SceneDefineInput,
+    AtomInput, CharacterDefineInput, ClockDefineInput, ConditionDefineInput,
+    DialogueLineDefineInput, DirectionInput, EffectSetDefineInput, FlagDefineInput, FlagEdgeInput,
+    FlagScopeInput, GameDefineInput, GameOp, OverflowInput, PresentationInput, RepetitionInput,
+    SceneDefineInput, StatDefineInput, StatKindInput, StatScopeInput, StatTierDefineInput,
+    TriggerDefineInput, TriggerKindInput, ValueDefineInput,
 };
 use crate::model::{Project, locate};
 use crate::refusal::Refusal;
@@ -77,6 +82,294 @@ pub(crate) fn dialogue_record(inputs: &DialogueLineDefineInput) -> DialogueLine 
     }
 }
 
+/// The clock record a `clock_define` produces.
+pub(crate) fn clock_record(inputs: &ClockDefineInput) -> Clock {
+    Clock {
+        slots: inputs.slots.clone(),
+        days_per_week: inputs.days_per_week,
+        day_limit: inputs.day_limit,
+    }
+}
+
+/// The stat record a `stat_define` produces.
+pub(crate) fn stat_record(inputs: &StatDefineInput) -> StatDef {
+    StatDef {
+        id: inputs.id.clone(),
+        scope: match inputs.scope {
+            StatScopeInput::Character => StatScope::Character,
+            StatScopeInput::Game => StatScope::Game,
+            StatScopeInput::Party => StatScope::Party,
+        },
+        kind: match &inputs.kind {
+            StatKindInput::Enum { values } => StatKind::Enum(values.clone()),
+            StatKindInput::Fixed => StatKind::Fixed,
+            StatKindInput::Int => StatKind::Int,
+        },
+        min: inputs.min,
+        max: inputs.max,
+        default: inputs.default,
+        overflow: match inputs.overflow {
+            OverflowInput::Clamp => Overflow::Clamp,
+            OverflowInput::Refuse => Overflow::Refuse,
+        },
+        lifetime: inputs.lifetime_days.map(|days| Lifetime { days }),
+    }
+}
+
+/// The input form of a stored stat (for the validation sweep).
+pub(crate) fn stat_input_of(stat: &StatDef) -> StatDefineInput {
+    StatDefineInput {
+        id: stat.id.clone(),
+        scope: match stat.scope {
+            StatScope::Character => StatScopeInput::Character,
+            StatScope::Game => StatScopeInput::Game,
+            StatScope::Party => StatScopeInput::Party,
+        },
+        kind: match &stat.kind {
+            StatKind::Enum(values) => StatKindInput::Enum {
+                values: values.clone(),
+            },
+            StatKind::Fixed => StatKindInput::Fixed,
+            StatKind::Int => StatKindInput::Int,
+        },
+        min: stat.min,
+        max: stat.max,
+        default: stat.default,
+        overflow: match stat.overflow {
+            Overflow::Clamp => OverflowInput::Clamp,
+            Overflow::Refuse => OverflowInput::Refuse,
+        },
+        lifetime_days: stat.lifetime.map(|lifetime| lifetime.days),
+    }
+}
+
+/// The tier record a `stat_tier_define` produces.
+pub(crate) fn tier_record(inputs: &StatTierDefineInput) -> TierDef {
+    TierDef {
+        stat: inputs.stat.clone(),
+        thresholds: inputs.thresholds.clone(),
+        names: inputs.names.clone(),
+    }
+}
+
+/// The flag record a `flag_define` produces.
+pub(crate) fn flag_record(inputs: &FlagDefineInput) -> FlagDef {
+    FlagDef {
+        id: inputs.id.clone(),
+        scope: match inputs.scope {
+            FlagScopeInput::Globals => FlagScope::Globals,
+            FlagScopeInput::Run => FlagScope::Run,
+        },
+        default: inputs.default,
+    }
+}
+
+/// The value record a `value_define` produces; the expression's
+/// inferred type is stored on the record.
+pub(crate) fn value_record(game: &Game, inputs: &ValueDefineInput) -> Result<ValueDef, Refusal> {
+    let expr = crate::game::expr::expr_from_input(&inputs.expr)?;
+    let value_type = crate::game::expr::type_of(game, &expr)?;
+    Ok(ValueDef {
+        id: inputs.id.clone(),
+        expr,
+        value_type,
+    })
+}
+
+/// The condition record a `condition_define` produces.
+pub(crate) fn condition_record(inputs: &ConditionDefineInput) -> Result<ConditionDef, Refusal> {
+    Ok(ConditionDef {
+        id: inputs.id.clone(),
+        expr: crate::game::expr::expr_from_input(&inputs.expr)?,
+    })
+}
+
+/// The stored atom an input atom converts to.
+pub(crate) fn atom_of(input: &AtomInput) -> Result<Atom, Refusal> {
+    Ok(match input {
+        AtomInput::EmitEvent { event } => Atom::EmitEvent {
+            event: event.clone(),
+        },
+        AtomInput::EnterScene { scene } => Atom::EnterScene {
+            scene: scene.clone(),
+        },
+        AtomInput::FlagClear { flag } => Atom::FlagClear { flag: flag.clone() },
+        AtomInput::FlagSet { flag } => Atom::FlagSet { flag: flag.clone() },
+        AtomInput::StatAdd {
+            stat,
+            character,
+            amount,
+        } => Atom::StatAdd {
+            character: character.clone(),
+            stat: stat.clone(),
+            amount: Box::new(crate::game::expr::expr_from_input(amount)?),
+        },
+        AtomInput::StatSet {
+            stat,
+            character,
+            value,
+        } => Atom::StatSet {
+            character: character.clone(),
+            stat: stat.clone(),
+            value: Box::new(crate::game::expr::expr_from_input(value)?),
+        },
+    })
+}
+
+/// The input form of a stored atom (for the validation sweep).
+pub(crate) fn atom_input_of(atom: &Atom) -> AtomInput {
+    match atom {
+        Atom::EmitEvent { event } => AtomInput::EmitEvent {
+            event: event.clone(),
+        },
+        Atom::EnterScene { scene } => AtomInput::EnterScene {
+            scene: scene.clone(),
+        },
+        Atom::FlagClear { flag } => AtomInput::FlagClear { flag: flag.clone() },
+        Atom::FlagSet { flag } => AtomInput::FlagSet { flag: flag.clone() },
+        Atom::StatAdd {
+            character,
+            stat,
+            amount,
+        } => AtomInput::StatAdd {
+            stat: stat.clone(),
+            character: character.clone(),
+            amount: crate::game::expr::expr_to_input(amount),
+        },
+        Atom::StatSet {
+            character,
+            stat,
+            value,
+        } => AtomInput::StatSet {
+            stat: stat.clone(),
+            character: character.clone(),
+            value: crate::game::expr::expr_to_input(value),
+        },
+    }
+}
+
+/// The effect-set record an `effect_set_define` produces.
+pub(crate) fn effect_set_record(inputs: &EffectSetDefineInput) -> Result<EffectSetDef, Refusal> {
+    let mut atoms = Vec::new();
+    for atom in &inputs.atoms {
+        atoms.push(atom_of(atom)?);
+    }
+    Ok(EffectSetDef {
+        id: inputs.id.clone(),
+        atoms,
+    })
+}
+
+/// The stored trigger kind an input kind converts to.
+pub(crate) fn trigger_kind_of(input: &TriggerKindInput) -> TriggerKind {
+    match input {
+        TriggerKindInput::OnEnterScene { scene } => TriggerKind::OnEnterScene {
+            scene: scene.clone(),
+        },
+        TriggerKindInput::OnEvent { event } => TriggerKind::OnEvent {
+            event: event.clone(),
+        },
+        TriggerKindInput::OnFlag { flag, edge } => TriggerKind::OnFlag {
+            flag: flag.clone(),
+            edge: match edge {
+                FlagEdgeInput::Both => FlagEdge::Both,
+                FlagEdgeInput::Falling => FlagEdge::Falling,
+                FlagEdgeInput::Rising => FlagEdge::Rising,
+            },
+        },
+        TriggerKindInput::OnThreshold {
+            stat,
+            character,
+            threshold,
+            direction,
+        } => TriggerKind::OnThreshold {
+            character: character.clone(),
+            stat: stat.clone(),
+            threshold: *threshold,
+            direction: match direction {
+                DirectionInput::Falling => Direction::Falling,
+                DirectionInput::Rising => Direction::Rising,
+            },
+        },
+        TriggerKindInput::OnTick {
+            slots,
+            weekdays,
+            day_modulo,
+            exact_day,
+        } => TriggerKind::OnTick {
+            slots: slots.clone(),
+            weekdays: weekdays.clone(),
+            day_modulo: *day_modulo,
+            exact_day: *exact_day,
+        },
+    }
+}
+
+/// The input form of a stored trigger kind (for the validation
+/// sweep).
+pub(crate) fn trigger_kind_input_of(kind: &TriggerKind) -> TriggerKindInput {
+    match kind {
+        TriggerKind::OnEnterScene { scene } => TriggerKindInput::OnEnterScene {
+            scene: scene.clone(),
+        },
+        TriggerKind::OnEvent { event } => TriggerKindInput::OnEvent {
+            event: event.clone(),
+        },
+        TriggerKind::OnFlag { flag, edge } => TriggerKindInput::OnFlag {
+            flag: flag.clone(),
+            edge: match edge {
+                FlagEdge::Both => FlagEdgeInput::Both,
+                FlagEdge::Falling => FlagEdgeInput::Falling,
+                FlagEdge::Rising => FlagEdgeInput::Rising,
+            },
+        },
+        TriggerKind::OnThreshold {
+            character,
+            stat,
+            threshold,
+            direction,
+        } => TriggerKindInput::OnThreshold {
+            stat: stat.clone(),
+            character: character.clone(),
+            threshold: *threshold,
+            direction: match direction {
+                Direction::Falling => DirectionInput::Falling,
+                Direction::Rising => DirectionInput::Rising,
+            },
+        },
+        TriggerKind::OnTick {
+            slots,
+            weekdays,
+            day_modulo,
+            exact_day,
+        } => TriggerKindInput::OnTick {
+            slots: slots.clone(),
+            weekdays: weekdays.clone(),
+            day_modulo: *day_modulo,
+            exact_day: *exact_day,
+        },
+    }
+}
+
+/// The trigger record a `trigger_define` produces. (The `offer`
+/// field joins the input record in slice P2-3; until then a
+/// stored offer cannot be authored through ops.)
+pub(crate) fn trigger_record(inputs: &TriggerDefineInput) -> TriggerDef {
+    TriggerDef {
+        id: inputs.id.clone(),
+        kind: trigger_kind_of(&inputs.kind),
+        gate: inputs.gate.clone(),
+        effect_set: inputs.effect_set.clone(),
+        priority: inputs.priority,
+        repetition: match inputs.repetition {
+            RepetitionInput::Once => Repetition::Once,
+            RepetitionInput::Repeat => Repetition::Repeat,
+        },
+        cooldown_ticks: inputs.cooldown_ticks,
+        offer: None,
+    }
+}
+
 /// The format migration, applied whenever a game op lands on a
 /// section written under an older game format: v1 → v2 changes
 /// no record (v2 only adds optional fields and the interpreter's
@@ -135,6 +428,45 @@ pub fn apply_game(project: &mut Project, op: &GameOp) -> Result<(), Refusal> {
             let game = game_mut(project);
             upsert(&mut game.dialogue, record, |l| &l.id);
             record_prose(project, &inputs.text_ref, &inputs.text);
+        }
+        GameOp::ClockDefine(inputs) => {
+            let game = game_mut(project);
+            game.clock = Some(clock_record(inputs));
+        }
+        GameOp::StatDefine(inputs) => {
+            let record = stat_record(inputs);
+            let game = game_mut(project);
+            upsert(&mut game.stats, record, |s| &s.id);
+        }
+        GameOp::StatTierDefine(inputs) => {
+            let record = tier_record(inputs);
+            let game = game_mut(project);
+            upsert(&mut game.tiers, record, |t| &t.stat);
+        }
+        GameOp::FlagDefine(inputs) => {
+            let record = flag_record(inputs);
+            let game = game_mut(project);
+            upsert(&mut game.flags, record, |f| &f.id);
+        }
+        GameOp::ValueDefine(inputs) => {
+            let game = game_mut(project);
+            let record = value_record(game, inputs)?;
+            upsert(&mut game.values, record, |v| &v.id);
+        }
+        GameOp::ConditionDefine(inputs) => {
+            let record = condition_record(inputs)?;
+            let game = game_mut(project);
+            upsert(&mut game.conditions, record, |c| &c.id);
+        }
+        GameOp::EffectSetDefine(inputs) => {
+            let record = effect_set_record(inputs)?;
+            let game = game_mut(project);
+            upsert(&mut game.effect_sets, record, |s| &s.id);
+        }
+        GameOp::TriggerDefine(inputs) => {
+            let record = trigger_record(inputs);
+            let game = game_mut(project);
+            upsert(&mut game.triggers, record, |t| &t.id);
         }
     }
     if let Some(game) = &mut project.game {
