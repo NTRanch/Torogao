@@ -15,7 +15,13 @@
 //! Slice A1 implements the project, art intake, parts & meshes,
 //! deformers, parameters (without `param_link_define`), and
 //! expressions groups: 30 of the manifest's 47 verbs
-//! ([`op::MANIFEST`]). The rest are refused by name.
+//! ([`op::MANIFEST`]). The G-10 completion adds nine more — the
+//! A2 physics records ([`physics`]), the A3 motion and audio
+//! records ([`motion`], [`audio`]), and `export_manifest`
+//! ([`export`]) — for 39 of 47; the remaining eight are
+//! descoped by recorded ruling ([`op::DESCOPED`]), so every
+//! manifest verb is implemented here or refused by name with
+//! its ruling and its capability's home.
 //!
 //! Slice G1 (Amendment 2, AUTH-G) adds the game family on the
 //! same pipeline: the five game-core verbs of
@@ -28,16 +34,20 @@
 #![deny(missing_docs)]
 
 pub mod apply;
+pub mod audio;
 pub mod census;
 pub mod codec;
 pub mod decide;
 pub mod diff;
+pub mod export;
 pub mod game;
 pub mod import;
 pub mod intake;
 pub mod limits;
 pub mod model;
+pub mod motion;
 pub mod op;
+pub mod physics;
 pub mod refusal;
 pub mod ron;
 pub mod session;

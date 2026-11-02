@@ -163,6 +163,15 @@ fn apply<'a>(
         | Op::GameDefine(_)
         | Op::GameSaveSchemaDefine(_)
         | Op::RngStreamDefine(_) => crate::game::apply_game(&mut project, op),
+        Op::PhysicsForcesSet(_) | Op::PhysicsGroupDefine(_) | Op::PhysicsGroupRemove(_) => {
+            crate::physics::apply_physics(&mut project, op)
+        }
+        Op::CurveFromSamples(_) | Op::CurveSet(_) | Op::MotionCreate(_) => {
+            crate::motion::apply_motion(&mut project, op)
+        }
+        Op::AudioBindSet(_) | Op::AudioTrackDefine(_) => {
+            crate::audio::apply_audio(&mut project, op)
+        }
         _ => apply_edit(&mut project, op)?,
     }
     Ok(project)

@@ -136,6 +136,16 @@ pub fn verb_spec(name: &str) -> Option<&'static VerbSpec> {
 /// Refuses a manifest verb this slice does not implement, or a
 /// name the manifest does not carry.
 pub fn refuse_unimplemented<T>(name: &str) -> Result<T, Refusal> {
+    if let Some(descope) = descope(name) {
+        return refuse(
+            RefusalClass::UnknownKind,
+            format!(
+                "verb '{name}' is descoped from the author surface by recorded ruling (G-10): {} \
+                 The capability lives in {}.",
+                descope.ruling, descope.home
+            ),
+        );
+    }
     match verb_spec(name) {
         Some(spec) => refuse(
             RefusalClass::UnknownKind,
@@ -149,6 +159,105 @@ pub fn refuse_unimplemented<T>(name: &str) -> Result<T, Refusal> {
             format!("verb '{name}' is not in the authoring manifest"),
         ),
     }
+}
+
+/// The rig-manifest verbs the G-10 completion implements in
+/// this crate (the A2 physics records, the A3 motion and audio
+/// records, and the export group's manifest read), alphabetical.
+/// Together with the A1 slice (30) these bring the author
+/// surface to 39 of 47; the remaining eight are descoped by
+/// recorded ruling ([`DESCOPED`]), so the census is 47/47
+/// accounted — implemented here, or named with its capability's
+/// home and the ruling that put it there.
+pub const RIGX_IMPLEMENTED: &[&str] = &[
+    "audio_bind_set",
+    "audio_track_define",
+    "curve_from_samples",
+    "curve_set",
+    "export_manifest",
+    "motion_create",
+    "physics_forces_set",
+    "physics_group_define",
+    "physics_group_remove",
+];
+
+/// A verb descoped from the author surface by recorded ruling:
+/// what it would have done, where the capability actually
+/// lives, and the ruling.
+#[derive(Clone, Copy, Debug)]
+pub struct Descope {
+    /// The verb name.
+    pub verb: &'static str,
+    /// Where the capability lives instead.
+    pub home: &'static str,
+    /// The ruling that descoped it.
+    pub ruling: &'static str,
+}
+
+/// The recorded descopes (G-10). A descoped verb is refused by
+/// name with its ruling and its capability's home — never
+/// silently, and never by pretending the act is an authored
+/// record when it is an engine or file act.
+pub const DESCOPED: &[Descope] = &[
+    Descope {
+        verb: "export_bundle",
+        home: "the CLI export face (torogao-cli), over the records this crate authors",
+        ruling: "bundle assembly writes a release layout — a file act, not an authored \
+                 record; the author crate authors records and emits none of its own files \
+                 beyond the project and its op log",
+    },
+    Descope {
+        verb: "export_native",
+        home: "torogao-format's INP writer, driven by the CLI export face",
+        ruling: "INP emission is the format crate's writer; the author crate references \
+                 torogao-format's records and must not grow a second writer (AUTH-D4's \
+                 no-second-moc3-writer rule, applied to INP)",
+    },
+    Descope {
+        verb: "motion_bake",
+        home: "torogao-engine's per-tick evaluation (parameters + physics + audio bindings)",
+        ruling: "a bake is an evaluation act over authored records, not an authored \
+                 record; torogao-author sits below the engine in the dependency order \
+                 (AUTH-D2) and must not grow an evaluator",
+    },
+    Descope {
+        verb: "param_link_define",
+        home: "no home: the construct it would author does not exist in the format",
+        ruling: "AUTH-D3: the verb exists iff RP2 adopts ParameterParameterBinding; \
+                 torogao-format carries no such construct (censused 2026-11-01), so the \
+                 brief's own condition is unmet and the verb is descoped until the \
+                 construct is adopted",
+    },
+    Descope {
+        verb: "physics_bake",
+        home: "torogao-engine's fixed-step physics integrator",
+        ruling: "a bake is an evaluation act over authored records, not an authored \
+                 record; torogao-author sits below the engine in the dependency order \
+                 (AUTH-D2) and must not grow an integrator",
+    },
+    Descope {
+        verb: "render_range_sweep",
+        home: "the CLI render tools over torogao-engine's rasterizer",
+        ruling: "rendering is an engine act producing golden images; the author crate \
+                 holds no renderer and its answers are documents, not images",
+    },
+    Descope {
+        verb: "render_still",
+        home: "the CLI render tools over torogao-engine's rasterizer",
+        ruling: "rendering is an engine act producing golden images; the author crate \
+                 holds no renderer and its answers are documents, not images",
+    },
+    Descope {
+        verb: "render_take",
+        home: "the CLI render/video tools over torogao-engine's rasterizer",
+        ruling: "rendering is an engine act producing frame sequences; the author crate \
+                 holds no renderer and its answers are documents, not images",
+    },
+];
+
+/// The descope record for a verb, if it is descoped.
+pub fn descope(name: &str) -> Option<&'static Descope> {
+    DESCOPED.iter().find(|entry| entry.verb == name)
 }
 
 // ---- input records ----------------------------------------------
@@ -558,8 +667,16 @@ pub struct ExpressionDefineInput {
 /// A mutating op: one verb with its typed inputs.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Op {
+    /// `audio_bind_set` (A3).
+    AudioBindSet(crate::audio::AudioBindSetInput),
+    /// `audio_track_define` (A3).
+    AudioTrackDefine(crate::audio::AudioTrackDefineInput),
     /// `clock_define` (AUTH-G).
     ClockDefine(crate::game::ClockDefineInput),
+    /// `curve_from_samples` (A3).
+    CurveFromSamples(crate::motion::CurveFromSamplesInput),
+    /// `curve_set` (A3).
+    CurveSet(crate::motion::CurveSetInput),
     /// `deformer_glue_set`.
     DeformerGlueSet(GlueInput),
     /// `deformer_parent_set`.
@@ -586,6 +703,8 @@ pub enum Op {
     KeyformSet(KeyformSetInput),
     /// `mesh_set`.
     MeshSet(MeshSetInput),
+    /// `motion_create` (A3).
+    MotionCreate(crate::motion::MotionCreateInput),
     /// `mesh_trim`.
     MeshTrim(PartInput),
     /// `param_define`.
@@ -610,6 +729,12 @@ pub enum Op {
     PartRemove(PartInput),
     /// `part_visibility_set`.
     PartVisibilitySet(VisibilityInput),
+    /// `physics_forces_set` (A2).
+    PhysicsForcesSet(crate::physics::PhysicsForcesSetInput),
+    /// `physics_group_define` (A2).
+    PhysicsGroupDefine(crate::physics::PhysicsGroupDefineInput),
+    /// `physics_group_remove` (A2).
+    PhysicsGroupRemove(IdInput),
     /// `project_import`.
     ProjectImport(ImportInput),
     /// `project_init`.
@@ -632,7 +757,11 @@ impl Op {
     /// non-A1 verbs are refused by name.
     pub fn parse(verb: &str, inputs: &Value) -> Result<Op, Refusal> {
         let op = match verb {
+            "audio_bind_set" => Op::AudioBindSet(typed(verb, inputs)?),
+            "audio_track_define" => Op::AudioTrackDefine(typed(verb, inputs)?),
             "clock_define" => Op::ClockDefine(typed(verb, inputs)?),
+            "curve_from_samples" => Op::CurveFromSamples(typed(verb, inputs)?),
+            "curve_set" => Op::CurveSet(typed(verb, inputs)?),
             "deformer_glue_set" => Op::DeformerGlueSet(typed(verb, inputs)?),
             "deformer_parent_set" => Op::DeformerParentSet(typed(verb, inputs)?),
             "deformer_remove" => Op::DeformerRemove(typed(verb, inputs)?),
@@ -647,6 +776,7 @@ impl Op {
             "keyform_set" => Op::KeyformSet(typed(verb, inputs)?),
             "mesh_set" => Op::MeshSet(typed(verb, inputs)?),
             "mesh_trim" => Op::MeshTrim(typed(verb, inputs)?),
+            "motion_create" => Op::MotionCreate(typed(verb, inputs)?),
             "param_define" => Op::ParamDefine(typed(verb, inputs)?),
             "param_grid_define" => Op::ParamGridDefine(typed(verb, inputs)?),
             "param_pose_default_set" => Op::ParamPoseDefaultSet(typed(verb, inputs)?),
@@ -658,6 +788,9 @@ impl Op {
             "part_parent_set" => Op::PartParentSet(typed(verb, inputs)?),
             "part_remove" => Op::PartRemove(typed(verb, inputs)?),
             "part_visibility_set" => Op::PartVisibilitySet(typed(verb, inputs)?),
+            "physics_forces_set" => Op::PhysicsForcesSet(typed(verb, inputs)?),
+            "physics_group_define" => Op::PhysicsGroupDefine(typed(verb, inputs)?),
+            "physics_group_remove" => Op::PhysicsGroupRemove(typed(verb, inputs)?),
             "project_import" => Op::ProjectImport(typed(verb, inputs)?),
             "project_init" => Op::ProjectInit(typed(verb, inputs)?),
             "rng_stream_define" => Op::RngStreamDefine(typed(verb, inputs)?),
@@ -669,7 +802,11 @@ impl Op {
     /// The canonical verb name.
     pub fn verb(&self) -> &'static str {
         match self {
+            Op::AudioBindSet(_) => "audio_bind_set",
+            Op::AudioTrackDefine(_) => "audio_track_define",
             Op::ClockDefine(_) => "clock_define",
+            Op::CurveFromSamples(_) => "curve_from_samples",
+            Op::CurveSet(_) => "curve_set",
             Op::DeformerGlueSet(_) => "deformer_glue_set",
             Op::DeformerParentSet(_) => "deformer_parent_set",
             Op::DeformerRemove(_) => "deformer_remove",
@@ -684,6 +821,7 @@ impl Op {
             Op::KeyformSet(_) => "keyform_set",
             Op::MeshSet(_) => "mesh_set",
             Op::MeshTrim(_) => "mesh_trim",
+            Op::MotionCreate(_) => "motion_create",
             Op::ParamDefine(_) => "param_define",
             Op::ParamGridDefine(_) => "param_grid_define",
             Op::ParamPoseDefaultSet(_) => "param_pose_default_set",
@@ -695,6 +833,9 @@ impl Op {
             Op::PartParentSet(_) => "part_parent_set",
             Op::PartRemove(_) => "part_remove",
             Op::PartVisibilitySet(_) => "part_visibility_set",
+            Op::PhysicsForcesSet(_) => "physics_forces_set",
+            Op::PhysicsGroupDefine(_) => "physics_group_define",
+            Op::PhysicsGroupRemove(_) => "physics_group_remove",
             Op::ProjectImport(_) => "project_import",
             Op::ProjectInit(_) => "project_init",
             Op::RngStreamDefine(_) => "rng_stream_define",
@@ -704,7 +845,11 @@ impl Op {
     /// The normalized inputs as JSON (what the op log records).
     pub fn inputs_json(&self) -> Result<Value, Refusal> {
         let result = match self {
+            Op::AudioBindSet(inputs) => serde_json::to_value(inputs),
+            Op::AudioTrackDefine(inputs) => serde_json::to_value(inputs),
             Op::ClockDefine(inputs) => serde_json::to_value(inputs),
+            Op::CurveFromSamples(inputs) => serde_json::to_value(inputs),
+            Op::CurveSet(inputs) => serde_json::to_value(inputs),
             Op::DeformerGlueSet(inputs) => serde_json::to_value(inputs),
             Op::DeformerParentSet(inputs) => serde_json::to_value(inputs),
             Op::DeformerRemove(inputs) => serde_json::to_value(inputs),
@@ -719,6 +864,7 @@ impl Op {
             Op::KeyformSet(inputs) => serde_json::to_value(inputs),
             Op::MeshSet(inputs) => serde_json::to_value(inputs),
             Op::MeshTrim(inputs) => serde_json::to_value(inputs),
+            Op::MotionCreate(inputs) => serde_json::to_value(inputs),
             Op::ParamDefine(inputs) => serde_json::to_value(inputs),
             Op::ParamGridDefine(inputs) => serde_json::to_value(inputs),
             Op::ParamPoseDefaultSet(inputs) => serde_json::to_value(inputs),
@@ -730,6 +876,9 @@ impl Op {
             Op::PartParentSet(inputs) => serde_json::to_value(inputs),
             Op::PartRemove(inputs) => serde_json::to_value(inputs),
             Op::PartVisibilitySet(inputs) => serde_json::to_value(inputs),
+            Op::PhysicsForcesSet(inputs) => serde_json::to_value(inputs),
+            Op::PhysicsGroupDefine(inputs) => serde_json::to_value(inputs),
+            Op::PhysicsGroupRemove(inputs) => serde_json::to_value(inputs),
             Op::ProjectImport(inputs) => serde_json::to_value(inputs),
             Op::ProjectInit(inputs) => serde_json::to_value(inputs),
             Op::RngStreamDefine(inputs) => serde_json::to_value(inputs),
@@ -786,5 +935,42 @@ mod tests {
         assert_eq!(err.code(), "TG-AUTH-UNKNOWN-KIND");
         let err = Op::parse("no_such_verb", &json!({})).expect_err("x");
         assert_eq!(err.code(), "TG-AUTH-UNKNOWN-KIND");
+    }
+
+    #[test]
+    fn census_is_47_accounted_implemented_or_descoped() {
+        use super::{DESCOPED, RIGX_IMPLEMENTED, descope, verb_spec};
+        // Every RIGX verb is a real manifest verb, not A1, and
+        // not descoped; every descoped verb is a real manifest
+        // verb, not A1, and not implemented.
+        for name in RIGX_IMPLEMENTED {
+            let spec = verb_spec(name).expect("rigx verb in manifest");
+            assert_ne!(spec.slice, Slice::A1, "{name}");
+            assert!(descope(name).is_none(), "{name} both ways");
+        }
+        for entry in DESCOPED {
+            let spec = verb_spec(entry.verb).expect("descoped verb in manifest");
+            assert_ne!(spec.slice, Slice::A1, "{}", entry.verb);
+            assert!(!RIGX_IMPLEMENTED.contains(&entry.verb), "{}", entry.verb);
+        }
+        // The three sets partition the manifest: 30 + 9 + 8 = 47.
+        let a1 = MANIFEST
+            .iter()
+            .filter(|spec| spec.slice == Slice::A1)
+            .count();
+        assert_eq!(a1 + RIGX_IMPLEMENTED.len() + DESCOPED.len(), MANIFEST.len());
+        for spec in MANIFEST {
+            let accounted = spec.slice == Slice::A1
+                || RIGX_IMPLEMENTED.contains(&spec.name)
+                || descope(spec.name).is_some();
+            assert!(accounted, "{} unaccounted", spec.name);
+        }
+        // Descope refusals name the ruling, not a slice.
+        let err = Op::parse("render_still", &json!({})).expect_err("x");
+        assert!(
+            err.message.contains("descoped"),
+            "descope refusal: {}",
+            err.message
+        );
     }
 }

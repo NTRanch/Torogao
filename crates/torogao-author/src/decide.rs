@@ -98,6 +98,13 @@ pub fn decide(state: Option<&Project>, op: &Op, observed: &Observed) -> Result<V
         | Op::GameDefine(_)
         | Op::GameSaveSchemaDefine(_)
         | Op::RngStreamDefine(_) => crate::game::decide_game(project, op),
+        Op::PhysicsForcesSet(_) | Op::PhysicsGroupDefine(_) | Op::PhysicsGroupRemove(_) => {
+            crate::physics::decide_physics(project, op)
+        }
+        Op::CurveFromSamples(_) | Op::CurveSet(_) | Op::MotionCreate(_) => {
+            crate::motion::decide_motion(project, op)
+        }
+        Op::AudioBindSet(_) | Op::AudioTrackDefine(_) => crate::audio::decide_audio(project, op),
         _ => decide_rig(project, op),
     }
 }
