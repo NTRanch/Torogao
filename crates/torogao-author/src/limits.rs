@@ -57,3 +57,24 @@ pub const VARIANT_SETS_MAX: usize = 256;
 /// in squared model units. Model coordinates are pixels at the
 /// art's resolution, so this is far below any painted feature.
 pub const TRIANGLE_AREA2_MIN: f64 = 1e-9;
+
+// ---- AUTH-G game family (Amendment 2) ---------------------------
+
+/// Maximum inputs in one `game_simulate` choice log.
+pub const CHOICE_LOG_INPUTS_MAX: usize = 100_000;
+/// Maximum named slots in one game clock (the tick is one slot).
+pub const CLOCK_SLOTS_MAX: usize = 32;
+/// Maximum days per week a clock may name (fictional weeks get
+/// headroom over seven).
+pub const CLOCK_WEEKDAYS_MAX: u32 = 14;
+/// Maximum day limit a clock may declare, in days.
+pub const DAY_LIMIT_MAX: u32 = 1_000_000;
+/// Maximum named RNG streams per project.
+pub const RNG_STREAMS_MAX: usize = 64;
+/// Maximum save slots a schema may declare (Amendment 2 §G3.3:
+/// the schema's own bound is 1..=64).
+pub const SAVE_SLOTS_MAX: u32 = 64;
+/// Maximum state fields in the canonical game-state field set
+/// (see `game::STATE_FIELDS`); the partition sweep is an exact
+/// cover of that set, so partition lists are self-bounding.
+pub const STATE_FIELDS_MAX: usize = 16;

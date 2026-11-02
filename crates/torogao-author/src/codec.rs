@@ -10,10 +10,12 @@
 //! are `TG-AUTH-MALFORMED`.
 
 use crate::model::{
-    ArtBind, Asset, AssetKind, Blend, Clip, Completion, Consent, Deformer, DeformerKind, Draw,
-    Expression, ExpressionValue, ExpressionVisibility, Glue, Header, Keyform, Keyforms, Mesh,
-    MeshForm, PROJECT_FORMAT, PROJECT_FORMAT_VERSION, Parameter, Part, Point, PoseEntry, Project,
-    Provenance, Rect, Rotation, RotationForm, Stamp, VariantSet, Warp, WarpForm,
+    ArtBind, Asset, AssetKind, AssignValue, Blend, Clip, Completion, Consent, Deformer,
+    DeformerKind, Draw, Expression, ExpressionValue, ExpressionVisibility, GameClock, GameDef,
+    Glue, Header, InitialAssignment, Keyform, Keyforms, Mesh, MeshForm, Migration, PROJECT_FORMAT,
+    PROJECT_FORMAT_VERSION, Parameter, Part, Point, PoseEntry, Project, Provenance, Rect,
+    RngStream, Rotation, RotationForm, SaveContextPolicy, SaveSchema, SlotHolds, Stamp, VariantSet,
+    Warp, WarpForm,
 };
 use crate::refusal::{Refusal, RefusalClass, refuse};
 use crate::ron::{Ron, emit_document, parse_document};
@@ -86,6 +88,7 @@ fn project_to_ron(project: &Project) -> Ron {
                 "assets",
                 Ron::List(project.assets.iter().map(asset_to_ron).collect()),
             ),
+            ("clock", opt(project.clock.as_ref(), clock_to_ron)),
             (
                 "deformers",
                 Ron::List(project.deformers.iter().map(deformer_to_ron).collect()),
@@ -94,6 +97,7 @@ fn project_to_ron(project: &Project) -> Ron {
                 "expressions",
                 Ron::List(project.expressions.iter().map(expression_to_ron).collect()),
             ),
+            ("game", opt(project.game.as_ref(), game_to_ron)),
             (
                 "glues",
                 Ron::List(project.glues.iter().map(glue_to_ron).collect()),
@@ -109,6 +113,14 @@ fn project_to_ron(project: &Project) -> Ron {
             (
                 "pose",
                 Ron::List(project.pose.iter().map(pose_to_ron).collect()),
+            ),
+            (
+                "rng_streams",
+                Ron::List(project.rng_streams.iter().map(rng_stream_to_ron).collect()),
+            ),
+            (
+                "save_schema",
+                opt(project.save_schema.as_ref(), save_schema_to_ron),
             ),
             (
                 "variant_sets",
@@ -497,6 +509,130 @@ fn variant_set_to_ron(set: &VariantSet) -> Ron {
     )
 }
 
+fn clock_to_ron(clock: &GameClock) -> Ron {
+    record(
+        "GameClock",
+        vec![
+            (
+                "day_limit",
+                opt(clock.day_limit.as_ref(), |n| Ron::Int(i64::from(*n))),
+            ),
+            (
+                "days_per_week",
+                opt(clock.days_per_week.as_ref(), |n| Ron::Int(i64::from(*n))),
+            ),
+            ("slots", texts(&clock.slots)),
+            ("weekdays", texts(&clock.weekdays)),
+        ],
+    )
+}
+
+fn assign_to_ron(value: &AssignValue) -> Ron {
+    match value {
+        AssignValue::Int(n) => Ron::Int(*n),
+        AssignValue::Bool(b) => Ron::Bool(*b),
+    }
+}
+
+fn policy_to_ron(policy: &SaveContextPolicy) -> Ron {
+    let (kind, scenes) = match policy {
+        SaveContextPolicy::AnyTickBoundary => ("AnyTickBoundary", Vec::new()),
+        SaveContextPolicy::SceneBoundary => ("SceneBoundary", Vec::new()),
+        SaveContextPolicy::SafeScenesOnly(scenes) => ("SafeScenesOnly", scenes.clone()),
+    };
+    record(
+        "SavePolicy",
+        vec![
+            ("kind", Ron::Ident(kind.to_string())),
+            ("scenes", texts(&scenes)),
+        ],
+    )
+}
+
+fn game_to_ron(game: &GameDef) -> Ron {
+    record(
+        "GameDef",
+        vec![
+            ("id", text(&game.id)),
+            (
+                "alter_ego_veto",
+                opt(game.alter_ego_veto.as_ref(), |veto| text(veto)),
+            ),
+            (
+                "initial",
+                Ron::List(
+                    game.initial
+                        .iter()
+                        .map(|assignment| {
+                            record(
+                                "InitialAssignment",
+                                vec![
+                                    ("target", text(&assignment.target)),
+                                    ("value", assign_to_ron(&assignment.value)),
+                                ],
+                            )
+                        })
+                        .collect(),
+                ),
+            ),
+            ("save_policy", opt(game.save_policy.as_ref(), policy_to_ron)),
+            ("start_scene", text(&game.start_scene)),
+        ],
+    )
+}
+
+fn rng_stream_to_ron(stream: &RngStream) -> Ron {
+    record(
+        "RngStream",
+        vec![
+            ("id", text(&stream.id)),
+            ("algorithm", text(&stream.algorithm)),
+        ],
+    )
+}
+
+fn save_schema_to_ron(schema: &SaveSchema) -> Ron {
+    record(
+        "SaveSchema",
+        vec![
+            ("globals_fields", texts(&schema.globals_fields)),
+            ("hash_algorithm", text(&schema.hash_algorithm)),
+            (
+                "migrations",
+                Ron::List(
+                    schema
+                        .migrations
+                        .iter()
+                        .map(|step| {
+                            record(
+                                "Migration",
+                                vec![
+                                    ("from", Ron::Int(i64::from(step.from))),
+                                    ("name", text(&step.name)),
+                                ],
+                            )
+                        })
+                        .collect(),
+                ),
+            ),
+            ("policy", policy_to_ron(&schema.policy)),
+            ("slot_fields", texts(&schema.slot_fields)),
+            (
+                "slot_holds",
+                Ron::Ident(
+                    match schema.slot_holds {
+                        SlotHolds::OneRun => "OneRun",
+                        SlotHolds::ChapterList => "ChapterList",
+                    }
+                    .to_string(),
+                ),
+            ),
+            ("slots", Ron::Int(i64::from(schema.slots))),
+            ("version", Ron::Int(i64::from(schema.version))),
+        ],
+    )
+}
+
 // ---- parsing helpers --------------------------------------------
 
 /// A struct record being consumed field by field.
@@ -528,6 +664,16 @@ impl Fields {
                 format!("{} record lacks field '{key}'", self.kind),
             ),
         }
+    }
+
+    /// Takes an optional field: `None` when absent (used for the
+    /// project record's AUTH-G sections, which pre-G1 projects
+    /// do not carry).
+    fn maybe(&mut self, key: &str) -> Option<Ron> {
+        self.items
+            .iter()
+            .position(|(name, _)| name == key)
+            .map(|index| self.items.remove(index).1)
     }
 
     fn done(self) -> Result<(), Refusal> {
@@ -673,29 +819,181 @@ fn sorted_unique<T>(
 
 // ---- parsing ----------------------------------------------------
 
+/// Unwraps an optional project-section field: absent (a pre-G1
+/// project) and `None` both map to `None`.
+fn section<T>(
+    fields: &mut Fields,
+    key: &str,
+    convert: impl Fn(Ron) -> Result<T, Refusal>,
+) -> Result<Option<T>, Refusal> {
+    match fields.maybe(key) {
+        None => Ok(None),
+        Some(Ron::Opt(None)) => Ok(None),
+        Some(Ron::Opt(Some(inner))) => convert(*inner).map(Some),
+        Some(_) => wrong_type(key, "None or Some(...)"),
+    }
+}
+
 fn project_from_ron(value: Ron) -> Result<Project, Refusal> {
     let mut fields = open(value, "Project")?;
     let header = header_from_ron(fields.take("header")?)?;
     let assets = collect(fields.list("assets")?, asset_from_ron)?;
+    let clock = section(&mut fields, "clock", clock_from_ron)?;
     let deformers = collect(fields.list("deformers")?, deformer_from_ron)?;
     let expressions = collect(fields.list("expressions")?, expression_from_ron)?;
+    let game = section(&mut fields, "game", game_from_ron)?;
     let glues = collect(fields.list("glues")?, glue_from_ron)?;
     let parameters = collect(fields.list("parameters")?, parameter_from_ron)?;
     let parts = collect(fields.list("parts")?, part_from_ron)?;
     let pose = collect(fields.list("pose")?, pose_from_ron)?;
+    let rng_streams = match fields.maybe("rng_streams") {
+        None => Vec::new(),
+        Some(Ron::List(items)) => collect(items, rng_stream_from_ron)?,
+        Some(_) => return wrong_type("rng_streams", "a list"),
+    };
+    let save_schema = section(&mut fields, "save_schema", save_schema_from_ron)?;
     let variant_sets = collect(fields.list("variant_sets")?, variant_set_from_ron)?;
     fields.done()?;
     Ok(Project {
         header,
         assets: sorted_unique(assets, "assets", |item| &item.id)?,
+        clock,
         deformers: sorted_unique(deformers, "deformers", |item| &item.id)?,
         expressions: sorted_unique(expressions, "expressions", |item| &item.id)?,
+        game,
         glues: sorted_unique(glues, "glues", |item| &item.id)?,
         parameters: sorted_unique(parameters, "parameters", |item| &item.id)?,
         parts: sorted_unique(parts, "parts", |item| &item.id)?,
         pose: sorted_unique(pose, "pose entries", |item| &item.parameter)?,
+        rng_streams: sorted_unique(rng_streams, "rng streams", |item| &item.id)?,
+        save_schema,
         variant_sets: sorted_unique(variant_sets, "variant sets", |item| &item.id)?,
     })
+}
+
+fn opt_u32(fields: &mut Fields, key: &str) -> Result<Option<u32>, Refusal> {
+    match fields.option(key)? {
+        Some(value) => Ok(Some(as_u32(value, key)?)),
+        None => Ok(None),
+    }
+}
+
+fn opt_string(fields: &mut Fields, key: &str) -> Result<Option<String>, Refusal> {
+    match fields.option(key)? {
+        Some(value) => Ok(Some(as_string(value, key)?)),
+        None => Ok(None),
+    }
+}
+
+fn clock_from_ron(value: Ron) -> Result<GameClock, Refusal> {
+    let mut fields = open(value, "GameClock")?;
+    let clock = GameClock {
+        day_limit: opt_u32(&mut fields, "day_limit")?,
+        days_per_week: opt_u32(&mut fields, "days_per_week")?,
+        slots: as_strings(fields.list("slots")?, "slots")?,
+        weekdays: as_strings(fields.list("weekdays")?, "weekdays")?,
+    };
+    fields.done()?;
+    Ok(clock)
+}
+
+fn assign_from_ron(value: Ron, key: &str) -> Result<AssignValue, Refusal> {
+    match value {
+        Ron::Int(n) => Ok(AssignValue::Int(n)),
+        Ron::Bool(b) => Ok(AssignValue::Bool(b)),
+        _ => wrong_type(key, "an integer or a boolean"),
+    }
+}
+
+fn policy_from_ron(value: Ron) -> Result<SaveContextPolicy, Refusal> {
+    let mut fields = open(value, "SavePolicy")?;
+    let kind = fields.ident("kind")?;
+    let mut scenes = as_strings(fields.list("scenes")?, "scenes")?;
+    scenes.sort();
+    fields.done()?;
+    match kind.as_str() {
+        "AnyTickBoundary" => Ok(SaveContextPolicy::AnyTickBoundary),
+        "SceneBoundary" => Ok(SaveContextPolicy::SceneBoundary),
+        "SafeScenesOnly" => Ok(SaveContextPolicy::SafeScenesOnly(scenes)),
+        other => unknown_variant("kind", other),
+    }
+}
+
+fn game_from_ron(value: Ron) -> Result<GameDef, Refusal> {
+    let mut fields = open(value, "GameDef")?;
+    let id = fields.string("id")?;
+    let alter_ego_veto = opt_string(&mut fields, "alter_ego_veto")?;
+    let initial = collect(fields.list("initial")?, |item| {
+        let mut assignment = open(item, "InitialAssignment")?;
+        let parsed = InitialAssignment {
+            target: assignment.string("target")?,
+            value: assign_from_ron(assignment.take("value")?, "value")?,
+        };
+        assignment.done()?;
+        Ok(parsed)
+    })?;
+    let save_policy = match fields.option("save_policy")? {
+        Some(inner) => Some(policy_from_ron(inner)?),
+        None => None,
+    };
+    let start_scene = fields.string("start_scene")?;
+    fields.done()?;
+    let mut initial = initial;
+    initial.sort_by(|a, b| a.target.cmp(&b.target));
+    Ok(GameDef {
+        id,
+        start_scene,
+        initial,
+        alter_ego_veto,
+        save_policy,
+    })
+}
+
+fn rng_stream_from_ron(value: Ron) -> Result<RngStream, Refusal> {
+    let mut fields = open(value, "RngStream")?;
+    let stream = RngStream {
+        id: fields.string("id")?,
+        algorithm: fields.string("algorithm")?,
+    };
+    fields.done()?;
+    Ok(stream)
+}
+
+fn save_schema_from_ron(value: Ron) -> Result<SaveSchema, Refusal> {
+    let mut fields = open(value, "SaveSchema")?;
+    let mut globals_fields = as_strings(fields.list("globals_fields")?, "globals_fields")?;
+    globals_fields.sort();
+    let hash_algorithm = fields.string("hash_algorithm")?;
+    let mut migrations = collect(fields.list("migrations")?, |item| {
+        let mut step = open(item, "Migration")?;
+        let parsed = Migration {
+            from: step.uint("from")?,
+            name: step.string("name")?,
+        };
+        step.done()?;
+        Ok(parsed)
+    })?;
+    migrations.sort_by_key(|step| step.from);
+    let policy = policy_from_ron(fields.take("policy")?)?;
+    let mut slot_fields = as_strings(fields.list("slot_fields")?, "slot_fields")?;
+    slot_fields.sort();
+    let slot_holds = match fields.ident("slot_holds")?.as_str() {
+        "OneRun" => SlotHolds::OneRun,
+        "ChapterList" => SlotHolds::ChapterList,
+        other => return unknown_variant("slot_holds", other),
+    };
+    let schema = SaveSchema {
+        version: fields.uint("version")?,
+        slots: fields.uint("slots")?,
+        slot_holds,
+        slot_fields,
+        globals_fields,
+        hash_algorithm,
+        policy,
+        migrations,
+    };
+    fields.done()?;
+    Ok(schema)
 }
 
 fn collect<T>(

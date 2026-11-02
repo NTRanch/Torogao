@@ -92,20 +92,35 @@ pub fn run_verb(
     inputs: &Value,
     resolve: &dyn Fn(&str) -> Result<PathBuf, Refusal>,
 ) -> Answer {
-    match verb_spec(verb) {
-        Some(spec) if spec.slice == crate::op::Slice::A1 && spec.mutating => {
+    // The AUTH-G game family keeps its own manifest (Amendment
+    // 2 numbers its verbs separately); route it first.
+    if let Some(spec) = crate::game::game_verb_spec(verb) {
+        if !spec.live {
+            return refused(verb, &crate::game::game_refusal(verb));
+        }
+        if spec.mutating {
             let request = Request {
                 verb: verb.to_string(),
                 inputs: inputs.clone(),
             };
             return run_requests(root, base, &[request]);
         }
-        Some(spec) if spec.slice == crate::op::Slice::A1 => {}
-        _ => {
-            let Err(refusal) = refuse_unimplemented::<()>(verb) else {
-                unreachable!("refuse_unimplemented always refuses")
-            };
-            return refused(verb, &refusal);
+    } else {
+        match verb_spec(verb) {
+            Some(spec) if spec.slice == crate::op::Slice::A1 && spec.mutating => {
+                let request = Request {
+                    verb: verb.to_string(),
+                    inputs: inputs.clone(),
+                };
+                return run_requests(root, base, &[request]);
+            }
+            Some(spec) if spec.slice == crate::op::Slice::A1 => {}
+            _ => {
+                let Err(refusal) = refuse_unimplemented::<()>(verb) else {
+                    unreachable!("refuse_unimplemented always refuses")
+                };
+                return refused(verb, &refusal);
+            }
         }
     }
     match query(root, verb, inputs, resolve) {
@@ -192,6 +207,13 @@ fn query(
             let state = expression_test(&loaded.project, &input.id).map_err(Failure::Refused)?;
             Ok(ok(json!({"result": "ok", "state": state})))
         }
+        "game_simulate" => {
+            let input: crate::game::GameSimulateInput = parsed(verb, inputs)?;
+            let loaded = open(root)?;
+            let doc = crate::game::simulate_document(&loaded.project, &loaded.sha256, &input)
+                .map_err(Failure::Refused)?;
+            Ok(ok(doc))
+        }
         other => unreachable!("verb '{other}' is A1, read-only, and unrouted"),
     }
 }
@@ -272,8 +294,22 @@ pub fn verbs_doc() -> Value {
         .filter(|spec| spec.slice != crate::op::Slice::A1)
         .map(|spec| json!({"group": spec.group, "slice": spec.slice.label(), "verb": spec.name}))
         .collect();
+    let game_implemented: Vec<Value> = crate::game::GAME_MANIFEST
+        .iter()
+        .filter(|spec| spec.live)
+        .map(|spec| json!({"group": spec.group, "mutating": spec.mutating, "verb": spec.name}))
+        .collect();
+    let game_deferred: Vec<Value> = crate::game::GAME_MANIFEST
+        .iter()
+        .filter(|spec| !spec.live)
+        .map(|spec| json!({"group": spec.group, "slice": spec.slice, "verb": spec.name}))
+        .collect();
     json!({
         "deferred": deferred,
+        "game_deferred": game_deferred,
+        "game_implemented": game_implemented,
+        "game_implemented_count": game_implemented.len(),
+        "game_manifest_count": crate::game::GAME_MANIFEST.len(),
         "implemented": implemented,
         "implemented_count": implemented.len(),
         "manifest_count": crate::op::MANIFEST.len(),

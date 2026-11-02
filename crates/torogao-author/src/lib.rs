@@ -16,6 +16,13 @@
 //! deformers, parameters (without `param_link_define`), and
 //! expressions groups: 30 of the manifest's 47 verbs
 //! ([`op::MANIFEST`]). The rest are refused by name.
+//!
+//! Slice G1 (Amendment 2, AUTH-G) adds the game family on the
+//! same pipeline: the five game-core verbs of
+//! [`game::GAME_MANIFEST`] (22 verbs; the remaining seventeen
+//! are G2's and are refused by name), the §G3.1 tick skeleton
+//! with its per-tick hash chain, and the `TG-GAME-*` refusal
+//! classes.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -25,6 +32,7 @@ pub mod census;
 pub mod codec;
 pub mod decide;
 pub mod diff;
+pub mod game;
 pub mod import;
 pub mod intake;
 pub mod limits;

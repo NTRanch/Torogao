@@ -90,6 +90,9 @@ pub fn sweep(project: &Project) -> Result<Project, Refusal> {
     for op in structure_ops(project) {
         rebuilt = run(rebuilt, op)?;
     }
+    for op in game_ops(project) {
+        rebuilt = run(rebuilt, op)?;
+    }
     for part in &project.parts {
         let Ok(index) = rebuilt.parts.binary_search_by(|p| p.id.cmp(&part.id)) else {
             unreachable!("the sweep created every part");
@@ -173,6 +176,26 @@ fn check_asset(asset: &Asset) -> Result<(), Refusal> {
         ));
     }
     Ok(())
+}
+
+/// The AUTH-G sections: the clock, the RNG streams, the game,
+/// and the save schema rebuild through their define verbs (they
+/// depend on nothing in the rig sections).
+fn game_ops(project: &Project) -> Vec<Op> {
+    let mut ops = Vec::new();
+    if let Some(clock) = &project.clock {
+        ops.push(Op::ClockDefine(crate::game::clock_inputs(clock)));
+    }
+    for stream in &project.rng_streams {
+        ops.push(Op::RngStreamDefine(crate::game::rng_inputs(stream)));
+    }
+    if let Some(game) = &project.game {
+        ops.push(Op::GameDefine(crate::game::game_inputs(game)));
+    }
+    if let Some(schema) = &project.save_schema {
+        ops.push(Op::GameSaveSchemaDefine(crate::game::schema_inputs(schema)));
+    }
+    ops
 }
 
 /// Parameters, nodes, and the two trees.

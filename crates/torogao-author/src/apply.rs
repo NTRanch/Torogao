@@ -159,6 +159,10 @@ fn apply<'a>(
             upsert(&mut project.assets, asset, |a| &a.id);
         }
         Op::IntakePsd(inputs) => apply_psd(&mut project, inputs, observed, files),
+        Op::ClockDefine(_)
+        | Op::GameDefine(_)
+        | Op::GameSaveSchemaDefine(_)
+        | Op::RngStreamDefine(_) => crate::game::apply_game(&mut project, op),
         _ => apply_edit(&mut project, op)?,
     }
     Ok(project)

@@ -1,11 +1,14 @@
-//! The `TG-AUTH-*` refusal taxonomy.
+//! The `TG-AUTH-*` refusal taxonomy, plus the `TG-GAME-*`
+//! classes Amendment 2 (§G2) adds for the game family.
 //!
 //! Every refusal the crate produces carries exactly one class.
-//! The first seven classes are the brief's (§Item 3); the rest
-//! are this slice's named additions for failures the brief's
-//! seven do not cover (malformed input, non-canonical project
-//! bytes, replay divergence, header stamps, incomplete lattices,
-//! and filesystem failure).
+//! The first seven `TG-AUTH-*` classes are the brief's (§Item 3);
+//! the rest are this slice's named additions for failures the
+//! brief's seven do not cover (malformed input, non-canonical
+//! project bytes, replay divergence, header stamps, incomplete
+//! lattices, and filesystem failure). The five `TG-GAME-*`
+//! classes are Amendment 2's, used only where the rig taxonomy
+//! has no honest name for a game-family failure.
 
 use serde_json::{Value, json};
 
@@ -21,6 +24,29 @@ pub enum RefusalClass {
     /// A reference (parent, clip source, binding target, asset)
     /// names nothing that exists.
     Dangling,
+    /// A game expression or value definition is ill-typed,
+    /// references an unknown stat/flag/value, divides, or forms
+    /// a reference cycle among named values (`TG-GAME-EXPR`).
+    GameExpr,
+    /// A scene/dialogue graph defect: an unbreakable line-chain
+    /// cycle, a missing unconditional choice option, unreachable
+    /// content, or a simulate input the graph cannot honour
+    /// (`TG-GAME-GRAPH`).
+    GameGraph,
+    /// A save-schema defect: a field in both partitions or in
+    /// neither, a version that does not strictly increase, a
+    /// migration-chain gap, a slot count outside 1..=64, or a
+    /// schema naming no hash algorithm version
+    /// (`TG-GAME-SAVE-SCHEMA`).
+    GameSaveSchema,
+    /// A weighted table with a non-positive weight, a zero
+    /// total, a duplicate outcome id, or no named RNG stream
+    /// (`TG-GAME-TABLE`).
+    GameTable,
+    /// Tier thresholds not strictly ascending, a band outside
+    /// its stat's declared range, or a tier count that disagrees
+    /// with the tier names supplied (`TG-GAME-TIER`).
+    GameTier,
     /// A filesystem operation failed or the project is locked.
     Io,
     /// Input is structurally invalid: syntax, arity, shape, ids,
@@ -55,6 +81,11 @@ impl RefusalClass {
         match self {
             RefusalClass::Conflict => "TG-AUTH-CONFLICT",
             RefusalClass::Dangling => "TG-AUTH-DANGLING",
+            RefusalClass::GameExpr => "TG-GAME-EXPR",
+            RefusalClass::GameGraph => "TG-GAME-GRAPH",
+            RefusalClass::GameSaveSchema => "TG-GAME-SAVE-SCHEMA",
+            RefusalClass::GameTable => "TG-GAME-TABLE",
+            RefusalClass::GameTier => "TG-GAME-TIER",
             RefusalClass::Incomplete => "TG-AUTH-INCOMPLETE",
             RefusalClass::Io => "TG-AUTH-IO",
             RefusalClass::Malformed => "TG-AUTH-MALFORMED",

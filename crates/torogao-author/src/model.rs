@@ -30,10 +30,14 @@ pub struct Project {
     pub header: Header,
     /// Intaken art, sorted by id.
     pub assets: Vec<Asset>,
+    /// The authored game clock (AUTH-G), when one is defined.
+    pub clock: Option<GameClock>,
     /// Deformers, sorted by id.
     pub deformers: Vec<Deformer>,
     /// Expressions, sorted by id.
     pub expressions: Vec<Expression>,
+    /// The project as a game (AUTH-G), when defined.
+    pub game: Option<GameDef>,
     /// Glue pairs between drawables, sorted by id.
     pub glues: Vec<Glue>,
     /// Parameters, sorted by id.
@@ -43,6 +47,10 @@ pub struct Project {
     /// The neutral pose: parameter values that differ from the
     /// declared defaults, sorted by parameter id.
     pub pose: Vec<PoseEntry>,
+    /// Named randomness streams (AUTH-G), sorted by id.
+    pub rng_streams: Vec<RngStream>,
+    /// The authored save schema (AUTH-G), when defined.
+    pub save_schema: Option<SaveSchema>,
     /// Named variant stacks from separated art, sorted by id.
     pub variant_sets: Vec<VariantSet>,
 }
@@ -398,6 +406,130 @@ pub struct VariantSet {
     pub variants: Vec<String>,
 }
 
+// ---- AUTH-G game records (Amendment 2) --------------------------
+
+/// The game's time structure (`clock_define`): the runtime tick
+/// is one slot advance (§G3.1).
+#[derive(Clone, Debug, PartialEq)]
+pub struct GameClock {
+    /// Ordered named slots per day, in tick order (authored
+    /// order is semantic, never re-sorted).
+    pub slots: Vec<String>,
+    /// Days per week, when the game uses weeks.
+    pub days_per_week: Option<u32>,
+    /// Weekday names, in order; exactly `days_per_week` long
+    /// when present.
+    pub weekdays: Vec<String>,
+    /// Optional day limit; the run cannot pass it.
+    pub day_limit: Option<u32>,
+}
+
+/// The project as a game (`game_define`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct GameDef {
+    /// The game id.
+    pub id: String,
+    /// The start scene id: a forward reference at define time,
+    /// checked by the validation sweep once scenes exist (§G2.1).
+    pub start_scene: String,
+    /// Stat/flag values at run start, sorted by target. Each is
+    /// validated against its definition at define time (§G2.1).
+    pub initial: Vec<InitialAssignment>,
+    /// The alter-ego veto rule: an effect-set id applied when
+    /// the player declines an option marked `origin: alter_ego`
+    /// (§G2.1, §G5). A forward reference until effect sets land.
+    pub alter_ego_veto: Option<String>,
+    /// Save-context policy default for the game (the schema
+    /// carries its own; §G3.3).
+    pub save_policy: Option<SaveContextPolicy>,
+}
+
+/// One initial assignment: a stat/flag target and its run-start
+/// value (stats are integers; flags are booleans — §G2.2).
+#[derive(Clone, Debug, PartialEq)]
+pub struct InitialAssignment {
+    /// The stat or flag id.
+    pub target: String,
+    /// The value at run start.
+    pub value: AssignValue,
+}
+
+/// A run-start value: an integer for a stat, a boolean for a
+/// flag.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum AssignValue {
+    /// An integer stat value.
+    Int(i64),
+    /// A boolean flag value.
+    Bool(bool),
+}
+
+/// Where a manual save may be taken (§G3.3).
+#[derive(Clone, Debug, PartialEq)]
+pub enum SaveContextPolicy {
+    /// At any tick boundary (the first-class default posture).
+    AnyTickBoundary,
+    /// Only at scene boundaries.
+    SceneBoundary,
+    /// Only inside the listed safe scenes.
+    SafeScenesOnly(Vec<String>),
+}
+
+/// A named randomness stream (`rng_stream_define`): the
+/// algorithm is part of the project's format record, so an
+/// algorithm change is a project migration, not a silent drift.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RngStream {
+    /// Stream id.
+    pub id: String,
+    /// Named, versioned algorithm (e.g. `torogao-rng/1`).
+    pub algorithm: String,
+}
+
+/// The authored save schema (`game_save_schema_define`, §G3.3):
+/// saving and loading are runtime acts; what a save must
+/// contain is authored data.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SaveSchema {
+    /// Schema version: strictly increases on every change.
+    pub version: u32,
+    /// Slot count, 1..=64.
+    pub slots: u32,
+    /// Whether a slot holds one run or a chapter list.
+    pub slot_holds: SlotHolds,
+    /// State fields in the per-slot partition, sorted.
+    pub slot_fields: Vec<String>,
+    /// State fields in the globals partition, sorted.
+    pub globals_fields: Vec<String>,
+    /// The named hash algorithm version saves carry.
+    pub hash_algorithm: String,
+    /// Where a manual save may be taken.
+    pub policy: SaveContextPolicy,
+    /// The migration chain: named steps, sorted by `from`; each
+    /// step goes `from` → `from + 1` and the chain covers every
+    /// prior version the project still accepts (§G3.3).
+    pub migrations: Vec<Migration>,
+}
+
+/// Whether a save slot holds one run or a chapter list.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SlotHolds {
+    /// One run per slot.
+    OneRun,
+    /// A chapter list per slot.
+    ChapterList,
+}
+
+/// One named migration step in a save schema's chain.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Migration {
+    /// The version this step migrates from.
+    pub from: u32,
+    /// The migration's name (the field mapping is authored data
+    /// the interpreter executes stepwise; the name is its id).
+    pub name: String,
+}
+
 impl Project {
     /// The part with this id.
     pub fn part(&self, id: &str) -> Option<&Part> {
@@ -427,6 +559,11 @@ impl Project {
     /// The glue record with this id.
     pub fn glue(&self, id: &str) -> Option<&Glue> {
         find(&self.glues, id, |glue| &glue.id)
+    }
+
+    /// The RNG stream with this id.
+    pub fn rng_stream(&self, id: &str) -> Option<&RngStream> {
+        find(&self.rng_streams, id, |stream| &stream.id)
     }
 
     /// The neutral value of a parameter: its pose entry when one

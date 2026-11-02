@@ -558,6 +558,8 @@ pub struct ExpressionDefineInput {
 /// A mutating op: one verb with its typed inputs.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Op {
+    /// `clock_define` (AUTH-G).
+    ClockDefine(crate::game::ClockDefineInput),
     /// `deformer_glue_set`.
     DeformerGlueSet(GlueInput),
     /// `deformer_parent_set`.
@@ -572,6 +574,10 @@ pub enum Op {
     ExpressionDefine(ExpressionDefineInput),
     /// `expression_remove`.
     ExpressionRemove(IdInput),
+    /// `game_define` (AUTH-G).
+    GameDefine(crate::game::GameDefineInput),
+    /// `game_save_schema_define` (AUTH-G).
+    GameSaveSchemaDefine(crate::game::SaveSchemaDefineInput),
     /// `intake_image`.
     IntakeImage(IntakeImageInput),
     /// `intake_psd`.
@@ -608,6 +614,8 @@ pub enum Op {
     ProjectImport(ImportInput),
     /// `project_init`.
     ProjectInit(InitInput),
+    /// `rng_stream_define` (AUTH-G).
+    RngStreamDefine(crate::game::RngStreamDefineInput),
 }
 
 fn typed<T: for<'de> Deserialize<'de>>(verb: &str, inputs: &Value) -> Result<T, Refusal> {
@@ -624,6 +632,7 @@ impl Op {
     /// non-A1 verbs are refused by name.
     pub fn parse(verb: &str, inputs: &Value) -> Result<Op, Refusal> {
         let op = match verb {
+            "clock_define" => Op::ClockDefine(typed(verb, inputs)?),
             "deformer_glue_set" => Op::DeformerGlueSet(typed(verb, inputs)?),
             "deformer_parent_set" => Op::DeformerParentSet(typed(verb, inputs)?),
             "deformer_remove" => Op::DeformerRemove(typed(verb, inputs)?),
@@ -631,6 +640,8 @@ impl Op {
             "deformer_warp_create" => Op::DeformerWarpCreate(typed(verb, inputs)?),
             "expression_define" => Op::ExpressionDefine(typed(verb, inputs)?),
             "expression_remove" => Op::ExpressionRemove(typed(verb, inputs)?),
+            "game_define" => Op::GameDefine(typed(verb, inputs)?),
+            "game_save_schema_define" => Op::GameSaveSchemaDefine(typed(verb, inputs)?),
             "intake_image" => Op::IntakeImage(typed(verb, inputs)?),
             "intake_psd" => Op::IntakePsd(typed(verb, inputs)?),
             "keyform_set" => Op::KeyformSet(typed(verb, inputs)?),
@@ -649,6 +660,7 @@ impl Op {
             "part_visibility_set" => Op::PartVisibilitySet(typed(verb, inputs)?),
             "project_import" => Op::ProjectImport(typed(verb, inputs)?),
             "project_init" => Op::ProjectInit(typed(verb, inputs)?),
+            "rng_stream_define" => Op::RngStreamDefine(typed(verb, inputs)?),
             other => return refuse_unimplemented(other),
         };
         Ok(op)
@@ -657,6 +669,7 @@ impl Op {
     /// The canonical verb name.
     pub fn verb(&self) -> &'static str {
         match self {
+            Op::ClockDefine(_) => "clock_define",
             Op::DeformerGlueSet(_) => "deformer_glue_set",
             Op::DeformerParentSet(_) => "deformer_parent_set",
             Op::DeformerRemove(_) => "deformer_remove",
@@ -664,6 +677,8 @@ impl Op {
             Op::DeformerWarpCreate(_) => "deformer_warp_create",
             Op::ExpressionDefine(_) => "expression_define",
             Op::ExpressionRemove(_) => "expression_remove",
+            Op::GameDefine(_) => "game_define",
+            Op::GameSaveSchemaDefine(_) => "game_save_schema_define",
             Op::IntakeImage(_) => "intake_image",
             Op::IntakePsd(_) => "intake_psd",
             Op::KeyformSet(_) => "keyform_set",
@@ -682,12 +697,14 @@ impl Op {
             Op::PartVisibilitySet(_) => "part_visibility_set",
             Op::ProjectImport(_) => "project_import",
             Op::ProjectInit(_) => "project_init",
+            Op::RngStreamDefine(_) => "rng_stream_define",
         }
     }
 
     /// The normalized inputs as JSON (what the op log records).
     pub fn inputs_json(&self) -> Result<Value, Refusal> {
         let result = match self {
+            Op::ClockDefine(inputs) => serde_json::to_value(inputs),
             Op::DeformerGlueSet(inputs) => serde_json::to_value(inputs),
             Op::DeformerParentSet(inputs) => serde_json::to_value(inputs),
             Op::DeformerRemove(inputs) => serde_json::to_value(inputs),
@@ -695,6 +712,8 @@ impl Op {
             Op::DeformerWarpCreate(inputs) => serde_json::to_value(inputs),
             Op::ExpressionDefine(inputs) => serde_json::to_value(inputs),
             Op::ExpressionRemove(inputs) => serde_json::to_value(inputs),
+            Op::GameDefine(inputs) => serde_json::to_value(inputs),
+            Op::GameSaveSchemaDefine(inputs) => serde_json::to_value(inputs),
             Op::IntakeImage(inputs) => serde_json::to_value(inputs),
             Op::IntakePsd(inputs) => serde_json::to_value(inputs),
             Op::KeyformSet(inputs) => serde_json::to_value(inputs),
@@ -713,6 +732,7 @@ impl Op {
             Op::PartVisibilitySet(inputs) => serde_json::to_value(inputs),
             Op::ProjectImport(inputs) => serde_json::to_value(inputs),
             Op::ProjectInit(inputs) => serde_json::to_value(inputs),
+            Op::RngStreamDefine(inputs) => serde_json::to_value(inputs),
         };
         result.or_else(|err| {
             refuse(
