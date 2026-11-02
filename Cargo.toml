@@ -10,13 +10,19 @@ members = [
     "crates/torogao-session",
     "crates/torogao-voice",
 ]
+# torogao-accel is a standalone-gated crate: it keeps its own
+# [workspace] and its own gate runs, and is excluded here explicitly
+# rather than by accident. Its version tracks the workspace version
+# below (kept in step by hand; see the 2026-11-01 version correction
+# in CHANGELOG.md).
+exclude = ["crates/torogao-accel"]
 resolver = "3"
 
 [workspace.package]
 edition = "2024"
 license = "BSD-2-Clause"
 rust-version = "1.85"
-version = "1.0.0"
+version = "0.4.0"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
