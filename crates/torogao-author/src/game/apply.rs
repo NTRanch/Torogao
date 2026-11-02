@@ -9,15 +9,16 @@
 use crate::game::model::{
     Atom, CharacterDef, Clock, ConditionDef, DialogueLine, Direction, EffectSetDef, FlagDef,
     FlagEdge, FlagScope, GAME_FORMAT_VERSION, Game, Lifetime, OfferDef, Overflow, Repetition,
-    SceneDef, StatDef, StatInitial, StatKind, StatScope, TierDef, TriggerDef, TriggerKind,
-    ValueDef,
+    RngStreamDef, SceneDef, StatDef, StatInitial, StatKind, StatScope, TableDef, TableOutcome,
+    TableWeight, TierDef, TriggerDef, TriggerKind, ValueDef,
 };
 use crate::game::op::{
     AtomInput, CharacterDefineInput, ClockDefineInput, ConditionDefineInput,
     DialogueLineDefineInput, DirectionInput, EffectSetDefineInput, FlagDefineInput, FlagEdgeInput,
     FlagScopeInput, GameDefineInput, GameOp, OverflowInput, PresentationInput, RepetitionInput,
-    SceneDefineInput, StatDefineInput, StatKindInput, StatScopeInput, StatTierDefineInput,
-    TriggerDefineInput, TriggerKindInput, ValueDefineInput,
+    RngStreamDefineInput, SceneDefineInput, StatDefineInput, StatKindInput, StatScopeInput,
+    StatTierDefineInput, TableDefineInput, TableOutcomeInput, TriggerDefineInput, TriggerKindInput,
+    ValueDefineInput, WeightInput,
 };
 use crate::model::{Project, locate};
 use crate::refusal::Refusal;
@@ -196,6 +197,9 @@ pub(crate) fn atom_of(input: &AtomInput) -> Result<Atom, Refusal> {
         },
         AtomInput::FlagClear { flag } => Atom::FlagClear { flag: flag.clone() },
         AtomInput::FlagSet { flag } => Atom::FlagSet { flag: flag.clone() },
+        AtomInput::RollTable { table } => Atom::RollTable {
+            table: table.clone(),
+        },
         AtomInput::StatAdd {
             stat,
             character,
@@ -228,6 +232,9 @@ pub(crate) fn atom_input_of(atom: &Atom) -> AtomInput {
         },
         Atom::FlagClear { flag } => AtomInput::FlagClear { flag: flag.clone() },
         Atom::FlagSet { flag } => AtomInput::FlagSet { flag: flag.clone() },
+        Atom::RollTable { table } => AtomInput::RollTable {
+            table: table.clone(),
+        },
         Atom::StatAdd {
             character,
             stat,
@@ -371,6 +378,60 @@ pub(crate) fn trigger_record(inputs: &TriggerDefineInput) -> TriggerDef {
     }
 }
 
+/// The stream record an `rng_stream_define` produces.
+pub(crate) fn stream_record(inputs: &RngStreamDefineInput) -> RngStreamDef {
+    RngStreamDef {
+        id: inputs.id.clone(),
+        algorithm: inputs.algorithm.clone(),
+    }
+}
+
+/// The table record a `table_define` produces.
+pub(crate) fn table_record(inputs: &TableDefineInput) -> Result<TableDef, Refusal> {
+    let mut outcomes = Vec::new();
+    for outcome in &inputs.outcomes {
+        outcomes.push(TableOutcome {
+            id: outcome.id.clone(),
+            weight: match &outcome.weight {
+                WeightInput::Expr(expr) => {
+                    TableWeight::Expr(crate::game::expr::expr_from_input(expr)?)
+                }
+                WeightInput::Static(weight) => TableWeight::Static(*weight),
+            },
+            gate: outcome.gate.clone(),
+            effect_set: outcome.effect_set.clone(),
+        });
+    }
+    Ok(TableDef {
+        id: inputs.id.clone(),
+        stream: inputs.stream.clone(),
+        outcomes,
+    })
+}
+
+/// The input form of a stored table (for the validation sweep).
+pub(crate) fn table_input_of(table: &TableDef) -> TableDefineInput {
+    TableDefineInput {
+        id: table.id.clone(),
+        stream: table.stream.clone(),
+        outcomes: table
+            .outcomes
+            .iter()
+            .map(|outcome| TableOutcomeInput {
+                id: outcome.id.clone(),
+                weight: match &outcome.weight {
+                    TableWeight::Expr(expr) => {
+                        WeightInput::Expr(crate::game::expr::expr_to_input(expr))
+                    }
+                    TableWeight::Static(weight) => WeightInput::Static(*weight),
+                },
+                gate: outcome.gate.clone(),
+                effect_set: outcome.effect_set.clone(),
+            })
+            .collect(),
+    }
+}
+
 /// The format migration, applied whenever a game op lands on a
 /// section written under an older game format: v1 → v2 changes
 /// no record (v2 only adds optional fields and the interpreter's
@@ -468,6 +529,16 @@ pub fn apply_game(project: &mut Project, op: &GameOp) -> Result<(), Refusal> {
             let record = trigger_record(inputs);
             let game = game_mut(project);
             upsert(&mut game.triggers, record, |t| &t.id);
+        }
+        GameOp::RngStreamDefine(inputs) => {
+            let record = stream_record(inputs);
+            let game = game_mut(project);
+            upsert(&mut game.streams, record, |s| &s.id);
+        }
+        GameOp::TableDefine(inputs) => {
+            let record = table_record(inputs)?;
+            let game = game_mut(project);
+            upsert(&mut game.tables, record, |t| &t.id);
         }
     }
     if let Some(game) = &mut project.game {

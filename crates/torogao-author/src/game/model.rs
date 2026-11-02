@@ -45,6 +45,13 @@ pub struct Game {
     pub start_scene: Option<String>,
     /// The authored clock, once defined.
     pub clock: Option<Clock>,
+    /// Named RNG streams, sorted by id. (Serialized only when
+    /// non-empty: absent means absent, so a project authored
+    /// before this surface keeps its bytes.)
+    pub streams: Vec<RngStreamDef>,
+    /// Weighted outcome tables, sorted by id. (Serialized only
+    /// when non-empty, like `streams`.)
+    pub tables: Vec<TableDef>,
     /// Stats, sorted by id.
     pub stats: Vec<StatDef>,
     /// Tier bands over stats, sorted by stat id.
@@ -101,6 +108,16 @@ impl Game {
     /// The stat with this id.
     pub fn stat(&self, id: &str) -> Option<&StatDef> {
         find(&self.stats, id, |item| &item.id)
+    }
+
+    /// The RNG stream with this id.
+    pub fn stream(&self, id: &str) -> Option<&RngStreamDef> {
+        find(&self.streams, id, |item| &item.id)
+    }
+
+    /// The weighted table with this id.
+    pub fn table(&self, id: &str) -> Option<&TableDef> {
+        find(&self.tables, id, |item| &item.id)
     }
 
     /// The tier bands over this stat, if authored.
@@ -403,6 +420,13 @@ pub enum Atom {
         /// The flag id.
         flag: String,
     },
+    /// Draw on a weighted table (one step of the table's named
+    /// stream) and apply the drawn outcome's effect set inside
+    /// the same transaction.
+    RollTable {
+        /// The table id.
+        table: String,
+    },
     /// Add an evaluated amount to a stat.
     StatAdd {
         /// The character instance, for character-scoped stats.
@@ -602,6 +626,64 @@ pub struct TriggerDef {
     /// The offered lifecycle, when the trigger offers instead of
     /// firing outright.
     pub offer: Option<OfferDef>,
+}
+
+/// The one RNG algorithm this build implements: SplitMix64,
+/// seeded per stream from the run seed and the stream id by a
+/// fixed derivation (see `game::simulate`). The algorithm is
+/// part of the project's format record — a stream names it, and
+/// an unknown algorithm refuses at authoring time — so a future
+/// algorithm change is a project migration, not a silent drift.
+pub const RNG_ALGORITHM: &str = "estate-rng/1";
+
+/// One named randomness stream. Draws on a stream are the only
+/// randomness in the family; a draw consumes exactly one step
+/// of the stream regardless of the weights it is drawn against.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RngStreamDef {
+    /// Stable id.
+    pub id: String,
+    /// The algorithm name (see [`RNG_ALGORITHM`]).
+    pub algorithm: String,
+}
+
+/// One outcome's weight in a weighted table: a positive static
+/// integer, or a bounded integer expression evaluated at draw
+/// time against the drawing state (D-469, adopting AUTH-D10).
+#[derive(Clone, Debug, PartialEq)]
+pub enum TableWeight {
+    /// An expression tree (integer-typed at authoring time);
+    /// a draw-time value of zero or less makes the outcome
+    /// ineligible for that draw.
+    Expr(Expr),
+    /// A positive integer literal.
+    Static(i64),
+}
+
+/// One outcome of a weighted table.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TableOutcome {
+    /// Stable id (unique within the table).
+    pub id: String,
+    /// The outcome's weight.
+    pub weight: TableWeight,
+    /// An optional named gate condition; a false gate makes the
+    /// outcome ineligible for the draw.
+    pub gate: Option<String>,
+    /// The effect set applied when the outcome is drawn.
+    pub effect_set: String,
+}
+
+/// A weighted outcome table on a named RNG stream.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TableDef {
+    /// Stable id.
+    pub id: String,
+    /// The RNG stream draws consume.
+    pub stream: String,
+    /// The outcomes, in authored order (draws walk them in this
+    /// order against cumulative weights).
+    pub outcomes: Vec<TableOutcome>,
 }
 
 /// One prose entry of `content.ron`, keyed by content id. Entries
