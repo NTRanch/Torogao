@@ -19,8 +19,13 @@
 pub mod apply;
 pub mod codec;
 pub mod decide;
+pub mod expr;
 pub mod model;
 pub mod op;
+pub mod save;
+pub mod simulate;
+pub mod state;
+#[cfg(test)]
 #[cfg(test)]
 mod tests;
 
