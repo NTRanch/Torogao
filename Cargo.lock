@@ -3205,7 +3205,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-tui"
-version = "1.0.0"
+version = "0.4.0"
 dependencies = [
  "crossterm",
  "ratatui",
@@ -3216,7 +3216,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-vmc"
-version = "1.0.0"
+version = "0.4.0"
 dependencies = [
  "sha2",
 ]
