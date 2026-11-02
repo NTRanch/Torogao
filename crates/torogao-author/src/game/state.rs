@@ -84,6 +84,12 @@ pub struct GameState {
     pub flags_globals: BTreeMap<String, bool>,
     /// The scene the run is in.
     pub current_scene: Option<String>,
+    /// The ending the run reached, when one fired (the ending
+    /// evaluation step sets it and the run stops). Emitted
+    /// only when reached (absent means absent), so a state
+    /// document from before endings existed keeps its bytes
+    /// and its hash.
+    pub ending: Option<String>,
     /// The current dialogue line, when the run sits on one.
     pub line: Option<String>,
     /// Trigger runtime states by trigger id.
@@ -220,6 +226,15 @@ pub fn state_to_ron(state: &GameState) -> Ron {
                 ),
             ),
         );
+    }
+    // The ending rides only when a run reached one, under
+    // the same absent-means-absent law as the rng partition.
+    if let Some(ending) = &state.ending {
+        let pos = fields
+            .iter()
+            .position(|(name, _)| *name == "flags_globals")
+            .unwrap_or(fields.len());
+        fields.insert(pos, ("ending", text(ending)));
     }
     record("State", fields)
 }
@@ -380,6 +395,10 @@ pub fn state_from_ron(value: Ron, format_version: i64) -> Result<GameState, Refu
         }
         Some(_) => return wrong_type("rng", "a list"),
     }
+    let ending = match fields.try_take("ending") {
+        None => None,
+        Some(value) => Some(crate::codec::as_string(value, "ending")?),
+    };
     let state = GameState {
         tick: as_u64(fields.take("tick")?, "tick")?,
         day: fields.int("day")?,
@@ -390,6 +409,7 @@ pub fn state_from_ron(value: Ron, format_version: i64) -> Result<GameState, Refu
         flags_run: flag_map(fields.list("flags_run")?, "flags_run")?,
         flags_globals: flag_map(fields.list("flags_globals")?, "flags_globals")?,
         current_scene: fields.opt_string("current_scene")?,
+        ending,
         line: fields.opt_string("line")?,
         triggers,
         pending_scene: None,

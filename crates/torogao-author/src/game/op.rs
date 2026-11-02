@@ -96,7 +96,7 @@ pub const GAME_MANIFEST: [GameVerbSpec; 24] = [
         "game core",
         GameSlice::G1,
         true,
-        false,
+        true,
     ),
     verb("rng_stream_define", "game core", GameSlice::P24, true, true),
     verb("condition_define", "game state", GameSlice::P22, true, true),
@@ -113,7 +113,7 @@ pub const GAME_MANIFEST: [GameVerbSpec; 24] = [
     verb("table_define", "game state", GameSlice::P24, true, true),
     verb("value_define", "game state", GameSlice::P22, true, true),
     verb("character_define", "game flow", GameSlice::P21, true, true),
-    verb("choice_define", "game flow", GameSlice::G2, true, false),
+    verb("choice_define", "game flow", GameSlice::G2, true, true),
     verb(
         "dialogue_line_define",
         "game flow",
@@ -121,18 +121,18 @@ pub const GAME_MANIFEST: [GameVerbSpec; 24] = [
         true,
         true,
     ),
-    verb("ending_define", "game flow", GameSlice::G2, true, false),
+    verb("ending_define", "game flow", GameSlice::G2, true, true),
     verb(
         "gallery_entry_define",
         "game flow",
         GameSlice::G2,
         true,
-        false,
+        true,
     ),
-    verb("scene_bind_rig", "game flow", GameSlice::G2, true, false),
+    verb("scene_bind_rig", "game flow", GameSlice::G2, true, true),
     verb("scene_define", "game flow", GameSlice::P21, true, true),
-    verb("scene_exit_define", "game flow", GameSlice::G2, true, false),
-    verb("schedule_define", "game flow", GameSlice::G2, true, false),
+    verb("scene_exit_define", "game flow", GameSlice::G2, true, true),
+    verb("schedule_define", "game flow", GameSlice::G2, true, true),
     verb("trigger_define", "game flow", GameSlice::P22, true, true),
     verb(
         "appearance_define",
@@ -365,6 +365,12 @@ pub struct GameDefineInput {
     /// The authored save-schema version (default 1).
     #[serde(default)]
     pub save_schema_version: Option<i64>,
+    /// The alter-ego veto rule: an effect-set id (a forward
+    /// reference at define time), applied when the player
+    /// picks a non-alter-ego option while an alter-ego option
+    /// was offered (C-9/D-549).
+    #[serde(default)]
+    pub alter_ego_veto: Option<String>,
 }
 
 /// `clock_define` inputs.
@@ -555,6 +561,21 @@ pub struct SceneDefineInput {
     pub id: String,
     /// Presentation class.
     pub presentation: PresentationInput,
+    /// The characters present in the scene (C-8/D-548).
+    #[serde(default)]
+    pub participants: Vec<String>,
+    /// The backdrop: an asset id or a rig scene id.
+    #[serde(default)]
+    pub backdrop: Option<String>,
+    /// A condition id gating entry to the scene.
+    #[serde(default)]
+    pub entry_condition: Option<String>,
+    /// An effect set applied when the scene is entered.
+    #[serde(default)]
+    pub on_enter: Option<String>,
+    /// An effect set applied when the scene is left.
+    #[serde(default)]
+    pub on_exit: Option<String>,
 }
 
 /// `dialogue_line_define` inputs. The prose travels with the op
@@ -835,6 +856,239 @@ pub struct VisualStateDefineInput {
     pub delta: Vec<AppearanceEntryInput>,
 }
 
+/// A save-context policy, as input (tagged by `kind`): the
+/// policy surface of the save-schema family. The branch's
+/// `game_define.save_policy` folds into this one surface
+/// (D-549): it is authored by `game_save_schema_define`, never
+/// by `game_define`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case", tag = "kind")]
+pub enum SavePolicyInput {
+    /// At any tick boundary.
+    AnyTickBoundary,
+    /// Only at scene boundaries.
+    SceneBoundary,
+    /// Only inside the listed safe scenes.
+    SafeScenesOnly {
+        /// The safe scene ids.
+        scenes: Vec<String>,
+    },
+}
+
+/// One migration step in `game_save_schema_define` inputs.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MigrationInput {
+    /// The version this step migrates from.
+    pub from: u32,
+    /// The migration's name.
+    pub name: String,
+}
+
+/// `game_save_schema_define` inputs (Amendment 2 §G3.3).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SaveSchemaDefineInput {
+    /// Schema version.
+    pub version: u32,
+    /// Slot count, 1..=64.
+    pub slots: u32,
+    /// Whether a slot holds one run (`one_run`) or a chapter
+    /// list (`chapter_list`).
+    pub slot_holds: String,
+    /// State fields in the per-slot partition.
+    pub slot_fields: Vec<String>,
+    /// State fields in the globals partition.
+    pub globals_fields: Vec<String>,
+    /// The named hash algorithm version.
+    pub hash_algorithm: String,
+    /// Where a manual save may be taken.
+    pub policy: SavePolicyInput,
+    /// The migration chain segment.
+    #[serde(default)]
+    pub migrations: Vec<MigrationInput>,
+}
+
+/// Where a choice option leads, as input (tagged by `kind`).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case", tag = "kind")]
+pub enum ChoiceTargetInput {
+    /// The ending evaluation point.
+    EndingCheck,
+    /// A scene exit, by its id within the choice's scene.
+    Exit {
+        /// The exit id.
+        id: String,
+    },
+    /// A dialogue line, by id.
+    Line {
+        /// The line id.
+        id: String,
+    },
+    /// A scene, by id (a direct transition target).
+    Scene {
+        /// The scene id.
+        id: String,
+    },
+}
+
+/// One option in `choice_define` inputs.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChoiceOptionInput {
+    /// Option id.
+    pub id: String,
+    /// Content id of the label text (a `content.ron` key,
+    /// C-7/D-547).
+    pub label_ref: String,
+    /// Condition id gating visibility.
+    #[serde(default)]
+    pub visible_if: Option<String>,
+    /// Condition id gating enablement.
+    #[serde(default)]
+    pub enabled_if: Option<String>,
+    /// Integer sort expression.
+    #[serde(default)]
+    pub sort: Option<ExprInput>,
+    /// Origin tag: `player` or `alter_ego`.
+    pub origin: String,
+    /// Effect set id applied when the option is taken.
+    #[serde(default)]
+    pub effect_set: Option<String>,
+    /// Where the option leads.
+    pub target: ChoiceTargetInput,
+}
+
+/// `choice_define` inputs.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChoiceDefineInput {
+    /// Choice id.
+    pub id: String,
+    /// The scene the choice belongs to.
+    pub scene: String,
+    /// The prompt's content id (a `content.ron` key,
+    /// C-7/D-547), when the choice has one.
+    #[serde(default)]
+    pub prompt_line: Option<String>,
+    /// The options, in authored order.
+    pub options: Vec<ChoiceOptionInput>,
+}
+
+/// `ending_define` inputs.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EndingDefineInput {
+    /// Ending id.
+    pub id: String,
+    /// The condition id that must hold.
+    pub condition: String,
+    /// Evaluation priority (unique across endings).
+    pub priority: i64,
+    /// The epilogue scene id.
+    pub epilogue_scene: String,
+}
+
+/// How a gallery entry unlocks, as input (tagged by `kind`).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case", tag = "kind")]
+pub enum GalleryUnlockInput {
+    /// Auto-unlock under this condition id.
+    Condition {
+        /// The condition id.
+        id: String,
+    },
+    /// An effect names this entry.
+    Effect,
+}
+
+/// `gallery_entry_define` inputs.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GalleryEntryDefineInput {
+    /// Entry id.
+    pub id: String,
+    /// The gallery category.
+    pub category: String,
+    /// How the entry unlocks.
+    pub unlock: GalleryUnlockInput,
+    /// The replay target scene id.
+    pub replay_scene: String,
+    /// The replay target entry line id.
+    pub replay_line: String,
+    /// Thumbnail asset id.
+    #[serde(default)]
+    pub thumbnail: Option<String>,
+}
+
+/// One slot → scene row in `schedule_define` inputs.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduleSlotInput {
+    /// The clock slot name.
+    pub slot: String,
+    /// The scene id.
+    pub scene: String,
+}
+
+/// One condition override in `schedule_define` inputs.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduleOverrideInput {
+    /// The condition id.
+    pub condition: String,
+    /// The scene id.
+    pub scene: String,
+}
+
+/// `schedule_define` inputs.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduleDefineInput {
+    /// The character id.
+    pub character: String,
+    /// Slot → scene rows: every clock slot, exactly once.
+    pub slots: Vec<ScheduleSlotInput>,
+    /// Ordered condition overrides.
+    #[serde(default)]
+    pub overrides: Vec<ScheduleOverrideInput>,
+}
+
+/// `scene_bind_rig` inputs.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SceneBindRigInput {
+    /// The scene id.
+    pub scene: String,
+    /// The participant (character) id.
+    pub participant: String,
+    /// The rig model id.
+    pub rig_model: String,
+    /// The entry expression id (a rig expression).
+    pub entry_expression: String,
+    /// The entry motion id (a motion clip).
+    #[serde(default)]
+    pub entry_motion: Option<String>,
+}
+
+/// `scene_exit_define` inputs.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SceneExitDefineInput {
+    /// The scene the exit leaves.
+    pub scene: String,
+    /// Exit id, unique within the scene.
+    pub id: String,
+    /// The target scene id.
+    pub target: String,
+    /// Condition id gating the exit.
+    #[serde(default)]
+    pub condition: Option<String>,
+    /// Effect set id applied on traversal.
+    #[serde(default)]
+    pub effect_set: Option<String>,
+}
+
 /// One choice-log entry, as input to `game_simulate`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -904,6 +1158,20 @@ pub enum GameOp {
     ValueDefine(ValueDefineInput),
     /// `visual_state_define`.
     VisualStateDefine(VisualStateDefineInput),
+    /// `choice_define`.
+    ChoiceDefine(ChoiceDefineInput),
+    /// `ending_define`.
+    EndingDefine(EndingDefineInput),
+    /// `gallery_entry_define`.
+    GalleryEntryDefine(GalleryEntryDefineInput),
+    /// `game_save_schema_define`.
+    GameSaveSchemaDefine(SaveSchemaDefineInput),
+    /// `schedule_define`.
+    ScheduleDefine(ScheduleDefineInput),
+    /// `scene_bind_rig`.
+    SceneBindRig(SceneBindRigInput),
+    /// `scene_exit_define`.
+    SceneExitDefine(SceneExitDefineInput),
 }
 
 fn typed<T: for<'de> Deserialize<'de>>(verb: &str, inputs: &Value) -> Result<T, Refusal> {
@@ -927,8 +1195,15 @@ pub fn parse_game_op(verb: &str, inputs: &Value) -> Result<crate::op::Op, Refusa
         "dialogue_line_define" => GameOp::DialogueLineDefine(typed(verb, inputs)?),
         "effect_set_define" => GameOp::EffectSetDefine(typed(verb, inputs)?),
         "flag_define" => GameOp::FlagDefine(typed(verb, inputs)?),
+        "choice_define" => GameOp::ChoiceDefine(typed(verb, inputs)?),
+        "ending_define" => GameOp::EndingDefine(typed(verb, inputs)?),
+        "gallery_entry_define" => GameOp::GalleryEntryDefine(typed(verb, inputs)?),
         "game_define" => GameOp::GameDefine(typed(verb, inputs)?),
+        "game_save_schema_define" => GameOp::GameSaveSchemaDefine(typed(verb, inputs)?),
         "rng_stream_define" => GameOp::RngStreamDefine(typed(verb, inputs)?),
+        "schedule_define" => GameOp::ScheduleDefine(typed(verb, inputs)?),
+        "scene_bind_rig" => GameOp::SceneBindRig(typed(verb, inputs)?),
+        "scene_exit_define" => GameOp::SceneExitDefine(typed(verb, inputs)?),
         "scene_define" => GameOp::SceneDefine(typed(verb, inputs)?),
         "stat_define" => GameOp::StatDefine(typed(verb, inputs)?),
         "stat_tier_define" => GameOp::StatTierDefine(typed(verb, inputs)?),
@@ -946,6 +1221,10 @@ impl GameOp {
     pub fn verb(&self) -> &'static str {
         match self {
             GameOp::AppearanceDefine(_) => "appearance_define",
+            GameOp::ChoiceDefine(_) => "choice_define",
+            GameOp::EndingDefine(_) => "ending_define",
+            GameOp::GalleryEntryDefine(_) => "gallery_entry_define",
+            GameOp::GameSaveSchemaDefine(_) => "game_save_schema_define",
             GameOp::CharacterDefine(_) => "character_define",
             GameOp::ClockDefine(_) => "clock_define",
             GameOp::ConditionDefine(_) => "condition_define",
@@ -954,6 +1233,9 @@ impl GameOp {
             GameOp::FlagDefine(_) => "flag_define",
             GameOp::GameDefine(_) => "game_define",
             GameOp::RngStreamDefine(_) => "rng_stream_define",
+            GameOp::ScheduleDefine(_) => "schedule_define",
+            GameOp::SceneBindRig(_) => "scene_bind_rig",
+            GameOp::SceneExitDefine(_) => "scene_exit_define",
             GameOp::SceneDefine(_) => "scene_define",
             GameOp::StatDefine(_) => "stat_define",
             GameOp::StatTierDefine(_) => "stat_tier_define",
@@ -968,6 +1250,10 @@ impl GameOp {
     pub fn inputs_json(&self) -> Result<Value, Refusal> {
         let result = match self {
             GameOp::AppearanceDefine(inputs) => serde_json::to_value(inputs),
+            GameOp::ChoiceDefine(inputs) => serde_json::to_value(inputs),
+            GameOp::EndingDefine(inputs) => serde_json::to_value(inputs),
+            GameOp::GalleryEntryDefine(inputs) => serde_json::to_value(inputs),
+            GameOp::GameSaveSchemaDefine(inputs) => serde_json::to_value(inputs),
             GameOp::CharacterDefine(inputs) => serde_json::to_value(inputs),
             GameOp::ClockDefine(inputs) => serde_json::to_value(inputs),
             GameOp::ConditionDefine(inputs) => serde_json::to_value(inputs),
@@ -976,6 +1262,9 @@ impl GameOp {
             GameOp::FlagDefine(inputs) => serde_json::to_value(inputs),
             GameOp::GameDefine(inputs) => serde_json::to_value(inputs),
             GameOp::RngStreamDefine(inputs) => serde_json::to_value(inputs),
+            GameOp::ScheduleDefine(inputs) => serde_json::to_value(inputs),
+            GameOp::SceneBindRig(inputs) => serde_json::to_value(inputs),
+            GameOp::SceneExitDefine(inputs) => serde_json::to_value(inputs),
             GameOp::SceneDefine(inputs) => serde_json::to_value(inputs),
             GameOp::StatDefine(inputs) => serde_json::to_value(inputs),
             GameOp::StatTierDefine(inputs) => serde_json::to_value(inputs),
@@ -1024,6 +1313,6 @@ mod tests {
             .count();
         assert_eq!(p21, 4);
         let implemented = GAME_MANIFEST.iter().filter(|spec| spec.implemented).count();
-        assert_eq!(implemented, 17);
+        assert_eq!(implemented, 24);
     }
 }

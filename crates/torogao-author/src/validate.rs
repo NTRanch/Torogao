@@ -127,6 +127,13 @@ pub fn sweep(project: &Project) -> Result<Project, Refusal> {
         let referenced = project.game.as_ref().is_some_and(|game| {
             game.characters.iter().any(|c| c.name_ref == entry.id)
                 || game.dialogue.iter().any(|l| l.text_ref == entry.id)
+                || game.choices.iter().any(|choice| {
+                    choice.prompt_line.as_deref() == Some(entry.id.as_str())
+                        || choice
+                            .options
+                            .iter()
+                            .any(|option| option.label_ref == entry.id)
+                })
         });
         if !referenced && rebuilt.content.iter().all(|e| e.id != entry.id) {
             let position = rebuilt
@@ -550,6 +557,7 @@ fn game_ops(project: &Project) -> Vec<Op> {
             id: game.id.clone(),
             start_scene: game.start_scene.clone(),
             save_schema_version: Some(game.save_schema_version),
+            alter_ego_veto: game.alter_ego_veto.clone(),
         })),
     );
     if let Some(clock) = &game.clock {
@@ -655,9 +663,22 @@ fn game_ops(project: &Project) -> Vec<Op> {
         );
     }
     for scene in &game.scenes {
+        let mut deps = vec!["game".to_string()];
+        for participant in &scene.participants {
+            deps.push(format!("character:{participant}"));
+        }
+        if let Some(condition) = &scene.entry_condition {
+            deps.push(format!("condition:{condition}"));
+        }
+        if let Some(set) = &scene.on_enter {
+            deps.push(format!("set:{set}"));
+        }
+        if let Some(set) = &scene.on_exit {
+            deps.push(format!("set:{set}"));
+        }
         push(
             format!("scene:{}", scene.id),
-            vec!["game".to_string()],
+            deps,
             Op::Game(GameOp::SceneDefine(SceneDefineInput {
                 id: scene.id.clone(),
                 presentation: match scene.presentation {
@@ -665,6 +686,11 @@ fn game_ops(project: &Project) -> Vec<Op> {
                     crate::game::model::Presentation::Room => PresentationInput::Room,
                     crate::game::model::Presentation::Vn => PresentationInput::Vn,
                 },
+                participants: scene.participants.clone(),
+                backdrop: scene.backdrop.clone(),
+                entry_condition: scene.entry_condition.clone(),
+                on_enter: scene.on_enter.clone(),
+                on_exit: scene.on_exit.clone(),
             })),
         );
     }
@@ -794,6 +820,152 @@ fn game_ops(project: &Project) -> Vec<Op> {
                         expires_days: offer.expires_days,
                     }),
             })),
+        );
+    }
+    if let Some(schema) = &game.save_schema {
+        push(
+            "schema".to_string(),
+            vec!["game".to_string()],
+            Op::Game(GameOp::GameSaveSchemaDefine(
+                crate::game::apply::save_schema_input_of(schema),
+            )),
+        );
+    }
+    for exit in &game.scene_exits {
+        let mut deps = vec![
+            "game".to_string(),
+            format!("scene:{}", exit.scene),
+            format!("scene:{}", exit.target),
+        ];
+        if let Some(condition) = &exit.condition {
+            deps.push(format!("condition:{condition}"));
+        }
+        if let Some(set) = &exit.effect_set {
+            deps.push(format!("set:{set}"));
+        }
+        push(
+            format!("exit:{}:{}", exit.scene, exit.id),
+            deps,
+            Op::Game(GameOp::SceneExitDefine(
+                crate::game::apply::scene_exit_input_of(exit),
+            )),
+        );
+    }
+    for choice in &game.choices {
+        let mut deps = vec!["game".to_string(), format!("scene:{}", choice.scene)];
+        // The choice's label/prompt prose lives in the
+        // sidecar, authored by whichever character or dialogue
+        // op carries that content id (C-7: decide() requires
+        // the entry to exist), so the choice rebuilds after
+        // them.
+        let mut prose_keys: Vec<&str> = choice
+            .options
+            .iter()
+            .map(|option| option.label_ref.as_str())
+            .collect();
+        if let Some(prompt) = &choice.prompt_line {
+            prose_keys.push(prompt);
+        }
+        for key in prose_keys {
+            if let Some(character) = game.characters.iter().find(|c| c.name_ref == key) {
+                deps.push(format!("character:{}", character.id));
+            }
+            if let Some(line) = game.dialogue.iter().find(|l| l.text_ref == key) {
+                deps.push(format!("line:{}", line.id));
+            }
+        }
+        for option in &choice.options {
+            if let Some(condition) = &option.visible_if {
+                deps.push(format!("condition:{condition}"));
+            }
+            if let Some(condition) = &option.enabled_if {
+                deps.push(format!("condition:{condition}"));
+            }
+            if let Some(set) = &option.effect_set {
+                deps.push(format!("set:{set}"));
+            }
+            if let Some(sort) = &option.sort {
+                expr_deps(sort, &mut deps);
+            }
+            match &option.target {
+                crate::game::model::ChoiceTarget::EndingCheck => {}
+                crate::game::model::ChoiceTarget::Exit(id) => {
+                    deps.push(format!("exit:{}:{id}", choice.scene));
+                }
+                crate::game::model::ChoiceTarget::Line(id) => {
+                    deps.push(format!("line:{id}"));
+                }
+                crate::game::model::ChoiceTarget::Scene(id) => {
+                    deps.push(format!("scene:{id}"));
+                }
+            }
+        }
+        push(
+            format!("choice:{}", choice.id),
+            deps,
+            Op::Game(GameOp::ChoiceDefine(crate::game::apply::choice_input_of(
+                choice,
+            ))),
+        );
+    }
+    for ending in &game.endings {
+        push(
+            format!("ending:{}", ending.id),
+            vec![
+                "game".to_string(),
+                format!("condition:{}", ending.condition),
+                format!("scene:{}", ending.epilogue_scene),
+            ],
+            Op::Game(GameOp::EndingDefine(crate::game::apply::ending_input_of(
+                ending,
+            ))),
+        );
+    }
+    for entry in &game.gallery_entries {
+        let mut deps = vec![
+            "game".to_string(),
+            format!("scene:{}", entry.replay_scene),
+            format!("line:{}", entry.replay_line),
+        ];
+        if let crate::game::model::GalleryUnlock::Condition(id) = &entry.unlock {
+            deps.push(format!("condition:{id}"));
+        }
+        push(
+            format!("gallery:{}", entry.id),
+            deps,
+            Op::Game(GameOp::GalleryEntryDefine(
+                crate::game::apply::gallery_input_of(entry),
+            )),
+        );
+    }
+    for schedule in &game.schedules {
+        let mut deps = vec![
+            "game".to_string(),
+            "clock".to_string(),
+            format!("character:{}", schedule.character),
+        ];
+        for row in &schedule.slots {
+            deps.push(format!("scene:{}", row.scene));
+        }
+        for row in &schedule.overrides {
+            deps.push(format!("condition:{}", row.condition));
+            deps.push(format!("scene:{}", row.scene));
+        }
+        push(
+            format!("schedule:{}", schedule.character),
+            deps,
+            Op::Game(GameOp::ScheduleDefine(
+                crate::game::apply::schedule_input_of(schedule),
+            )),
+        );
+    }
+    for binding in &game.scene_bindings {
+        push(
+            format!("binding:{}:{}", binding.scene, binding.participant),
+            vec!["game".to_string(), format!("scene:{}", binding.scene)],
+            Op::Game(GameOp::SceneBindRig(
+                crate::game::apply::scene_binding_input_of(binding),
+            )),
         );
     }
     topo_order(items)
@@ -993,6 +1165,364 @@ fn game_findings(project: &Project) -> Vec<Refusal> {
                 ));
             }
         }
+        // The AUTH-G flow families' forward references: the
+        // same resolutions the decide gate performs, restated
+        // for stored projects (a hand-edited file can carry
+        // what no op would admit).
+        let dangling = |findings: &mut Vec<Refusal>, message: String| {
+            findings.push(Refusal::new(RefusalClass::Dangling, message));
+        };
+        if let Some(veto) = &game.alter_ego_veto
+            && game.effect_set(veto).is_none()
+        {
+            dangling(
+                &mut findings,
+                format!("alter-ego veto effect set '{veto}' does not exist"),
+            );
+        }
+        for scene in &game.scenes {
+            for participant in &scene.participants {
+                if game.character(participant).is_none() {
+                    dangling(
+                        &mut findings,
+                        format!(
+                            "scene '{}' participant '{participant}' does not exist",
+                            scene.id
+                        ),
+                    );
+                }
+            }
+            if let Some(condition) = &scene.entry_condition
+                && game.condition(condition).is_none()
+            {
+                dangling(
+                    &mut findings,
+                    format!(
+                        "scene '{}' entry condition '{condition}' does not exist",
+                        scene.id
+                    ),
+                );
+            }
+            for (what, set) in [("on_enter", &scene.on_enter), ("on_exit", &scene.on_exit)] {
+                if let Some(set) = set
+                    && game.effect_set(set).is_none()
+                {
+                    dangling(
+                        &mut findings,
+                        format!(
+                            "scene '{}' {what} effect set '{set}' does not exist",
+                            scene.id
+                        ),
+                    );
+                }
+            }
+        }
+        for choice in &game.choices {
+            if game.scene(&choice.scene).is_none() {
+                dangling(
+                    &mut findings,
+                    format!(
+                        "choice '{}' names missing scene '{}'",
+                        choice.id, choice.scene
+                    ),
+                );
+            }
+            if let Some(prompt) = &choice.prompt_line
+                && !has_entry(prompt)
+            {
+                dangling(
+                    &mut findings,
+                    format!(
+                        "choice '{}' prompt reference '{prompt}' has no content.ron entry",
+                        choice.id
+                    ),
+                );
+            }
+            for option in &choice.options {
+                if !has_entry(&option.label_ref) {
+                    dangling(
+                        &mut findings,
+                        format!(
+                            "choice '{}' option '{}' label reference '{}' has no content.ron entry",
+                            choice.id, option.id, option.label_ref
+                        ),
+                    );
+                }
+                for (what, condition) in [
+                    ("visible_if", &option.visible_if),
+                    ("enabled_if", &option.enabled_if),
+                ] {
+                    if let Some(condition) = condition
+                        && game.condition(condition).is_none()
+                    {
+                        dangling(
+                            &mut findings,
+                            format!(
+                                "choice '{}' option '{}' {what} condition '{condition}' does not exist",
+                                choice.id, option.id
+                            ),
+                        );
+                    }
+                }
+                if let Some(set) = &option.effect_set
+                    && game.effect_set(set).is_none()
+                {
+                    dangling(
+                        &mut findings,
+                        format!(
+                            "choice '{}' option '{}' effect set '{set}' does not exist",
+                            choice.id, option.id
+                        ),
+                    );
+                }
+                match &option.target {
+                    crate::game::model::ChoiceTarget::EndingCheck => {}
+                    crate::game::model::ChoiceTarget::Exit(id) => {
+                        if game.scene_exit(&choice.scene, id).is_none() {
+                            dangling(
+                                &mut findings,
+                                format!(
+                                    "choice '{}' option '{}' targets missing exit '{id}' in scene '{}'",
+                                    choice.id, option.id, choice.scene
+                                ),
+                            );
+                        }
+                    }
+                    crate::game::model::ChoiceTarget::Line(id) => match game.dialogue_line(id) {
+                        None => dangling(
+                            &mut findings,
+                            format!(
+                                "choice '{}' option '{}' targets missing line '{id}'",
+                                choice.id, option.id
+                            ),
+                        ),
+                        Some(line) if line.scene != choice.scene => {
+                            findings.push(Refusal::new(
+                                RefusalClass::GameGraph,
+                                format!(
+                                    "choice '{}' option '{}' chains across scenes to line '{id}'",
+                                    choice.id, option.id
+                                ),
+                            ));
+                        }
+                        _ => {}
+                    },
+                    crate::game::model::ChoiceTarget::Scene(id) => {
+                        if game.scene(id).is_none() {
+                            dangling(
+                                &mut findings,
+                                format!(
+                                    "choice '{}' option '{}' targets missing scene '{id}'",
+                                    choice.id, option.id
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        let mut priorities: Vec<i64> = Vec::new();
+        for ending in &game.endings {
+            if game.condition(&ending.condition).is_none() {
+                dangling(
+                    &mut findings,
+                    format!(
+                        "ending '{}' condition '{}' does not exist",
+                        ending.id, ending.condition
+                    ),
+                );
+            }
+            if game.scene(&ending.epilogue_scene).is_none() {
+                dangling(
+                    &mut findings,
+                    format!(
+                        "ending '{}' epilogue scene '{}' does not exist",
+                        ending.id, ending.epilogue_scene
+                    ),
+                );
+            }
+            if priorities.contains(&ending.priority) {
+                findings.push(Refusal::new(
+                    RefusalClass::GameGraph,
+                    format!(
+                        "ending priority {} is taken by more than one ending",
+                        ending.priority
+                    ),
+                ));
+            }
+            priorities.push(ending.priority);
+        }
+        for entry in &game.gallery_entries {
+            if let crate::game::model::GalleryUnlock::Condition(id) = &entry.unlock
+                && game.condition(id).is_none()
+            {
+                dangling(
+                    &mut findings,
+                    format!(
+                        "gallery entry '{}' unlock condition '{id}' does not exist",
+                        entry.id
+                    ),
+                );
+            }
+            if game.scene(&entry.replay_scene).is_none() {
+                dangling(
+                    &mut findings,
+                    format!(
+                        "gallery entry '{}' replay scene '{}' does not exist",
+                        entry.id, entry.replay_scene
+                    ),
+                );
+            }
+            if game.dialogue_line(&entry.replay_line).is_none() {
+                dangling(
+                    &mut findings,
+                    format!(
+                        "gallery entry '{}' replay line '{}' does not exist",
+                        entry.id, entry.replay_line
+                    ),
+                );
+            }
+        }
+        for schedule in &game.schedules {
+            if game.character(&schedule.character).is_none() {
+                dangling(
+                    &mut findings,
+                    format!("schedule character '{}' does not exist", schedule.character),
+                );
+            }
+            if let Some(clock) = &game.clock {
+                for slot in &clock.slots {
+                    if !schedule.slots.iter().any(|row| &row.slot == slot) {
+                        findings.push(Refusal::new(
+                            RefusalClass::GameGraph,
+                            format!(
+                                "schedule for '{}' leaves clock slot '{slot}' unassigned",
+                                schedule.character
+                            ),
+                        ));
+                    }
+                }
+                for row in &schedule.slots {
+                    if !clock.slots.contains(&row.slot) {
+                        findings.push(Refusal::new(
+                            RefusalClass::GameGraph,
+                            format!(
+                                "schedule for '{}' names unknown clock slot '{}'",
+                                schedule.character, row.slot
+                            ),
+                        ));
+                    }
+                }
+            }
+            for row in &schedule.slots {
+                if game.scene(&row.scene).is_none() {
+                    dangling(
+                        &mut findings,
+                        format!(
+                            "schedule for '{}' slot '{}' names missing scene '{}'",
+                            schedule.character, row.slot, row.scene
+                        ),
+                    );
+                }
+            }
+            for row in &schedule.overrides {
+                if game.condition(&row.condition).is_none() {
+                    dangling(
+                        &mut findings,
+                        format!(
+                            "schedule for '{}' override condition '{}' does not exist",
+                            schedule.character, row.condition
+                        ),
+                    );
+                }
+                if game.scene(&row.scene).is_none() {
+                    dangling(
+                        &mut findings,
+                        format!(
+                            "schedule for '{}' override names missing scene '{}'",
+                            schedule.character, row.scene
+                        ),
+                    );
+                }
+            }
+        }
+        for binding in &game.scene_bindings {
+            match game.scene(&binding.scene) {
+                None => dangling(
+                    &mut findings,
+                    format!("scene binding names missing scene '{}'", binding.scene),
+                ),
+                Some(scene) if !scene.participants.iter().any(|p| p == &binding.participant) => {
+                    findings.push(Refusal::new(
+                        RefusalClass::GameGraph,
+                        format!(
+                            "binding participant '{}' is not a participant of scene '{}'",
+                            binding.participant, binding.scene
+                        ),
+                    ));
+                }
+                _ => {}
+            }
+            if project.expression(&binding.entry_expression).is_none() {
+                dangling(
+                    &mut findings,
+                    format!(
+                        "binding for scene '{}' entry expression '{}' does not exist",
+                        binding.scene, binding.entry_expression
+                    ),
+                );
+            }
+            if let Some(motion) = &binding.entry_motion
+                && project.motion(motion).is_none()
+            {
+                dangling(
+                    &mut findings,
+                    format!(
+                        "binding for scene '{}' entry motion '{motion}' does not exist",
+                        binding.scene
+                    ),
+                );
+            }
+        }
+        for exit in &game.scene_exits {
+            if game.scene(&exit.scene).is_none() {
+                dangling(
+                    &mut findings,
+                    format!(
+                        "scene exit '{}' names missing scene '{}'",
+                        exit.id, exit.scene
+                    ),
+                );
+            }
+            if game.scene(&exit.target).is_none() {
+                dangling(
+                    &mut findings,
+                    format!(
+                        "scene exit '{}' target scene '{}' does not exist",
+                        exit.id, exit.target
+                    ),
+                );
+            }
+            if let Some(condition) = &exit.condition
+                && game.condition(condition).is_none()
+            {
+                dangling(
+                    &mut findings,
+                    format!(
+                        "scene exit '{}' condition '{condition}' does not exist",
+                        exit.id
+                    ),
+                );
+            }
+            if let Some(set) = &exit.effect_set
+                && game.effect_set(set).is_none()
+            {
+                dangling(
+                    &mut findings,
+                    format!("scene exit '{}' effect set '{set}' does not exist", exit.id),
+                );
+            }
+        }
         findings.extend(chain_cycle_findings(game));
     }
     // Orphan sidecar entries: prose no record references. The
@@ -1002,6 +1532,10 @@ fn game_findings(project: &Project) -> Vec<Refusal> {
         project.game.as_ref().is_some_and(|game| {
             game.characters.iter().any(|c| c.name_ref == id)
                 || game.dialogue.iter().any(|l| l.text_ref == id)
+                || game.choices.iter().any(|choice| {
+                    choice.prompt_line.as_deref() == Some(id)
+                        || choice.options.iter().any(|option| option.label_ref == id)
+                })
         })
     };
     for entry in &project.content {
@@ -1019,8 +1553,9 @@ fn game_findings(project: &Project) -> Vec<Refusal> {
 }
 
 /// A dialogue chain that loops without passing through a choice
-/// can never be exited; with choices not yet authored, any
-/// `next` cycle is one. One finding per scene with a cycle.
+/// can never be exited; choice records are separate from the
+/// chain, so any `next` cycle is one. One finding per scene
+/// with a cycle.
 fn chain_cycle_findings(game: &crate::game::model::Game) -> Vec<Refusal> {
     let mut findings = Vec::new();
     for scene in &game.scenes {

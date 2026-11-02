@@ -8,19 +8,25 @@
 
 use crate::game::model::{
     AppearanceDef, AppearanceEntry, AppearanceKind, AppearanceSlot, AppearanceValue, Atom,
-    CharacterDef, Clock, ConditionDef, DialogueLine, Direction, EffectSetDef, FlagDef, FlagEdge,
-    FlagScope, GAME_FORMAT_VERSION, Game, Lifetime, OfferDef, Overflow, Repetition, RngStreamDef,
-    SceneDef, StatDef, StatInitial, StatKind, StatScope, TableDef, TableOutcome, TableWeight,
-    TierDef, TriggerDef, TriggerKind, ValueDef, VisualStateDef,
+    CharacterDef, ChoiceDef, ChoiceOption, ChoiceOrigin, ChoiceTarget, Clock, ConditionDef,
+    DialogueLine, Direction, EffectSetDef, EndingDef, FlagDef, FlagEdge, FlagScope,
+    GAME_FORMAT_VERSION, GalleryEntryDef, GalleryUnlock, Game, Lifetime, Migration, OfferDef,
+    Overflow, Repetition, RngStreamDef, SaveContextPolicy, SaveSchema, SceneBindingDef, SceneDef,
+    SceneExitDef, ScheduleDef, ScheduleOverride, ScheduleSlot, SlotHolds, StatDef, StatInitial,
+    StatKind, StatScope, TableDef, TableOutcome, TableWeight, TierDef, TriggerDef, TriggerKind,
+    ValueDef, VisualStateDef,
 };
 use crate::game::op::{
     AppearanceDefineInput, AppearanceEntryInput, AppearanceKindInput, AppearanceSlotInput,
-    AppearanceValueInput, AtomInput, CharacterDefineInput, ClockDefineInput, ConditionDefineInput,
-    DialogueLineDefineInput, DirectionInput, EffectSetDefineInput, FlagDefineInput, FlagEdgeInput,
-    FlagScopeInput, GameDefineInput, GameOp, OverflowInput, PresentationInput, RepetitionInput,
-    RngStreamDefineInput, SceneDefineInput, StatDefineInput, StatKindInput, StatScopeInput,
-    StatTierDefineInput, TableDefineInput, TableOutcomeInput, TriggerDefineInput, TriggerKindInput,
-    ValueDefineInput, VisualStateDefineInput, WeightInput,
+    AppearanceValueInput, AtomInput, CharacterDefineInput, ChoiceDefineInput, ChoiceOptionInput,
+    ChoiceTargetInput, ClockDefineInput, ConditionDefineInput, DialogueLineDefineInput,
+    DirectionInput, EffectSetDefineInput, EndingDefineInput, FlagDefineInput, FlagEdgeInput,
+    FlagScopeInput, GalleryEntryDefineInput, GalleryUnlockInput, GameDefineInput, GameOp,
+    OverflowInput, PresentationInput, RepetitionInput, RngStreamDefineInput, SavePolicyInput,
+    SaveSchemaDefineInput, SceneBindRigInput, SceneDefineInput, SceneExitDefineInput,
+    ScheduleDefineInput, StatDefineInput, StatKindInput, StatScopeInput, StatTierDefineInput,
+    TableDefineInput, TableOutcomeInput, TriggerDefineInput, TriggerKindInput, ValueDefineInput,
+    VisualStateDefineInput, WeightInput,
 };
 use crate::model::{Project, locate};
 use crate::refusal::Refusal;
@@ -61,6 +67,8 @@ pub(crate) fn character_record(inputs: &CharacterDefineInput) -> CharacterDef {
 
 /// The scene record a `scene_define` produces.
 pub(crate) fn scene_record(inputs: &SceneDefineInput) -> SceneDef {
+    let mut participants = inputs.participants.clone();
+    participants.sort();
     SceneDef {
         id: inputs.id.clone(),
         presentation: match inputs.presentation {
@@ -68,6 +76,11 @@ pub(crate) fn scene_record(inputs: &SceneDefineInput) -> SceneDef {
             PresentationInput::Room => crate::game::model::Presentation::Room,
             PresentationInput::Vn => crate::game::model::Presentation::Vn,
         },
+        participants,
+        backdrop: inputs.backdrop.clone(),
+        entry_condition: inputs.entry_condition.clone(),
+        on_enter: inputs.on_enter.clone(),
+        on_exit: inputs.on_exit.clone(),
     }
 }
 
@@ -584,6 +597,7 @@ pub fn apply_game(project: &mut Project, op: &GameOp) -> Result<(), Refusal> {
                 format_version: GAME_FORMAT_VERSION,
                 save_schema_version: save_schema_version_of(inputs),
                 start_scene: inputs.start_scene.clone(),
+                alter_ego_veto: inputs.alter_ego_veto.clone(),
                 ..Game::default()
             };
             project.game = Some(game);
@@ -664,11 +678,372 @@ pub fn apply_game(project: &mut Project, op: &GameOp) -> Result<(), Refusal> {
             let game = game_mut(project);
             upsert_visual_state(&mut game.visual_states, record);
         }
+        GameOp::ChoiceDefine(inputs) => {
+            let record = choice_record(inputs)?;
+            let game = game_mut(project);
+            upsert(&mut game.choices, record, |c| &c.id);
+        }
+        GameOp::EndingDefine(inputs) => {
+            let record = ending_record(inputs);
+            let game = game_mut(project);
+            upsert(&mut game.endings, record, |e| &e.id);
+        }
+        GameOp::GalleryEntryDefine(inputs) => {
+            let record = gallery_record(inputs);
+            let game = game_mut(project);
+            upsert(&mut game.gallery_entries, record, |e| &e.id);
+        }
+        GameOp::GameSaveSchemaDefine(inputs) => {
+            let record = save_schema_record(inputs);
+            let game = game_mut(project);
+            game.save_schema = Some(record);
+        }
+        GameOp::ScheduleDefine(inputs) => {
+            let record = schedule_record(inputs);
+            let game = game_mut(project);
+            upsert(&mut game.schedules, record, |s| &s.character);
+        }
+        GameOp::SceneBindRig(inputs) => {
+            let record = scene_binding_record(inputs);
+            let game = game_mut(project);
+            upsert_scene_binding(&mut game.scene_bindings, record);
+        }
+        GameOp::SceneExitDefine(inputs) => {
+            let record = scene_exit_record(inputs);
+            let game = game_mut(project);
+            upsert_scene_exit(&mut game.scene_exits, record);
+        }
     }
     if let Some(game) = &mut project.game {
         migrate_game_section(game);
     }
     Ok(())
+}
+
+/// The save-context policy a `SavePolicyInput` denotes (safe
+/// scenes sorted, the record's canonical shape).
+pub(crate) fn policy_of(input: &SavePolicyInput) -> SaveContextPolicy {
+    match input {
+        SavePolicyInput::AnyTickBoundary => SaveContextPolicy::AnyTickBoundary,
+        SavePolicyInput::SceneBoundary => SaveContextPolicy::SceneBoundary,
+        SavePolicyInput::SafeScenesOnly { scenes } => {
+            let mut scenes = scenes.clone();
+            scenes.sort();
+            scenes.dedup();
+            SaveContextPolicy::SafeScenesOnly(scenes)
+        }
+    }
+}
+
+/// The save-schema record a `game_save_schema_define`
+/// produces (partitions and migrations sorted to canonical
+/// shape).
+pub(crate) fn save_schema_record(inputs: &SaveSchemaDefineInput) -> SaveSchema {
+    let mut slot_fields = inputs.slot_fields.clone();
+    slot_fields.sort();
+    let mut globals_fields = inputs.globals_fields.clone();
+    globals_fields.sort();
+    let mut migrations: Vec<Migration> = inputs
+        .migrations
+        .iter()
+        .map(|step| Migration {
+            from: step.from,
+            name: step.name.clone(),
+        })
+        .collect();
+    migrations.sort_by_key(|step| step.from);
+    SaveSchema {
+        version: inputs.version,
+        slots: inputs.slots,
+        slot_holds: match inputs.slot_holds.as_str() {
+            "chapter_list" => SlotHolds::ChapterList,
+            _ => SlotHolds::OneRun,
+        },
+        slot_fields,
+        globals_fields,
+        hash_algorithm: inputs.hash_algorithm.clone(),
+        policy: policy_of(&inputs.policy),
+        migrations,
+    }
+}
+
+/// The record a stored schema rebuilds to (validate sweep).
+pub(crate) fn save_schema_input_of(schema: &SaveSchema) -> SaveSchemaDefineInput {
+    SaveSchemaDefineInput {
+        version: schema.version,
+        slots: schema.slots,
+        slot_holds: match schema.slot_holds {
+            SlotHolds::ChapterList => "chapter_list".to_string(),
+            SlotHolds::OneRun => "one_run".to_string(),
+        },
+        slot_fields: schema.slot_fields.clone(),
+        globals_fields: schema.globals_fields.clone(),
+        hash_algorithm: schema.hash_algorithm.clone(),
+        policy: match &schema.policy {
+            SaveContextPolicy::AnyTickBoundary => SavePolicyInput::AnyTickBoundary,
+            SaveContextPolicy::SceneBoundary => SavePolicyInput::SceneBoundary,
+            SaveContextPolicy::SafeScenesOnly(scenes) => SavePolicyInput::SafeScenesOnly {
+                scenes: scenes.clone(),
+            },
+        },
+        migrations: schema
+            .migrations
+            .iter()
+            .map(|step| crate::game::op::MigrationInput {
+                from: step.from,
+                name: step.name.clone(),
+            })
+            .collect(),
+    }
+}
+
+/// The choice target an input denotes.
+pub(crate) fn choice_target_of(input: &ChoiceTargetInput) -> ChoiceTarget {
+    match input {
+        ChoiceTargetInput::EndingCheck => ChoiceTarget::EndingCheck,
+        ChoiceTargetInput::Exit { id } => ChoiceTarget::Exit(id.clone()),
+        ChoiceTargetInput::Line { id } => ChoiceTarget::Line(id.clone()),
+        ChoiceTargetInput::Scene { id } => ChoiceTarget::Scene(id.clone()),
+    }
+}
+
+/// The choice record a `choice_define` produces (options in
+/// authored order; sort expressions converted).
+pub(crate) fn choice_record(inputs: &ChoiceDefineInput) -> Result<ChoiceDef, Refusal> {
+    let mut options: Vec<ChoiceOption> = Vec::with_capacity(inputs.options.len());
+    for option in &inputs.options {
+        options.push(ChoiceOption {
+            id: option.id.clone(),
+            label_ref: option.label_ref.clone(),
+            visible_if: option.visible_if.clone(),
+            enabled_if: option.enabled_if.clone(),
+            sort: option
+                .sort
+                .as_ref()
+                .map(super::expr::expr_from_input)
+                .transpose()?,
+            origin: match option.origin.as_str() {
+                "alter_ego" => ChoiceOrigin::AlterEgo,
+                _ => ChoiceOrigin::Player,
+            },
+            effect_set: option.effect_set.clone(),
+            target: choice_target_of(&option.target),
+        });
+    }
+    Ok(ChoiceDef {
+        id: inputs.id.clone(),
+        scene: inputs.scene.clone(),
+        prompt_line: inputs.prompt_line.clone(),
+        options,
+    })
+}
+
+/// The inputs a stored choice rebuilds from (validate sweep).
+pub(crate) fn choice_input_of(record: &ChoiceDef) -> ChoiceDefineInput {
+    ChoiceDefineInput {
+        id: record.id.clone(),
+        scene: record.scene.clone(),
+        prompt_line: record.prompt_line.clone(),
+        options: record
+            .options
+            .iter()
+            .map(|option| ChoiceOptionInput {
+                id: option.id.clone(),
+                label_ref: option.label_ref.clone(),
+                visible_if: option.visible_if.clone(),
+                enabled_if: option.enabled_if.clone(),
+                sort: option.sort.as_ref().map(super::expr::expr_to_input),
+                origin: match option.origin {
+                    ChoiceOrigin::AlterEgo => "alter_ego".to_string(),
+                    ChoiceOrigin::Player => "player".to_string(),
+                },
+                effect_set: option.effect_set.clone(),
+                target: match &option.target {
+                    ChoiceTarget::EndingCheck => ChoiceTargetInput::EndingCheck,
+                    ChoiceTarget::Exit(id) => ChoiceTargetInput::Exit { id: id.clone() },
+                    ChoiceTarget::Line(id) => ChoiceTargetInput::Line { id: id.clone() },
+                    ChoiceTarget::Scene(id) => ChoiceTargetInput::Scene { id: id.clone() },
+                },
+            })
+            .collect(),
+    }
+}
+
+/// The ending record an `ending_define` produces.
+pub(crate) fn ending_record(inputs: &EndingDefineInput) -> EndingDef {
+    EndingDef {
+        id: inputs.id.clone(),
+        condition: inputs.condition.clone(),
+        priority: inputs.priority,
+        epilogue_scene: inputs.epilogue_scene.clone(),
+    }
+}
+
+/// The inputs a stored ending rebuilds from (validate sweep).
+pub(crate) fn ending_input_of(record: &EndingDef) -> EndingDefineInput {
+    EndingDefineInput {
+        id: record.id.clone(),
+        condition: record.condition.clone(),
+        priority: record.priority,
+        epilogue_scene: record.epilogue_scene.clone(),
+    }
+}
+
+/// The gallery record a `gallery_entry_define` produces.
+pub(crate) fn gallery_record(inputs: &GalleryEntryDefineInput) -> GalleryEntryDef {
+    GalleryEntryDef {
+        id: inputs.id.clone(),
+        category: inputs.category.clone(),
+        unlock: match &inputs.unlock {
+            GalleryUnlockInput::Condition { id } => GalleryUnlock::Condition(id.clone()),
+            GalleryUnlockInput::Effect => GalleryUnlock::Effect,
+        },
+        replay_scene: inputs.replay_scene.clone(),
+        replay_line: inputs.replay_line.clone(),
+        thumbnail: inputs.thumbnail.clone(),
+    }
+}
+
+/// The inputs a stored gallery entry rebuilds from (validate
+/// sweep).
+pub(crate) fn gallery_input_of(record: &GalleryEntryDef) -> GalleryEntryDefineInput {
+    GalleryEntryDefineInput {
+        id: record.id.clone(),
+        category: record.category.clone(),
+        unlock: match &record.unlock {
+            GalleryUnlock::Condition(id) => GalleryUnlockInput::Condition { id: id.clone() },
+            GalleryUnlock::Effect => GalleryUnlockInput::Effect,
+        },
+        replay_scene: record.replay_scene.clone(),
+        replay_line: record.replay_line.clone(),
+        thumbnail: record.thumbnail.clone(),
+    }
+}
+
+/// The schedule record a `schedule_define` produces (slot rows
+/// sorted by slot name; overrides keep authored order).
+pub(crate) fn schedule_record(inputs: &ScheduleDefineInput) -> ScheduleDef {
+    let mut slots: Vec<ScheduleSlot> = inputs
+        .slots
+        .iter()
+        .map(|row| ScheduleSlot {
+            slot: row.slot.clone(),
+            scene: row.scene.clone(),
+        })
+        .collect();
+    slots.sort_by(|a, b| a.slot.cmp(&b.slot));
+    ScheduleDef {
+        character: inputs.character.clone(),
+        slots,
+        overrides: inputs
+            .overrides
+            .iter()
+            .map(|row| ScheduleOverride {
+                condition: row.condition.clone(),
+                scene: row.scene.clone(),
+            })
+            .collect(),
+    }
+}
+
+/// The inputs a stored schedule rebuilds from (validate
+/// sweep): the rows are already in canonical sorted order, so
+/// the rebuilt record matches.
+pub(crate) fn schedule_input_of(record: &ScheduleDef) -> ScheduleDefineInput {
+    ScheduleDefineInput {
+        character: record.character.clone(),
+        slots: record
+            .slots
+            .iter()
+            .map(|row| crate::game::op::ScheduleSlotInput {
+                slot: row.slot.clone(),
+                scene: row.scene.clone(),
+            })
+            .collect(),
+        overrides: record
+            .overrides
+            .iter()
+            .map(|row| crate::game::op::ScheduleOverrideInput {
+                condition: row.condition.clone(),
+                scene: row.scene.clone(),
+            })
+            .collect(),
+    }
+}
+
+/// The binding record a `scene_bind_rig` produces.
+pub(crate) fn scene_binding_record(inputs: &SceneBindRigInput) -> SceneBindingDef {
+    SceneBindingDef {
+        scene: inputs.scene.clone(),
+        participant: inputs.participant.clone(),
+        rig_model: inputs.rig_model.clone(),
+        entry_expression: inputs.entry_expression.clone(),
+        entry_motion: inputs.entry_motion.clone(),
+    }
+}
+
+/// The inputs a stored binding rebuilds from (validate sweep).
+pub(crate) fn scene_binding_input_of(record: &SceneBindingDef) -> SceneBindRigInput {
+    SceneBindRigInput {
+        scene: record.scene.clone(),
+        participant: record.participant.clone(),
+        rig_model: record.rig_model.clone(),
+        entry_expression: record.entry_expression.clone(),
+        entry_motion: record.entry_motion.clone(),
+    }
+}
+
+/// The exit record a `scene_exit_define` produces.
+pub(crate) fn scene_exit_record(inputs: &SceneExitDefineInput) -> SceneExitDef {
+    SceneExitDef {
+        scene: inputs.scene.clone(),
+        id: inputs.id.clone(),
+        target: inputs.target.clone(),
+        condition: inputs.condition.clone(),
+        effect_set: inputs.effect_set.clone(),
+    }
+}
+
+/// The inputs a stored exit rebuilds from (validate sweep).
+pub(crate) fn scene_exit_input_of(record: &SceneExitDef) -> SceneExitDefineInput {
+    SceneExitDefineInput {
+        scene: record.scene.clone(),
+        id: record.id.clone(),
+        target: record.target.clone(),
+        condition: record.condition.clone(),
+        effect_set: record.effect_set.clone(),
+    }
+}
+
+/// Inserts or replaces a binding in the (scene,
+/// participant)-sorted collection (scene_bind_rig's set
+/// semantics land here: an admitted rebind simply replaces).
+fn upsert_scene_binding(items: &mut Vec<SceneBindingDef>, item: SceneBindingDef) {
+    match items
+        .iter()
+        .position(|row| row.scene == item.scene && row.participant == item.participant)
+    {
+        Some(index) => items[index] = item,
+        None => {
+            items.push(item);
+            items.sort_by(|a, b| (&a.scene, &a.participant).cmp(&(&b.scene, &b.participant)));
+        }
+    }
+}
+
+/// Inserts or replaces an exit in the (scene, id)-sorted
+/// collection.
+fn upsert_scene_exit(items: &mut Vec<SceneExitDef>, item: SceneExitDef) {
+    match items
+        .iter()
+        .position(|row| row.scene == item.scene && row.id == item.id)
+    {
+        Some(index) => items[index] = item,
+        None => {
+            items.push(item);
+            items.sort_by(|a, b| (&a.scene, &a.id).cmp(&(&b.scene, &b.id)));
+        }
+    }
 }
 
 fn game_mut(project: &mut Project) -> &mut Game {

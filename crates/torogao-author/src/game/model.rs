@@ -39,10 +39,21 @@ pub struct Game {
     /// [`GAME_FORMAT_VERSION`]).
     pub format_version: i64,
     /// The authored save-schema version saves must not exceed.
+    /// This stored scalar is only the pre-schema default: once
+    /// a save schema is authored, the binding version is
+    /// derived from it (see `derived_save_schema_version`).
     pub save_schema_version: i64,
     /// Scene the game starts in (a forward reference at define
     /// time; the validation sweep requires it to exist).
     pub start_scene: Option<String>,
+    /// The alter-ego veto rule (C-9/D-549, re-homed from the
+    /// AUTH-G branch's `GameDef`): an effect-set id the
+    /// interpreter applies as its own transaction when the
+    /// player picks a non-alter-ego option while an alter-ego
+    /// option was offered (Amendment 2 §G5). A forward
+    /// reference at define time; the validation sweep requires
+    /// it to exist.
+    pub alter_ego_veto: Option<String>,
     /// The authored clock, once defined.
     pub clock: Option<Clock>,
     /// Named RNG streams, sorted by id. (Serialized only when
@@ -72,6 +83,27 @@ pub struct Game {
     pub dialogue: Vec<DialogueLine>,
     /// Triggers, sorted by id.
     pub triggers: Vec<TriggerDef>,
+    /// Branch-point choices, sorted by id. (Serialized only
+    /// when non-empty, like `streams`.)
+    pub choices: Vec<ChoiceDef>,
+    /// Ending rules, sorted by id. (Serialized only when
+    /// non-empty.)
+    pub endings: Vec<EndingDef>,
+    /// Gallery replay registrations, sorted by id. (Serialized
+    /// only when non-empty.)
+    pub gallery_entries: Vec<GalleryEntryDef>,
+    /// Per-character schedules, sorted by character.
+    /// (Serialized only when non-empty.)
+    pub schedules: Vec<ScheduleDef>,
+    /// Scene-participant rig bindings, sorted by (scene,
+    /// participant). (Serialized only when non-empty.)
+    pub scene_bindings: Vec<SceneBindingDef>,
+    /// Scene exits, sorted by (scene, id). (Serialized only
+    /// when non-empty.)
+    pub scene_exits: Vec<SceneExitDef>,
+    /// The authored save schema, once defined (C-4/D-544).
+    /// (Serialized only when present.)
+    pub save_schema: Option<SaveSchema>,
     /// Per-character appearance tables, sorted by character
     /// id. (Serialized only when non-empty, like `streams`.)
     pub appearances: Vec<AppearanceDef>,
@@ -81,9 +113,53 @@ pub struct Game {
 }
 
 impl Game {
+    /// The save-schema version saves bind to: the authored
+    /// schema's version when a schema exists, otherwise the
+    /// stored `save_schema_version` scalar (the pre-schema
+    /// default for projects that never author one) (C-4/D-544).
+    pub fn derived_save_schema_version(&self) -> i64 {
+        self.save_schema
+            .as_ref()
+            .map_or(self.save_schema_version, |schema| i64::from(schema.version))
+    }
+
     /// The appearance table of this character.
     pub fn appearance(&self, character: &str) -> Option<&AppearanceDef> {
         find(&self.appearances, character, |item| &item.character)
+    }
+
+    /// The choice with this id.
+    pub fn choice(&self, id: &str) -> Option<&ChoiceDef> {
+        find(&self.choices, id, |item| &item.id)
+    }
+
+    /// The ending with this id.
+    pub fn ending(&self, id: &str) -> Option<&EndingDef> {
+        find(&self.endings, id, |item| &item.id)
+    }
+
+    /// The gallery entry with this id.
+    pub fn gallery_entry(&self, id: &str) -> Option<&GalleryEntryDef> {
+        find(&self.gallery_entries, id, |item| &item.id)
+    }
+
+    /// The schedule of this character.
+    pub fn schedule(&self, character: &str) -> Option<&ScheduleDef> {
+        find(&self.schedules, character, |item| &item.character)
+    }
+
+    /// The rig binding of this (scene, participant) pair.
+    pub fn scene_binding(&self, scene: &str, participant: &str) -> Option<&SceneBindingDef> {
+        self.scene_bindings
+            .iter()
+            .find(|row| row.scene == scene && row.participant == participant)
+    }
+
+    /// The exit with this id in this scene.
+    pub fn scene_exit(&self, scene: &str, id: &str) -> Option<&SceneExitDef> {
+        self.scene_exits
+            .iter()
+            .find(|row| row.scene == scene && row.id == id)
     }
 
     /// The character with this id.
@@ -497,13 +573,32 @@ pub enum Presentation {
     Vn,
 }
 
-/// One scene.
+/// One scene. The C-8/D-548 growth fields (`participants`,
+/// `backdrop`, `entry_condition`, `on_enter`, `on_exit`) are
+/// absent-means-absent: a scene authored before the growth
+/// carries none of them and keeps its bytes.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneDef {
     /// Stable id.
     pub id: String,
     /// The presentation class.
     pub presentation: Presentation,
+    /// The characters present in the scene (character ids,
+    /// sorted). `scene_bind_rig` keys on (scene, participant)
+    /// against this list.
+    pub participants: Vec<String>,
+    /// The backdrop: an intaken asset id or a rig scene id
+    /// (Amendment 2 §Item G4); resolved at validation where
+    /// the naming collection is known, forward here.
+    pub backdrop: Option<String>,
+    /// A condition id gating entry to the scene.
+    pub entry_condition: Option<String>,
+    /// An effect set applied when the scene is entered (the
+    /// interpreter applies it at the transition step).
+    pub on_enter: Option<String>,
+    /// An effect set applied when the scene is left (applied
+    /// at the transition step, before the entry effects).
+    pub on_exit: Option<String>,
 }
 
 /// One dialogue line. The record carries a text *reference*
@@ -776,6 +871,280 @@ pub struct TableDef {
     /// The outcomes, in authored order (draws walk them in this
     /// order against cumulative weights).
     pub outcomes: Vec<TableOutcome>,
+}
+
+/// Where a manual save may be taken (Amendment 2 §G3.3). This
+/// is the save-schema family's policy surface: the AUTH-G
+/// branch also carried a `save_policy` on its `game_define`
+/// inputs, and D-549 folds that surface in here — the schema's
+/// policy is the one home, and `game_define` carries no second
+/// copy to disagree with it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SaveContextPolicy {
+    /// At any tick boundary (the first-class default posture).
+    AnyTickBoundary,
+    /// Only at scene boundaries.
+    SceneBoundary,
+    /// Only inside the listed safe scenes (sorted).
+    SafeScenesOnly(Vec<String>),
+}
+
+/// Whether a save slot holds one run or a chapter list.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SlotHolds {
+    /// A chapter list per slot.
+    ChapterList,
+    /// One run per slot.
+    OneRun,
+}
+
+/// One named migration step in a save schema's chain: it
+/// migrates saves of version `from` to `from + 1`. Applying a
+/// step at load time is acceptance under the step's name: the
+/// step carries no field mapping (the branch's `Migration` is
+/// `{from, name}`), so the state document carries over
+/// unchanged and the step's effect is the version advance
+/// itself, recorded by name in the loaded save's audit trail.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Migration {
+    /// The version this step migrates from.
+    pub from: u32,
+    /// The migration's name (its id).
+    pub name: String,
+}
+
+/// The authored save schema (`game_save_schema_define`,
+/// Amendment 2 §G3.3): saving and loading are runtime acts;
+/// what a save must contain is authored data.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SaveSchema {
+    /// Schema version: strictly increases on every change.
+    pub version: u32,
+    /// Slot count, 1..=64.
+    pub slots: u32,
+    /// Whether a slot holds one run or a chapter list.
+    pub slot_holds: SlotHolds,
+    /// State fields in the per-slot partition, sorted.
+    pub slot_fields: Vec<String>,
+    /// State fields in the globals partition, sorted.
+    pub globals_fields: Vec<String>,
+    /// The named hash algorithm version saves carry.
+    pub hash_algorithm: String,
+    /// Where a manual save may be taken.
+    pub policy: SaveContextPolicy,
+    /// The migration chain segment: named steps, sorted by
+    /// `from`, contiguous, ending at `version - 1`. A
+    /// redefinition's segment starts at the prior schema's
+    /// version (the branch's rule), so the chain a load walks
+    /// is exactly the steps the current schema carries.
+    pub migrations: Vec<Migration>,
+}
+
+/// The canonical game-state field set a save schema partitions
+/// (Amendment 2 §G3.3): every field belongs to exactly one
+/// partition, so the schema sweep is an exact cover of this
+/// list.
+pub const SAVE_STATE_FIELDS: &[&str] = &[
+    "clock",
+    "ending",
+    "flags_globals",
+    "flags_run",
+    "gallery",
+    "rng_state",
+    "scene",
+    "stats",
+    "triggers",
+];
+
+/// Who a choice option belongs to (Amendment 2 §G2.4): the
+/// alter-ego origin is what the game's veto rule
+/// (`Game::alter_ego_veto`) acts on when the player declines
+/// it by picking another option.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChoiceOrigin {
+    /// An alter-ego option.
+    AlterEgo,
+    /// A player option.
+    Player,
+}
+
+/// Where a choice option leads (Amendment 2 §G2.4, reconciled
+/// with the trunk's chain pointer under C-8/D-548): a `Line`
+/// target joins the scene's dialogue chain (the target line
+/// must belong to the choice's scene, as a `next` pointer
+/// must stay in its scene); an `Exit` target resolves through
+/// the scene's authored exit record to its target scene; a
+/// `Scene` target names that scene directly. Both scene
+/// targets drive the interpreter's one transition mechanism
+/// (`pending_scene`, step 5) — no parallel exit machinery.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ChoiceTarget {
+    /// The ending evaluation point (no id: the check itself).
+    EndingCheck,
+    /// A scene exit, by its id within the choice's scene.
+    Exit(String),
+    /// A dialogue line, by id (in the choice's scene).
+    Line(String),
+    /// A scene, by id (a direct transition target).
+    Scene(String),
+}
+
+/// One option of a choice (Amendment 2 §G2.4). Authored order
+/// is the ordinal the runtime's sort falls back to.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChoiceOption {
+    /// Option id, unique within the choice.
+    pub id: String,
+    /// Content id of the label text: a `content.ron` sidecar
+    /// key (C-7/D-547), refused at decide time when absent.
+    pub label_ref: String,
+    /// Condition id gating visibility.
+    pub visible_if: Option<String>,
+    /// Condition id gating enablement: visible-but-disabled
+    /// is a distinct, authored state.
+    pub enabled_if: Option<String>,
+    /// Integer sort expression: the runtime orders presented
+    /// options by (sort value, authored ordinal).
+    pub sort: Option<Expr>,
+    /// Who the option belongs to.
+    pub origin: ChoiceOrigin,
+    /// Effect set applied when the option is taken (absent:
+    /// no effects).
+    pub effect_set: Option<String>,
+    /// Where the option leads.
+    pub target: ChoiceTarget,
+}
+
+/// A branch point (`choice_define`, Amendment 2 §G2.4).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChoiceDef {
+    /// Choice id.
+    pub id: String,
+    /// The scene the choice belongs to.
+    pub scene: String,
+    /// The prompt's content id (a `content.ron` sidecar key,
+    /// C-7/D-547), when the choice has one.
+    pub prompt_line: Option<String>,
+    /// The options, in authored order.
+    pub options: Vec<ChoiceOption>,
+}
+
+/// An ending rule (`ending_define`, Amendment 2 §G2.6):
+/// evaluation is a runtime act; the rule is data. Priorities
+/// are unique across endings and evaluate in ascending order
+/// (the lowest priority number is checked first), so the
+/// runtime never coin-flips an ending.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EndingDef {
+    /// Ending id.
+    pub id: String,
+    /// The condition id that must hold.
+    pub condition: String,
+    /// Evaluation priority: unique across endings.
+    pub priority: i64,
+    /// The epilogue scene id.
+    pub epilogue_scene: String,
+}
+
+/// How a gallery entry unlocks (Amendment 2 §G2.6).
+#[derive(Clone, Debug, PartialEq)]
+pub enum GalleryUnlock {
+    /// A condition id under which the entry auto-unlocks.
+    Condition(String),
+    /// An effect atom names this entry (the unlock is an
+    /// effect, not a condition).
+    Effect,
+}
+
+/// A replay registration (`gallery_entry_define`, Amendment 2
+/// §G2.6).
+#[derive(Clone, Debug, PartialEq)]
+pub struct GalleryEntryDef {
+    /// Entry id.
+    pub id: String,
+    /// The gallery category the entry files under.
+    pub category: String,
+    /// How the entry unlocks.
+    pub unlock: GalleryUnlock,
+    /// The replay target scene id.
+    pub replay_scene: String,
+    /// The replay target entry line id.
+    pub replay_line: String,
+    /// Thumbnail asset id; resolves against the project's
+    /// intaken assets at define time.
+    pub thumbnail: Option<String>,
+}
+
+/// One slot → scene row of a schedule.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScheduleSlot {
+    /// The clock slot name.
+    pub slot: String,
+    /// The scene id the character is in.
+    pub scene: String,
+}
+
+/// One ordered condition override of a schedule: when the
+/// condition holds, the character is in this scene instead of
+/// the slot's.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScheduleOverride {
+    /// The condition id.
+    pub condition: String,
+    /// The scene id.
+    pub scene: String,
+}
+
+/// A character's recurring placement (`schedule_define`,
+/// Amendment 2 §G2.4): the slot map covers every clock slot —
+/// the runtime must never guess a location.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScheduleDef {
+    /// The character id.
+    pub character: String,
+    /// Slot → scene rows, sorted by slot name (the map is the
+    /// meaning; row order is not).
+    pub slots: Vec<ScheduleSlot>,
+    /// Ordered condition overrides: first match wins.
+    pub overrides: Vec<ScheduleOverride>,
+}
+
+/// A scene participant's rig binding (`scene_bind_rig`,
+/// Amendment 2 §G2.4): kept apart from the scene record so art
+/// can be rebound without re-authoring the scene's logic.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneBindingDef {
+    /// The scene id.
+    pub scene: String,
+    /// The participant (character) id: a member of the scene's
+    /// `participants` (C-8/D-548).
+    pub participant: String,
+    /// The rig model id (a forward reference: the model
+    /// registry of §Item G4 is not authored in this crate).
+    pub rig_model: String,
+    /// The entry expression id: resolves against the project's
+    /// rig expressions at define time.
+    pub entry_expression: String,
+    /// The entry motion id, when the binding enters moving:
+    /// resolves against the project's motions at define time.
+    pub entry_motion: Option<String>,
+}
+
+/// One exit from a scene (`scene_exit_define`, Amendment 2
+/// §G2.4): exits are separate records so graphs grow
+/// incrementally and the reachability sweep has named edges.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneExitDef {
+    /// The scene the exit leaves.
+    pub scene: String,
+    /// Exit id, unique within the scene.
+    pub id: String,
+    /// The target scene id.
+    pub target: String,
+    /// Condition id gating the exit.
+    pub condition: Option<String>,
+    /// Effect set applied on traversal.
+    pub effect_set: Option<String>,
 }
 
 /// One prose entry of `content.ron`, keyed by content id. Entries

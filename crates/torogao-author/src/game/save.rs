@@ -12,13 +12,27 @@
 //! state-hash recompute. A failed load mutates nothing: it
 //! produces no state at all.
 //!
-//! The migration chain currently has one step, v1 → v2 (the
-//! P2-2/P2-3 tick-contract bump): v2 added optional state fields
-//! (lifetime counters, offer state), so a v1 state reads with
-//! those fields absent — counters disarmed, no offers pending —
-//! which the state parser already encodes. The step is a named
-//! function so the rule is authored, inspectable, and tested,
-//! not an accident of the parser.
+//! The format migration chain currently has one step, v1 → v2
+//! (the P2-2/P2-3 tick-contract bump): v2 added optional state
+//! fields (lifetime counters, offer state), so a v1 state reads
+//! with those fields absent — counters disarmed, no offers
+//! pending — which the state parser already encodes. The step
+//! is a named function so the rule is authored, inspectable,
+//! and tested, not an accident of the parser.
+//!
+//! The save-SCHEMA version is a separate axis (C-4/D-544): the
+//! version a save binds to is derived — the authored save
+//! schema's version when a schema exists, else the stored
+//! `save_schema_version` scalar (the pre-schema default). A
+//! save older than the derived version walks the authored
+//! schema's migration chain stepwise: each step is a named
+//! acceptance (a `Migration` is `{from, name}` — it carries no
+//! field mapping, so the state document carries over unchanged
+//! and the step's effect is the version advance, recorded by
+//! name in `SavedGame::migrations_applied`). A missing step —
+//! including a save older than the chain segment the current
+//! schema carries, or any older save when no schema exists —
+//! refuses `TG-GAME-SAVE-SCHEMA`: there is no silent upgrade.
 
 use crate::codec::{open, record, text};
 use crate::game::model::{GAME_FORMAT_VERSION, GAME_FORMAT_VERSION_FIRST, GAME_HASH_ALGO, Game};
@@ -38,6 +52,10 @@ pub struct SavedGame {
     pub run_seed: i64,
     /// The verified runtime state.
     pub state: GameState,
+    /// The migration steps applied to bring the save's schema
+    /// version up to the project's derived version, by name,
+    /// in order (empty when the save was already current).
+    pub migrations_applied: Vec<String>,
 }
 
 /// Serializes a save for `state` under `project`'s authored
@@ -63,7 +81,10 @@ pub fn save_game(
             ("hash_algo", text(GAME_HASH_ALGO)),
             ("project_sha256", text(project_sha256)),
             ("run_seed", Ron::Int(run_seed)),
-            ("schema_version", Ron::Int(game.save_schema_version)),
+            (
+                "schema_version",
+                Ron::Int(game.derived_save_schema_version()),
+            ),
             ("state", state_to_ron(state)),
             ("state_hash", text(&state_hash(state))),
         ],
@@ -112,11 +133,37 @@ pub fn load_game(
             ),
         );
     }
-    if schema_version > game.save_schema_version {
+    let derived = game.derived_save_schema_version();
+    if schema_version > derived {
         return schema_refusal(format!(
-            "save schema_version {schema_version} is newer than the project's authored {}",
-            game.save_schema_version
+            "save schema_version {schema_version} is newer than the project's authored {derived}"
         ));
+    }
+    // An older save walks the authored migration chain
+    // stepwise (see the module header): every step from the
+    // save's version up to the derived version must be named
+    // in the current schema's chain.
+    let mut migrations_applied: Vec<String> = Vec::new();
+    if schema_version < derived {
+        let Some(schema) = &game.save_schema else {
+            return schema_refusal(format!(
+                "save schema_version {schema_version} predates the project's {derived}, and the project authors no save schema to migrate it"
+            ));
+        };
+        let mut current = schema_version;
+        while current < derived {
+            let Some(step) = schema
+                .migrations
+                .iter()
+                .find(|step| i64::from(step.from) == current)
+            else {
+                return schema_refusal(format!(
+                    "save schema_version {schema_version} cannot reach the project's {derived}: the migration chain has no step from version {current}"
+                ));
+            };
+            migrations_applied.push(step.name.clone());
+            current += 1;
+        }
     }
     if format_version > GAME_FORMAT_VERSION {
         return schema_refusal(format!(
@@ -139,7 +186,11 @@ pub fn load_game(
             "save state_hash {recorded_hash} does not recompute ({recomputed}); the save is corrupt or hand-edited"
         ));
     }
-    Ok(SavedGame { run_seed, state })
+    Ok(SavedGame {
+        run_seed,
+        state,
+        migrations_applied,
+    })
 }
 
 /// A save's state must name only what the project defines: a
@@ -205,6 +256,11 @@ fn verify_state_against_project(game: &Game, state: &GameState) -> Result<(), Re
         && game.dialogue_line(line).is_none()
     {
         return schema_refusal(format!("save names undefined dialogue line '{line}'"));
+    }
+    if let Some(ending) = &state.ending
+        && game.ending(ending).is_none()
+    {
+        return schema_refusal(format!("save names undefined ending '{ending}'"));
     }
     Ok(())
 }

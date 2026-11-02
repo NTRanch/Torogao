@@ -6,26 +6,34 @@
 
 use crate::decide::{Verdict, check_id};
 use crate::game::apply::{
-    appearance_record, character_record, clock_record, condition_record, dialogue_record,
-    effect_set_record, flag_record, save_schema_version_of, scene_record, stat_record,
-    stream_record, table_record, tier_record, trigger_record, value_record, visual_state_record,
+    appearance_record, character_record, choice_record, clock_record, condition_record,
+    dialogue_record, effect_set_record, ending_record, flag_record, gallery_record,
+    save_schema_record, save_schema_version_of, scene_binding_record, scene_exit_record,
+    scene_record, schedule_record, stat_record, stream_record, table_record, tier_record,
+    trigger_record, value_record, visual_state_record,
 };
-use crate::game::model::{AppearanceKind, GAME_FORMAT_VERSION, GAME_FORMAT_VERSION_FIRST, Game};
+use crate::game::model::{
+    AppearanceKind, GAME_FORMAT_VERSION, GAME_FORMAT_VERSION_FIRST, GAME_HASH_ALGO, Game,
+    SAVE_STATE_FIELDS,
+};
 use crate::game::op::{
     AppearanceDefineInput, AppearanceEntryInput, AppearanceValueInput, AtomInput,
-    CharacterDefineInput, ClockDefineInput, ConditionDefineInput, DialogueLineDefineInput,
-    EffectSetDefineInput, ExprInput, FlagDefineInput, GameDefineInput, GameOp,
-    RngStreamDefineInput, SceneDefineInput, StatDefineInput, StatKindInput, StatTierDefineInput,
-    TableDefineInput, TriggerDefineInput, TriggerKindInput, ValueDefineInput,
-    VisualStateDefineInput, WeightInput,
+    CharacterDefineInput, ChoiceDefineInput, ClockDefineInput, ConditionDefineInput,
+    DialogueLineDefineInput, EffectSetDefineInput, EndingDefineInput, ExprInput, FlagDefineInput,
+    GalleryEntryDefineInput, GalleryUnlockInput, GameDefineInput, GameOp, RngStreamDefineInput,
+    SaveSchemaDefineInput, SceneBindRigInput, SceneDefineInput, SceneExitDefineInput,
+    ScheduleDefineInput, StatDefineInput, StatKindInput, StatTierDefineInput, TableDefineInput,
+    TriggerDefineInput, TriggerKindInput, ValueDefineInput, VisualStateDefineInput, WeightInput,
 };
 use crate::limits::{
-    GAME_APPEARANCE_SLOTS_MAX, GAME_CHARACTERS_MAX, GAME_CONDITIONS_MAX,
-    GAME_CONTENT_TEXT_BYTES_MAX, GAME_DIALOGUE_LINES_MAX, GAME_EFFECT_ATOMS_MAX,
-    GAME_EFFECT_SETS_MAX, GAME_FLAGS_MAX, GAME_LIFETIME_DAYS_MAX, GAME_OFFER_DAYS_MAX,
-    GAME_RNG_STREAMS_MAX, GAME_SCENES_MAX, GAME_SLOTS_MAX, GAME_STATS_MAX, GAME_TABLE_OUTCOMES_MAX,
-    GAME_TABLES_MAX, GAME_TIER_THRESHOLDS_MAX, GAME_TRIGGERS_MAX, GAME_VALUES_MAX,
-    GAME_VISUAL_STATES_MAX,
+    GAME_APPEARANCE_SLOTS_MAX, GAME_CATEGORY_TEXT_BYTES_MAX, GAME_CHARACTERS_MAX,
+    GAME_CHOICE_OPTIONS_MAX, GAME_CHOICES_MAX, GAME_CONDITIONS_MAX, GAME_CONTENT_TEXT_BYTES_MAX,
+    GAME_DIALOGUE_LINES_MAX, GAME_EFFECT_ATOMS_MAX, GAME_EFFECT_SETS_MAX, GAME_ENDINGS_MAX,
+    GAME_FLAGS_MAX, GAME_GALLERY_ENTRIES_MAX, GAME_LIFETIME_DAYS_MAX, GAME_MIGRATIONS_MAX,
+    GAME_OFFER_DAYS_MAX, GAME_RNG_STREAMS_MAX, GAME_SAVE_SLOTS_MAX, GAME_SCENE_BINDINGS_MAX,
+    GAME_SCENE_EXITS_MAX, GAME_SCENES_MAX, GAME_SCHEDULE_OVERRIDES_MAX, GAME_SCHEDULES_MAX,
+    GAME_SLOTS_MAX, GAME_STATS_MAX, GAME_TABLE_OUTCOMES_MAX, GAME_TABLES_MAX,
+    GAME_TIER_THRESHOLDS_MAX, GAME_TRIGGERS_MAX, GAME_VALUES_MAX, GAME_VISUAL_STATES_MAX,
 };
 use crate::model::Project;
 use crate::refusal::{Refusal, RefusalClass, refuse};
@@ -181,6 +189,25 @@ pub fn decide_game(project: &Project, op: &GameOp) -> Result<Verdict, Refusal> {
         GameOp::AppearanceDefine(inputs) => {
             let game = section(project)?;
             decide_appearance(game, inputs)
+        }
+        GameOp::ChoiceDefine(inputs) => decide_choice(project, inputs),
+        GameOp::EndingDefine(inputs) => {
+            let game = section(project)?;
+            decide_ending(game, inputs)
+        }
+        GameOp::GalleryEntryDefine(inputs) => decide_gallery_entry(project, inputs),
+        GameOp::GameSaveSchemaDefine(inputs) => {
+            let game = section(project)?;
+            decide_save_schema(game, inputs)
+        }
+        GameOp::ScheduleDefine(inputs) => {
+            let game = section(project)?;
+            decide_schedule(game, inputs)
+        }
+        GameOp::SceneBindRig(inputs) => decide_scene_bind_rig(project, inputs),
+        GameOp::SceneExitDefine(inputs) => {
+            let game = section(project)?;
+            decide_scene_exit(game, inputs)
         }
         GameOp::VisualStateDefine(inputs) => {
             let game = section(project)?;
@@ -852,6 +879,9 @@ fn decide_game_define(project: &Project, inputs: &GameDefineInput) -> Result<Ver
     if let Some(scene) = &inputs.start_scene {
         check_id(scene, "start scene")?;
     }
+    if let Some(veto) = &inputs.alter_ego_veto {
+        check_id(veto, "alter-ego veto effect set")?;
+    }
     let schema = save_schema_version_of(inputs);
     if schema < 1 {
         return refuse(
@@ -874,6 +904,7 @@ fn decide_game_define(project: &Project, inputs: &GameDefineInput) -> Result<Ver
             if game.id == inputs.id
                 && game.start_scene == inputs.start_scene
                 && game.save_schema_version == schema
+                && game.alter_ego_veto == inputs.alter_ego_veto
             {
                 Ok(Verdict::NoOp)
             } else {
@@ -936,6 +967,43 @@ fn decide_character(project: &Project, inputs: &CharacterDefineInput) -> Result<
 
 fn decide_scene(game: &Game, inputs: &SceneDefineInput) -> Result<Verdict, Refusal> {
     check_id(&inputs.id, "scene id")?;
+    let mut seen: Vec<&str> = Vec::with_capacity(inputs.participants.len());
+    for participant in &inputs.participants {
+        check_id(participant, "scene participant")?;
+        if seen.contains(&participant.as_str()) {
+            return refuse(
+                RefusalClass::Malformed,
+                format!(
+                    "participant '{participant}' is named twice in scene '{}'",
+                    inputs.id
+                ),
+            );
+        }
+        seen.push(participant);
+        if game.character(participant).is_none() {
+            return dangling("participant character", participant);
+        }
+    }
+    if let Some(backdrop) = &inputs.backdrop {
+        check_id(backdrop, "scene backdrop")?;
+    }
+    if let Some(condition) = &inputs.entry_condition {
+        check_id(condition, "entry condition")?;
+        if game.condition(condition).is_none() {
+            return dangling("entry condition", condition);
+        }
+    }
+    for (what, set) in [
+        ("on_enter effect set", &inputs.on_enter),
+        ("on_exit effect set", &inputs.on_exit),
+    ] {
+        if let Some(set) = set {
+            check_id(set, what)?;
+            if game.effect_set(set).is_none() {
+                return dangling(what, set);
+            }
+        }
+    }
     let record = scene_record(inputs);
     match game.scene(&inputs.id) {
         Some(existing) if *existing == record => Ok(Verdict::NoOp),
@@ -948,6 +1016,541 @@ fn decide_scene(game: &Game, inputs: &SceneDefineInput) -> Result<Verdict, Refus
             Ok(Verdict::Apply)
         }
     }
+}
+
+fn decide_save_schema(game: &Game, inputs: &SaveSchemaDefineInput) -> Result<Verdict, Refusal> {
+    if inputs.version == 0 {
+        return refuse(
+            RefusalClass::GameSaveSchema,
+            "save schema version 0 is below 1",
+        );
+    }
+    if inputs.slots == 0 || inputs.slots > GAME_SAVE_SLOTS_MAX {
+        return refuse(
+            RefusalClass::GameSaveSchema,
+            format!(
+                "save schema slot count {} is outside 1..={GAME_SAVE_SLOTS_MAX}",
+                inputs.slots
+            ),
+        );
+    }
+    match inputs.slot_holds.as_str() {
+        "chapter_list" | "one_run" => {}
+        other => {
+            return refuse(
+                RefusalClass::UnknownKind,
+                format!("slot_holds '{other}' is not a known slot shape"),
+            );
+        }
+    }
+    if !inputs.hash_algorithm.contains('/') {
+        return refuse(
+            RefusalClass::GameSaveSchema,
+            format!(
+                "hash algorithm '{}' is unversioned; name a versioned algorithm",
+                inputs.hash_algorithm
+            ),
+        );
+    }
+    if inputs.hash_algorithm != GAME_HASH_ALGO {
+        return refuse(
+            RefusalClass::UnknownKind,
+            format!(
+                "hash algorithm '{}' is not a known algorithm",
+                inputs.hash_algorithm
+            ),
+        );
+    }
+    // The partition sweep: an exact cover of the canonical
+    // state-field set (Amendment 2 §G3.3).
+    let mut covered: Vec<&str> = Vec::with_capacity(SAVE_STATE_FIELDS.len());
+    for field in inputs
+        .slot_fields
+        .iter()
+        .chain(inputs.globals_fields.iter())
+    {
+        if !SAVE_STATE_FIELDS.contains(&field.as_str()) {
+            return refuse(
+                RefusalClass::GameSaveSchema,
+                format!("state field '{field}' is not a game-state field"),
+            );
+        }
+        if covered.contains(&field.as_str()) {
+            return refuse(
+                RefusalClass::GameSaveSchema,
+                format!("state field '{field}' is assigned twice (partitions overlap)"),
+            );
+        }
+        covered.push(field);
+    }
+    if covered.len() != SAVE_STATE_FIELDS.len() {
+        let missing: Vec<&str> = SAVE_STATE_FIELDS
+            .iter()
+            .copied()
+            .filter(|field| !covered.contains(field))
+            .collect();
+        return refuse(
+            RefusalClass::GameSaveSchema,
+            format!(
+                "the partition leaves state fields unassigned: {}",
+                missing.join(", ")
+            ),
+        );
+    }
+    // The migration chain segment: named steps, contiguous,
+    // ending at version - 1 (authoring rule per Amendment 2).
+    check_count(inputs.migrations.len(), GAME_MIGRATIONS_MAX, "migrations")?;
+    let mut steps: Vec<u32> = inputs.migrations.iter().map(|step| step.from).collect();
+    steps.sort_unstable();
+    if inputs.version == 1 && !steps.is_empty() {
+        return refuse(
+            RefusalClass::GameSaveSchema,
+            "a version-1 schema has nothing to migrate from",
+        );
+    }
+    if inputs.version > 1 && steps.is_empty() {
+        return refuse(
+            RefusalClass::GameSaveSchema,
+            format!(
+                "schema version {} needs a migration chain, and none was given",
+                inputs.version
+            ),
+        );
+    }
+    for (index, from) in steps.iter().enumerate() {
+        let expected = steps[0] + u32::try_from(index).unwrap_or(u32::MAX);
+        if *from != expected {
+            return refuse(
+                RefusalClass::GameSaveSchema,
+                format!("migration from {from} does not continue the chain (expected {expected})"),
+            );
+        }
+    }
+    if let Some(last) = steps.last()
+        && *last != inputs.version - 1
+    {
+        return refuse(
+            RefusalClass::GameSaveSchema,
+            format!(
+                "the migration chain ends at version {last}; it must end at {}",
+                inputs.version - 1
+            ),
+        );
+    }
+    for step in &inputs.migrations {
+        if step.name.trim().is_empty() {
+            return refuse(RefusalClass::Malformed, "a migration step needs a name");
+        }
+    }
+    let record = save_schema_record(inputs);
+    match &game.save_schema {
+        None => Ok(Verdict::Apply),
+        Some(existing) if *existing == record => Ok(Verdict::NoOp),
+        Some(existing) => {
+            if inputs.version <= existing.version {
+                return refuse(
+                    RefusalClass::GameSaveSchema,
+                    format!(
+                        "save schema version {} does not strictly increase over the authored {}",
+                        inputs.version, existing.version
+                    ),
+                );
+            }
+            if steps.first() != Some(&existing.version) {
+                return refuse(
+                    RefusalClass::GameSaveSchema,
+                    format!(
+                        "the migration chain starts at {:?}; it must start at the prior schema's version {}",
+                        steps.first(),
+                        existing.version
+                    ),
+                );
+            }
+            Ok(Verdict::Apply)
+        }
+    }
+}
+
+fn decide_choice(project: &Project, inputs: &ChoiceDefineInput) -> Result<Verdict, Refusal> {
+    let game = section(project)?;
+    check_id(&inputs.id, "choice id")?;
+    check_id(&inputs.scene, "choice scene")?;
+    if game.scene(&inputs.scene).is_none() {
+        return dangling("scene", &inputs.scene);
+    }
+    if let Some(prompt) = &inputs.prompt_line {
+        check_id(prompt, "prompt content id")?;
+        if !project.content.iter().any(|entry| entry.id == *prompt) {
+            return refuse(
+                RefusalClass::Dangling,
+                format!("prompt content '{prompt}' is not in the content sidecar"),
+            );
+        }
+    }
+    if inputs.options.is_empty() {
+        return refuse(
+            RefusalClass::Malformed,
+            format!("choice '{}' has no options", inputs.id),
+        );
+    }
+    check_count(
+        inputs.options.len(),
+        GAME_CHOICE_OPTIONS_MAX,
+        "choice options",
+    )?;
+    let mut seen: Vec<&str> = Vec::with_capacity(inputs.options.len());
+    let mut unconditional = false;
+    for option in &inputs.options {
+        check_id(&option.id, "choice option id")?;
+        check_id(&option.label_ref, "option label reference")?;
+        if seen.contains(&option.id.as_str()) {
+            return refuse(
+                RefusalClass::Malformed,
+                format!(
+                    "option id '{}' is named twice in choice '{}'",
+                    option.id, inputs.id
+                ),
+            );
+        }
+        seen.push(&option.id);
+        if !project
+            .content
+            .iter()
+            .any(|entry| entry.id == option.label_ref)
+        {
+            return refuse(
+                RefusalClass::Dangling,
+                format!(
+                    "label content '{}' is not in the content sidecar",
+                    option.label_ref
+                ),
+            );
+        }
+        if option.visible_if.is_none() && option.enabled_if.is_none() {
+            unconditional = true;
+        }
+        for (what, condition) in [
+            ("visible_if condition", &option.visible_if),
+            ("enabled_if condition", &option.enabled_if),
+        ] {
+            if let Some(condition) = condition {
+                check_id(condition, what)?;
+                if game.condition(condition).is_none() {
+                    return dangling(what, condition);
+                }
+            }
+        }
+        match option.origin.as_str() {
+            "alter_ego" | "player" => {}
+            other => {
+                return refuse(
+                    RefusalClass::UnknownKind,
+                    format!("choice option origin '{other}' is not a known origin"),
+                );
+            }
+        }
+        if let Some(sort) = &option.sort {
+            let expr = crate::game::expr::expr_from_input(sort)?;
+            let ty = crate::game::expr::type_of(game, &expr)?;
+            if ty != crate::game::model::ExprType::Int {
+                return refuse(
+                    RefusalClass::GameExpr,
+                    format!(
+                        "choice '{}' option '{}' sort is not an integer expression",
+                        inputs.id, option.id
+                    ),
+                );
+            }
+        }
+        if let Some(set) = &option.effect_set {
+            check_id(set, "option effect set")?;
+            if game.effect_set(set).is_none() {
+                return dangling("option effect set", set);
+            }
+        }
+        match &option.target {
+            crate::game::op::ChoiceTargetInput::EndingCheck => {}
+            crate::game::op::ChoiceTargetInput::Exit { id } => {
+                check_id(id, "exit target")?;
+                if game.scene_exit(&inputs.scene, id).is_none() {
+                    return dangling("scene exit", id);
+                }
+            }
+            crate::game::op::ChoiceTargetInput::Line { id } => {
+                check_id(id, "line target")?;
+                match game.dialogue_line(id) {
+                    None => return dangling("dialogue line", id),
+                    Some(line) if line.scene != inputs.scene => {
+                        return refuse(
+                            RefusalClass::GameGraph,
+                            format!(
+                                "choice '{}' option '{}' targets line '{id}' of scene '{}'; a line target must stay in the choice's scene '{}'",
+                                inputs.id, option.id, line.scene, inputs.scene
+                            ),
+                        );
+                    }
+                    Some(_) => {}
+                }
+            }
+            crate::game::op::ChoiceTargetInput::Scene { id } => {
+                check_id(id, "scene target")?;
+                if game.scene(id).is_none() {
+                    return dangling("scene", id);
+                }
+            }
+        }
+    }
+    if !unconditional {
+        return refuse(
+            RefusalClass::GameGraph,
+            format!(
+                "choice '{}' has no unconditional option: a player could face an empty choice",
+                inputs.id
+            ),
+        );
+    }
+    let record = choice_record(inputs)?;
+    upsert_verdict(
+        game.choice(&inputs.id),
+        &record,
+        "choice",
+        &inputs.id,
+        game.choices.len() + 1,
+        GAME_CHOICES_MAX,
+    )
+}
+
+fn decide_ending(game: &Game, inputs: &EndingDefineInput) -> Result<Verdict, Refusal> {
+    check_id(&inputs.id, "ending id")?;
+    check_id(&inputs.condition, "ending condition")?;
+    check_id(&inputs.epilogue_scene, "epilogue scene")?;
+    if game.condition(&inputs.condition).is_none() {
+        return dangling("ending condition", &inputs.condition);
+    }
+    if game.scene(&inputs.epilogue_scene).is_none() {
+        return dangling("epilogue scene", &inputs.epilogue_scene);
+    }
+    if game
+        .endings
+        .iter()
+        .any(|ending| ending.id != inputs.id && ending.priority == inputs.priority)
+    {
+        return refuse(
+            RefusalClass::GameGraph,
+            format!(
+                "ending priority {} is already taken: priorities are unique",
+                inputs.priority
+            ),
+        );
+    }
+    let record = ending_record(inputs);
+    upsert_verdict(
+        game.ending(&inputs.id),
+        &record,
+        "ending",
+        &inputs.id,
+        game.endings.len() + 1,
+        GAME_ENDINGS_MAX,
+    )
+}
+
+fn decide_gallery_entry(
+    project: &Project,
+    inputs: &GalleryEntryDefineInput,
+) -> Result<Verdict, Refusal> {
+    let game = section(project)?;
+    check_id(&inputs.id, "gallery entry id")?;
+    if inputs.category.trim().is_empty() || inputs.category.len() > GAME_CATEGORY_TEXT_BYTES_MAX {
+        return refuse(
+            RefusalClass::Malformed,
+            format!(
+                "gallery category must be usable text of at most {GAME_CATEGORY_TEXT_BYTES_MAX} bytes"
+            ),
+        );
+    }
+    check_id(&inputs.replay_scene, "replay scene")?;
+    check_id(&inputs.replay_line, "replay line")?;
+    if game.scene(&inputs.replay_scene).is_none() {
+        return dangling("replay scene", &inputs.replay_scene);
+    }
+    if game.dialogue_line(&inputs.replay_line).is_none() {
+        return dangling("replay line", &inputs.replay_line);
+    }
+    if let GalleryUnlockInput::Condition { id } = &inputs.unlock {
+        check_id(id, "unlock condition")?;
+        if game.condition(id).is_none() {
+            return dangling("unlock condition", id);
+        }
+    }
+    if let Some(thumbnail) = &inputs.thumbnail {
+        check_id(thumbnail, "thumbnail asset")?;
+        if project.asset(thumbnail).is_none() {
+            return dangling("thumbnail asset", thumbnail);
+        }
+    }
+    let record = gallery_record(inputs);
+    upsert_verdict(
+        game.gallery_entry(&inputs.id),
+        &record,
+        "gallery entry",
+        &inputs.id,
+        game.gallery_entries.len() + 1,
+        GAME_GALLERY_ENTRIES_MAX,
+    )
+}
+
+fn decide_schedule(game: &Game, inputs: &ScheduleDefineInput) -> Result<Verdict, Refusal> {
+    check_id(&inputs.character, "schedule character")?;
+    if game.character(&inputs.character).is_none() {
+        return dangling("character", &inputs.character);
+    }
+    let Some(clock) = &game.clock else {
+        return refuse(
+            RefusalClass::GameGraph,
+            "a schedule needs the game's clock (the slot set is the clock's)",
+        );
+    };
+    let mut seen: Vec<&str> = Vec::with_capacity(inputs.slots.len());
+    for row in &inputs.slots {
+        check_id(&row.scene, "schedule scene")?;
+        if !clock.slots.iter().any(|slot| slot == &row.slot) {
+            return refuse(
+                RefusalClass::GameGraph,
+                format!("slot '{}' is not a clock slot", row.slot),
+            );
+        }
+        if seen.contains(&row.slot.as_str()) {
+            return refuse(
+                RefusalClass::Malformed,
+                format!("slot '{}' is given twice in the schedule", row.slot),
+            );
+        }
+        seen.push(&row.slot);
+        if game.scene(&row.scene).is_none() {
+            return dangling("schedule scene", &row.scene);
+        }
+    }
+    for slot in &clock.slots {
+        if !seen.contains(&slot.as_str()) {
+            return refuse(
+                RefusalClass::GameGraph,
+                format!("the schedule leaves clock slot '{slot}' unassigned"),
+            );
+        }
+    }
+    check_count(
+        inputs.overrides.len(),
+        GAME_SCHEDULE_OVERRIDES_MAX,
+        "schedule overrides",
+    )?;
+    let mut conditions: Vec<&str> = Vec::with_capacity(inputs.overrides.len());
+    for row in &inputs.overrides {
+        check_id(&row.condition, "override condition")?;
+        check_id(&row.scene, "override scene")?;
+        if conditions.contains(&row.condition.as_str()) {
+            return refuse(
+                RefusalClass::Malformed,
+                format!("override condition '{}' is given twice", row.condition),
+            );
+        }
+        conditions.push(&row.condition);
+        if game.condition(&row.condition).is_none() {
+            return dangling("override condition", &row.condition);
+        }
+        if game.scene(&row.scene).is_none() {
+            return dangling("override scene", &row.scene);
+        }
+    }
+    let record = schedule_record(inputs);
+    upsert_verdict(
+        game.schedule(&inputs.character),
+        &record,
+        "schedule",
+        &inputs.character,
+        game.schedules.len() + 1,
+        GAME_SCHEDULES_MAX,
+    )
+}
+
+fn decide_scene_bind_rig(
+    project: &Project,
+    inputs: &SceneBindRigInput,
+) -> Result<Verdict, Refusal> {
+    let game = section(project)?;
+    check_id(&inputs.scene, "scene id")?;
+    check_id(&inputs.participant, "participant id")?;
+    check_id(&inputs.rig_model, "rig model")?;
+    check_id(&inputs.entry_expression, "entry expression")?;
+    let Some(scene) = game.scene(&inputs.scene) else {
+        return dangling("scene", &inputs.scene);
+    };
+    if !scene.participants.iter().any(|p| p == &inputs.participant) {
+        return refuse(
+            RefusalClass::GameGraph,
+            format!(
+                "'{}' is not a participant of scene '{}'",
+                inputs.participant, inputs.scene
+            ),
+        );
+    }
+    if project.expression(&inputs.entry_expression).is_none() {
+        return dangling("entry expression", &inputs.entry_expression);
+    }
+    if let Some(motion) = &inputs.entry_motion {
+        check_id(motion, "entry motion")?;
+        if project.motion(motion).is_none() {
+            return dangling("entry motion", motion);
+        }
+    }
+    let record = scene_binding_record(inputs);
+    // Set semantics (the branch's rule): rebinding is a set,
+    // identical bindings are a no-op, differing ones APPLY —
+    // never a conflict.
+    match game.scene_binding(&inputs.scene, &inputs.participant) {
+        Some(found) if *found == record => Ok(Verdict::NoOp),
+        Some(_) => Ok(Verdict::Apply),
+        None => {
+            check_count(
+                game.scene_bindings.len() + 1,
+                GAME_SCENE_BINDINGS_MAX,
+                "scene bindings",
+            )?;
+            Ok(Verdict::Apply)
+        }
+    }
+}
+
+fn decide_scene_exit(game: &Game, inputs: &SceneExitDefineInput) -> Result<Verdict, Refusal> {
+    check_id(&inputs.scene, "scene id")?;
+    check_id(&inputs.id, "exit id")?;
+    check_id(&inputs.target, "exit target")?;
+    if game.scene(&inputs.scene).is_none() {
+        return dangling("scene", &inputs.scene);
+    }
+    if game.scene(&inputs.target).is_none() {
+        return dangling("exit target scene", &inputs.target);
+    }
+    if let Some(condition) = &inputs.condition {
+        check_id(condition, "exit condition")?;
+        if game.condition(condition).is_none() {
+            return dangling("exit condition", condition);
+        }
+    }
+    if let Some(set) = &inputs.effect_set {
+        check_id(set, "exit effect set")?;
+        if game.effect_set(set).is_none() {
+            return dangling("exit effect set", set);
+        }
+    }
+    let record = scene_exit_record(inputs);
+    upsert_verdict(
+        game.scene_exit(&inputs.scene, &inputs.id),
+        &record,
+        "scene exit",
+        &inputs.id,
+        game.scene_exits.len() + 1,
+        GAME_SCENE_EXITS_MAX,
+    )
 }
 
 fn decide_dialogue(

@@ -58,6 +58,28 @@ pub const VARIANT_SETS_MAX: usize = 256;
 
 /// Maximum characters in one game.
 pub const GAME_CHARACTERS_MAX: usize = 256;
+/// Maximum choices in one game.
+pub const GAME_CHOICES_MAX: usize = 1024;
+/// Maximum options in one choice.
+pub const GAME_CHOICE_OPTIONS_MAX: usize = 64;
+/// Bound on a gallery category's text length, in bytes.
+pub const GAME_CATEGORY_TEXT_BYTES_MAX: usize = 128;
+/// Maximum endings in one game.
+pub const GAME_ENDINGS_MAX: usize = 256;
+/// Maximum gallery entries in one game.
+pub const GAME_GALLERY_ENTRIES_MAX: usize = 1024;
+/// Maximum migration steps in one save schema.
+pub const GAME_MIGRATIONS_MAX: usize = 1024;
+/// Maximum save slots a schema may declare (Amendment 2 §G3.3).
+pub const GAME_SAVE_SLOTS_MAX: u32 = 64;
+/// Maximum schedules in one game (one per character at most).
+pub const GAME_SCHEDULES_MAX: usize = 256;
+/// Maximum condition overrides in one schedule.
+pub const GAME_SCHEDULE_OVERRIDES_MAX: usize = 64;
+/// Maximum scene rig bindings in one game.
+pub const GAME_SCENE_BINDINGS_MAX: usize = 4096;
+/// Maximum scene exits in one game.
+pub const GAME_SCENE_EXITS_MAX: usize = 4096;
 /// Maximum appearance slots on one character's doll.
 pub const GAME_APPEARANCE_SLOTS_MAX: usize = 64;
 /// Maximum conditions in one game.

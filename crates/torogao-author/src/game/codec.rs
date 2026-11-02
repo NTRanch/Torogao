@@ -12,16 +12,18 @@
 //! `Value` rows.
 
 use crate::codec::{
-    Fields, as_i64, as_strings, as_u32, collect, open, open_any, opt, record, sorted_unique, text,
-    texts, unknown_variant, wrong_type,
+    Fields, as_i64, as_string, as_strings, as_u32, collect, open, open_any, opt, record,
+    sorted_unique, text, texts, unknown_variant, wrong_type,
 };
 use crate::game::model::{
     AppearanceDef, AppearanceEntry, AppearanceKind, AppearanceSlot, AppearanceValue, Atom,
-    CharacterDef, Clock, ClockField, CmpOp, ConditionDef, ContentEntry, DialogueLine, Direction,
-    EffectSetDef, Expr, FlagDef, FlagEdge, FlagScope, Game, Lifetime, OfferDef, Overflow,
-    Presentation, Repetition, RngStreamDef, SceneDef, StatDef, StatInitial, StatKind, StatScope,
-    TableDef, TableOutcome, TableWeight, TierDef, TriggerDef, TriggerKind, ValueDef,
-    VisualStateDef,
+    CharacterDef, ChoiceDef, ChoiceOption, ChoiceOrigin, ChoiceTarget, Clock, ClockField, CmpOp,
+    ConditionDef, ContentEntry, DialogueLine, Direction, EffectSetDef, EndingDef, Expr, FlagDef,
+    FlagEdge, FlagScope, GalleryEntryDef, GalleryUnlock, Game, Lifetime, Migration, OfferDef,
+    Overflow, Presentation, Repetition, RngStreamDef, SaveContextPolicy, SaveSchema,
+    SceneBindingDef, SceneDef, SceneExitDef, ScheduleDef, ScheduleOverride, ScheduleSlot,
+    SlotHolds, StatDef, StatInitial, StatKind, StatScope, TableDef, TableOutcome, TableWeight,
+    TierDef, TriggerDef, TriggerKind, ValueDef, VisualStateDef,
 };
 use crate::refusal::{Refusal, RefusalClass, refuse};
 use crate::ron::Ron;
@@ -129,6 +131,84 @@ pub(crate) fn game_to_ron(game: &Game) -> Ron {
             "visual_states",
             Ron::List(game.visual_states.iter().map(visual_state_to_ron).collect()),
         ));
+    }
+    // The AUTH-G flow surfaces (choices, endings, gallery,
+    // schedules, bindings, exits, the save schema, the veto)
+    // are absent-means-absent the same way: a project authored
+    // before them keeps its exact bytes.
+    if game.alter_ego_veto.is_some() {
+        insert_field(
+            &mut fields,
+            "characters",
+            "alter_ego_veto",
+            opt(game.alter_ego_veto.as_ref(), |id| text(id)),
+        );
+    }
+    if !game.choices.is_empty() {
+        insert_field(
+            &mut fields,
+            "clock",
+            "choices",
+            Ron::List(game.choices.iter().map(choice_to_ron).collect()),
+        );
+    }
+    if !game.endings.is_empty() {
+        insert_field(
+            &mut fields,
+            "flags",
+            "endings",
+            Ron::List(game.endings.iter().map(ending_to_ron).collect()),
+        );
+    }
+    if !game.gallery_entries.is_empty() {
+        insert_field(
+            &mut fields,
+            "format_version",
+            "gallery_entries",
+            Ron::List(
+                game.gallery_entries
+                    .iter()
+                    .map(gallery_entry_to_ron)
+                    .collect(),
+            ),
+        );
+    }
+    if let Some(schema) = &game.save_schema {
+        insert_field(
+            &mut fields,
+            "save_schema_version",
+            "save_schema",
+            save_schema_to_ron(schema),
+        );
+    }
+    if !game.schedules.is_empty() {
+        insert_field(
+            &mut fields,
+            "start_scene",
+            "schedules",
+            Ron::List(game.schedules.iter().map(schedule_to_ron).collect()),
+        );
+    }
+    if !game.scene_exits.is_empty() {
+        insert_field(
+            &mut fields,
+            "start_scene",
+            "scene_exits",
+            Ron::List(game.scene_exits.iter().map(scene_exit_to_ron).collect()),
+        );
+    }
+    if !game.scene_bindings.is_empty() {
+        insert_field(
+            &mut fields,
+            "start_scene",
+            "scene_bindings",
+            Ron::List(
+                game.scene_bindings
+                    .iter()
+                    .map(scene_binding_to_ron)
+                    .collect(),
+            ),
+        );
     }
     record("Game", fields)
 }
@@ -387,21 +467,259 @@ fn flag_to_ron(flag: &FlagDef) -> Ron {
 }
 
 fn scene_to_ron(scene: &SceneDef) -> Ron {
+    // The C-8 growth fields are absent-means-absent: a scene
+    // authored before the growth keeps its exact two-field
+    // bytes.
+    let mut fields: Vec<(&str, Ron)> = vec![("id", text(&scene.id))];
+    if scene.backdrop.is_some() {
+        fields.push(("backdrop", opt(scene.backdrop.as_ref(), |id| text(id))));
+    }
+    if scene.entry_condition.is_some() {
+        fields.push((
+            "entry_condition",
+            opt(scene.entry_condition.as_ref(), |id| text(id)),
+        ));
+    }
+    if scene.on_enter.is_some() {
+        fields.push(("on_enter", opt(scene.on_enter.as_ref(), |id| text(id))));
+    }
+    if scene.on_exit.is_some() {
+        fields.push(("on_exit", opt(scene.on_exit.as_ref(), |id| text(id))));
+    }
+    if !scene.participants.is_empty() {
+        fields.push(("participants", texts(&scene.participants)));
+    }
+    fields.push((
+        "presentation",
+        Ron::Ident(
+            match scene.presentation {
+                Presentation::Event => "Event",
+                Presentation::Room => "Room",
+                Presentation::Vn => "Vn",
+            }
+            .to_string(),
+        ),
+    ));
+    record("Scene", fields)
+}
+
+fn save_schema_to_ron(schema: &SaveSchema) -> Ron {
     record(
-        "Scene",
+        "SaveSchema",
         vec![
-            ("id", text(&scene.id)),
+            ("globals_fields", texts(&schema.globals_fields)),
+            ("hash_algorithm", text(&schema.hash_algorithm)),
             (
-                "presentation",
+                "migrations",
+                Ron::List(schema.migrations.iter().map(migration_to_ron).collect()),
+            ),
+            ("policy", save_policy_to_ron(&schema.policy)),
+            ("slot_fields", texts(&schema.slot_fields)),
+            (
+                "slot_holds",
                 Ron::Ident(
-                    match scene.presentation {
-                        Presentation::Event => "Event",
-                        Presentation::Room => "Room",
-                        Presentation::Vn => "Vn",
+                    match schema.slot_holds {
+                        SlotHolds::ChapterList => "ChapterList",
+                        SlotHolds::OneRun => "OneRun",
                     }
                     .to_string(),
                 ),
             ),
+            ("slots", Ron::Int(i64::from(schema.slots))),
+            ("version", Ron::Int(i64::from(schema.version))),
+        ],
+    )
+}
+
+fn migration_to_ron(step: &Migration) -> Ron {
+    record(
+        "Migration",
+        vec![
+            ("from", Ron::Int(i64::from(step.from))),
+            ("name", text(&step.name)),
+        ],
+    )
+}
+
+fn save_policy_to_ron(policy: &SaveContextPolicy) -> Ron {
+    let (kind, scenes): (&str, &[String]) = match policy {
+        SaveContextPolicy::AnyTickBoundary => ("AnyTickBoundary", &[]),
+        SaveContextPolicy::SceneBoundary => ("SceneBoundary", &[]),
+        SaveContextPolicy::SafeScenesOnly(scenes) => ("SafeScenesOnly", scenes),
+    };
+    record(
+        "SavePolicy",
+        vec![
+            ("kind", Ron::Ident(kind.to_string())),
+            ("scenes", texts(scenes)),
+        ],
+    )
+}
+
+fn choice_to_ron(choice: &ChoiceDef) -> Ron {
+    record(
+        "GameChoice",
+        vec![
+            ("id", text(&choice.id)),
+            (
+                "options",
+                Ron::List(choice.options.iter().map(choice_option_to_ron).collect()),
+            ),
+            (
+                "prompt_line",
+                opt(choice.prompt_line.as_ref(), |id| text(id)),
+            ),
+            ("scene", text(&choice.scene)),
+        ],
+    )
+}
+
+fn choice_option_to_ron(option: &ChoiceOption) -> Ron {
+    record(
+        "ChoiceOption",
+        vec![
+            ("effect_set", opt(option.effect_set.as_ref(), |id| text(id))),
+            ("enabled_if", opt(option.enabled_if.as_ref(), |id| text(id))),
+            ("id", text(&option.id)),
+            ("label_ref", text(&option.label_ref)),
+            (
+                "origin",
+                Ron::Ident(
+                    match option.origin {
+                        ChoiceOrigin::AlterEgo => "AlterEgo",
+                        ChoiceOrigin::Player => "Player",
+                    }
+                    .to_string(),
+                ),
+            ),
+            ("sort", opt(option.sort.as_ref(), expr_to_ron)),
+            ("target", choice_target_to_ron(&option.target)),
+            ("visible_if", opt(option.visible_if.as_ref(), |id| text(id))),
+        ],
+    )
+}
+
+fn choice_target_to_ron(target: &ChoiceTarget) -> Ron {
+    let (kind, id): (&str, Option<&String>) = match target {
+        ChoiceTarget::EndingCheck => ("EndingCheck", None),
+        ChoiceTarget::Exit(id) => ("Exit", Some(id)),
+        ChoiceTarget::Line(id) => ("Line", Some(id)),
+        ChoiceTarget::Scene(id) => ("Scene", Some(id)),
+    };
+    record(
+        "ChoiceTarget",
+        vec![
+            ("id", opt(id, |value| text(value))),
+            ("kind", Ron::Ident(kind.to_string())),
+        ],
+    )
+}
+
+fn ending_to_ron(ending: &EndingDef) -> Ron {
+    record(
+        "GameEnding",
+        vec![
+            ("condition", text(&ending.condition)),
+            ("epilogue_scene", text(&ending.epilogue_scene)),
+            ("id", text(&ending.id)),
+            ("priority", Ron::Int(ending.priority)),
+        ],
+    )
+}
+
+fn gallery_entry_to_ron(entry: &GalleryEntryDef) -> Ron {
+    record(
+        "GalleryEntry",
+        vec![
+            ("category", text(&entry.category)),
+            ("id", text(&entry.id)),
+            ("replay_line", text(&entry.replay_line)),
+            ("replay_scene", text(&entry.replay_scene)),
+            ("thumbnail", opt(entry.thumbnail.as_ref(), |id| text(id))),
+            ("unlock", gallery_unlock_to_ron(&entry.unlock)),
+        ],
+    )
+}
+
+fn gallery_unlock_to_ron(unlock: &GalleryUnlock) -> Ron {
+    let (kind, id): (&str, Option<&String>) = match unlock {
+        GalleryUnlock::Condition(id) => ("Condition", Some(id)),
+        GalleryUnlock::Effect => ("Effect", None),
+    };
+    record(
+        "GalleryUnlock",
+        vec![
+            ("id", opt(id, |value| text(value))),
+            ("kind", Ron::Ident(kind.to_string())),
+        ],
+    )
+}
+
+fn schedule_to_ron(schedule: &ScheduleDef) -> Ron {
+    record(
+        "SceneSchedule",
+        vec![
+            ("character", text(&schedule.character)),
+            (
+                "overrides",
+                Ron::List(
+                    schedule
+                        .overrides
+                        .iter()
+                        .map(schedule_override_to_ron)
+                        .collect(),
+                ),
+            ),
+            (
+                "slots",
+                Ron::List(schedule.slots.iter().map(schedule_slot_to_ron).collect()),
+            ),
+        ],
+    )
+}
+
+fn schedule_slot_to_ron(row: &ScheduleSlot) -> Ron {
+    record(
+        "ScheduleSlot",
+        vec![("scene", text(&row.scene)), ("slot", text(&row.slot))],
+    )
+}
+
+fn schedule_override_to_ron(row: &ScheduleOverride) -> Ron {
+    record(
+        "ScheduleOverride",
+        vec![
+            ("condition", text(&row.condition)),
+            ("scene", text(&row.scene)),
+        ],
+    )
+}
+
+fn scene_binding_to_ron(binding: &SceneBindingDef) -> Ron {
+    record(
+        "SceneBinding",
+        vec![
+            ("entry_expression", text(&binding.entry_expression)),
+            (
+                "entry_motion",
+                opt(binding.entry_motion.as_ref(), |id| text(id)),
+            ),
+            ("participant", text(&binding.participant)),
+            ("rig_model", text(&binding.rig_model)),
+            ("scene", text(&binding.scene)),
+        ],
+    )
+}
+
+fn scene_exit_to_ron(exit: &SceneExitDef) -> Ron {
+    record(
+        "SceneExit",
+        vec![
+            ("condition", opt(exit.condition.as_ref(), |id| text(id))),
+            ("effect_set", opt(exit.effect_set.as_ref(), |id| text(id))),
+            ("id", text(&exit.id)),
+            ("scene", text(&exit.scene)),
+            ("target", text(&exit.target)),
         ],
     )
 }
@@ -730,6 +1048,42 @@ pub(crate) fn game_from_ron(value: Ron) -> Result<Game, Refusal> {
         Some(Ron::List(items)) => collect(items, visual_state_from_ron)?,
         Some(_) => return wrong_type("visual_states", "a list"),
     };
+    // The AUTH-G flow surfaces are absent-means-absent too.
+    let choices = match fields.try_take("choices") {
+        None => Vec::new(),
+        Some(Ron::List(items)) => collect(items, choice_from_ron)?,
+        Some(_) => return wrong_type("choices", "a list"),
+    };
+    let endings = match fields.try_take("endings") {
+        None => Vec::new(),
+        Some(Ron::List(items)) => collect(items, ending_from_ron)?,
+        Some(_) => return wrong_type("endings", "a list"),
+    };
+    let gallery_entries = match fields.try_take("gallery_entries") {
+        None => Vec::new(),
+        Some(Ron::List(items)) => collect(items, gallery_entry_from_ron)?,
+        Some(_) => return wrong_type("gallery_entries", "a list"),
+    };
+    let schedules = match fields.try_take("schedules") {
+        None => Vec::new(),
+        Some(Ron::List(items)) => collect(items, schedule_from_ron)?,
+        Some(_) => return wrong_type("schedules", "a list"),
+    };
+    let scene_bindings = match fields.try_take("scene_bindings") {
+        None => Vec::new(),
+        Some(Ron::List(items)) => collect(items, scene_binding_from_ron)?,
+        Some(_) => return wrong_type("scene_bindings", "a list"),
+    };
+    let scene_exits = match fields.try_take("scene_exits") {
+        None => Vec::new(),
+        Some(Ron::List(items)) => collect(items, scene_exit_from_ron)?,
+        Some(_) => return wrong_type("scene_exits", "a list"),
+    };
+    let save_schema = match fields.try_take("save_schema") {
+        None => None,
+        Some(value) => Some(save_schema_from_ron(value)?),
+    };
+    let alter_ego_veto = opt_string_absent(&mut fields, "alter_ego_veto")?;
     let tiers = collect(fields.list("tiers")?, tier_from_ron)?;
     let triggers = collect(fields.list("triggers")?, trigger_from_ron)?;
     let values = collect(fields.list("values")?, value_def_from_ron)?;
@@ -738,6 +1092,7 @@ pub(crate) fn game_from_ron(value: Ron) -> Result<Game, Refusal> {
         format_version: fields.int("format_version")?,
         save_schema_version: fields.int("save_schema_version")?,
         start_scene: fields.opt_string("start_scene")?,
+        alter_ego_veto,
         clock,
         streams: sorted_unique(streams, "streams", |item| &item.id)?,
         tables: sorted_unique(tables, "tables", |item| &item.id)?,
@@ -753,6 +1108,13 @@ pub(crate) fn game_from_ron(value: Ron) -> Result<Game, Refusal> {
         triggers: sorted_unique(triggers, "triggers", |item| &item.id)?,
         appearances: sorted_unique(appearances, "appearances", |item| &item.character)?,
         visual_states: sorted_visual_states(visual_states)?,
+        choices: sorted_unique(choices, "choices", |item| &item.id)?,
+        endings: sorted_unique(endings, "endings", |item| &item.id)?,
+        gallery_entries: sorted_unique(gallery_entries, "gallery entries", |item| &item.id)?,
+        schedules: sorted_unique(schedules, "schedules", |item| &item.character)?,
+        scene_bindings: sorted_scene_bindings(scene_bindings)?,
+        scene_exits: sorted_scene_exits(scene_exits)?,
+        save_schema,
     };
     fields.done()?;
     Ok(game)
@@ -777,6 +1139,270 @@ fn sorted_visual_states(mut items: Vec<VisualStateDef>) -> Result<Vec<VisualStat
         }
     }
     Ok(items)
+}
+
+/// Takes an optional string field that may be absent
+/// entirely (growth fields on records that predate them).
+fn opt_string_absent(fields: &mut Fields, key: &str) -> Result<Option<String>, Refusal> {
+    match fields.try_take(key) {
+        None => Ok(None),
+        Some(Ron::Opt(None)) => Ok(None),
+        Some(Ron::Opt(Some(value))) => as_string(*value, key).map(Some),
+        Some(_) => wrong_type(key, "None or Some(...)"),
+    }
+}
+
+/// Sorts scene bindings by (scene, participant) and refuses
+/// duplicate pairs.
+fn sorted_scene_bindings(mut items: Vec<SceneBindingDef>) -> Result<Vec<SceneBindingDef>, Refusal> {
+    items.sort_by(|left, right| {
+        (left.scene.as_str(), left.participant.as_str())
+            .cmp(&(right.scene.as_str(), right.participant.as_str()))
+    });
+    for pair in items.windows(2) {
+        if pair[0].scene == pair[1].scene && pair[0].participant == pair[1].participant {
+            return refuse(
+                RefusalClass::Malformed,
+                format!(
+                    "scene bindings carry duplicate participant '{}' for scene '{}'",
+                    pair[0].participant, pair[0].scene
+                ),
+            );
+        }
+    }
+    Ok(items)
+}
+
+/// Sorts scene exits by (scene, id) and refuses duplicate
+/// pairs.
+fn sorted_scene_exits(mut items: Vec<SceneExitDef>) -> Result<Vec<SceneExitDef>, Refusal> {
+    items.sort_by(|left, right| {
+        (left.scene.as_str(), left.id.as_str()).cmp(&(right.scene.as_str(), right.id.as_str()))
+    });
+    for pair in items.windows(2) {
+        if pair[0].scene == pair[1].scene && pair[0].id == pair[1].id {
+            return refuse(
+                RefusalClass::Malformed,
+                format!(
+                    "scene exits carry duplicate exit '{}' for scene '{}'",
+                    pair[0].id, pair[0].scene
+                ),
+            );
+        }
+    }
+    Ok(items)
+}
+
+fn save_schema_from_ron(value: Ron) -> Result<SaveSchema, Refusal> {
+    let mut fields = open(value, "SaveSchema")?;
+    let schema = SaveSchema {
+        version: fields.uint("version")?,
+        slots: fields.uint("slots")?,
+        slot_holds: match fields.ident("slot_holds")?.as_str() {
+            "ChapterList" => SlotHolds::ChapterList,
+            "OneRun" => SlotHolds::OneRun,
+            other => return unknown_variant("slot_holds", other),
+        },
+        slot_fields: as_strings(fields.list("slot_fields")?, "slot_fields")?,
+        globals_fields: as_strings(fields.list("globals_fields")?, "globals_fields")?,
+        hash_algorithm: fields.string("hash_algorithm")?,
+        policy: save_policy_from_ron(fields.take("policy")?)?,
+        migrations: collect(fields.list("migrations")?, migration_from_ron)?,
+    };
+    fields.done()?;
+    Ok(schema)
+}
+
+fn migration_from_ron(value: Ron) -> Result<Migration, Refusal> {
+    let mut fields = open(value, "Migration")?;
+    let step = Migration {
+        from: fields.uint("from")?,
+        name: fields.string("name")?,
+    };
+    fields.done()?;
+    Ok(step)
+}
+
+fn save_policy_from_ron(value: Ron) -> Result<SaveContextPolicy, Refusal> {
+    let mut fields = open(value, "SavePolicy")?;
+    let scenes = as_strings(fields.list("scenes")?, "scenes")?;
+    let policy = match fields.ident("kind")?.as_str() {
+        "AnyTickBoundary" => SaveContextPolicy::AnyTickBoundary,
+        "SceneBoundary" => SaveContextPolicy::SceneBoundary,
+        "SafeScenesOnly" => SaveContextPolicy::SafeScenesOnly(scenes),
+        other => return unknown_variant("save policy kind", other),
+    };
+    fields.done()?;
+    Ok(policy)
+}
+
+fn choice_from_ron(value: Ron) -> Result<ChoiceDef, Refusal> {
+    let mut fields = open(value, "GameChoice")?;
+    let choice = ChoiceDef {
+        id: fields.string("id")?,
+        scene: fields.string("scene")?,
+        prompt_line: fields.opt_string("prompt_line")?,
+        options: collect(fields.list("options")?, choice_option_from_ron)?,
+    };
+    fields.done()?;
+    Ok(choice)
+}
+
+fn choice_option_from_ron(value: Ron) -> Result<ChoiceOption, Refusal> {
+    let mut fields = open(value, "ChoiceOption")?;
+    let sort = match fields.take("sort")? {
+        Ron::Opt(None) => None,
+        Ron::Opt(Some(inner)) => Some(expr_from_ron(*inner)?),
+        _ => return wrong_type("sort", "an optional expression"),
+    };
+    let option = ChoiceOption {
+        id: fields.string("id")?,
+        label_ref: fields.string("label_ref")?,
+        visible_if: fields.opt_string("visible_if")?,
+        enabled_if: fields.opt_string("enabled_if")?,
+        sort,
+        origin: match fields.ident("origin")?.as_str() {
+            "AlterEgo" => ChoiceOrigin::AlterEgo,
+            "Player" => ChoiceOrigin::Player,
+            other => return unknown_variant("choice origin", other),
+        },
+        effect_set: fields.opt_string("effect_set")?,
+        target: choice_target_from_ron(fields.take("target")?)?,
+    };
+    fields.done()?;
+    Ok(option)
+}
+
+fn choice_target_from_ron(value: Ron) -> Result<ChoiceTarget, Refusal> {
+    let mut fields = open(value, "ChoiceTarget")?;
+    let kind = fields.ident("kind")?;
+    let id = fields.opt_string("id")?;
+    let target = match (kind.as_str(), id) {
+        ("EndingCheck", None) => ChoiceTarget::EndingCheck,
+        ("Exit", Some(id)) => ChoiceTarget::Exit(id),
+        ("Line", Some(id)) => ChoiceTarget::Line(id),
+        ("Scene", Some(id)) => ChoiceTarget::Scene(id),
+        ("EndingCheck", Some(_)) => {
+            return refuse(
+                RefusalClass::Malformed,
+                "an ending-check target carries no id",
+            );
+        }
+        ("Exit" | "Line" | "Scene", None) => {
+            return refuse(
+                RefusalClass::Malformed,
+                format!("a {kind} target needs its id"),
+            );
+        }
+        (other, _) => return unknown_variant("choice target kind", other),
+    };
+    fields.done()?;
+    Ok(target)
+}
+
+fn ending_from_ron(value: Ron) -> Result<EndingDef, Refusal> {
+    let mut fields = open(value, "GameEnding")?;
+    let ending = EndingDef {
+        id: fields.string("id")?,
+        condition: fields.string("condition")?,
+        priority: fields.int("priority")?,
+        epilogue_scene: fields.string("epilogue_scene")?,
+    };
+    fields.done()?;
+    Ok(ending)
+}
+
+fn gallery_entry_from_ron(value: Ron) -> Result<GalleryEntryDef, Refusal> {
+    let mut fields = open(value, "GalleryEntry")?;
+    let entry = GalleryEntryDef {
+        id: fields.string("id")?,
+        category: fields.string("category")?,
+        unlock: gallery_unlock_from_ron(fields.take("unlock")?)?,
+        replay_scene: fields.string("replay_scene")?,
+        replay_line: fields.string("replay_line")?,
+        thumbnail: fields.opt_string("thumbnail")?,
+    };
+    fields.done()?;
+    Ok(entry)
+}
+
+fn gallery_unlock_from_ron(value: Ron) -> Result<GalleryUnlock, Refusal> {
+    let mut fields = open(value, "GalleryUnlock")?;
+    let kind = fields.ident("kind")?;
+    let id = fields.opt_string("id")?;
+    let unlock = match (kind.as_str(), id) {
+        ("Condition", Some(id)) => GalleryUnlock::Condition(id),
+        ("Effect", None) => GalleryUnlock::Effect,
+        ("Condition", None) => {
+            return refuse(
+                RefusalClass::Malformed,
+                "a condition unlock needs its condition id",
+            );
+        }
+        ("Effect", Some(_)) => {
+            return refuse(RefusalClass::Malformed, "an effect unlock carries no id");
+        }
+        (other, _) => return unknown_variant("gallery unlock kind", other),
+    };
+    fields.done()?;
+    Ok(unlock)
+}
+
+fn schedule_from_ron(value: Ron) -> Result<ScheduleDef, Refusal> {
+    let mut fields = open(value, "SceneSchedule")?;
+    let schedule = ScheduleDef {
+        character: fields.string("character")?,
+        slots: collect(fields.list("slots")?, schedule_slot_from_ron)?,
+        overrides: collect(fields.list("overrides")?, schedule_override_from_ron)?,
+    };
+    fields.done()?;
+    Ok(schedule)
+}
+
+fn schedule_slot_from_ron(value: Ron) -> Result<ScheduleSlot, Refusal> {
+    let mut fields = open(value, "ScheduleSlot")?;
+    let row = ScheduleSlot {
+        slot: fields.string("slot")?,
+        scene: fields.string("scene")?,
+    };
+    fields.done()?;
+    Ok(row)
+}
+
+fn schedule_override_from_ron(value: Ron) -> Result<ScheduleOverride, Refusal> {
+    let mut fields = open(value, "ScheduleOverride")?;
+    let row = ScheduleOverride {
+        condition: fields.string("condition")?,
+        scene: fields.string("scene")?,
+    };
+    fields.done()?;
+    Ok(row)
+}
+
+fn scene_binding_from_ron(value: Ron) -> Result<SceneBindingDef, Refusal> {
+    let mut fields = open(value, "SceneBinding")?;
+    let binding = SceneBindingDef {
+        scene: fields.string("scene")?,
+        participant: fields.string("participant")?,
+        rig_model: fields.string("rig_model")?,
+        entry_expression: fields.string("entry_expression")?,
+        entry_motion: fields.opt_string("entry_motion")?,
+    };
+    fields.done()?;
+    Ok(binding)
+}
+
+fn scene_exit_from_ron(value: Ron) -> Result<SceneExitDef, Refusal> {
+    let mut fields = open(value, "SceneExit")?;
+    let exit = SceneExitDef {
+        scene: fields.string("scene")?,
+        id: fields.string("id")?,
+        target: fields.string("target")?,
+        condition: fields.opt_string("condition")?,
+        effect_set: fields.opt_string("effect_set")?,
+    };
+    fields.done()?;
+    Ok(exit)
 }
 
 fn appearance_from_ron(value: Ron) -> Result<AppearanceDef, Refusal> {
@@ -1022,9 +1648,21 @@ fn scene_from_ron(value: Ron) -> Result<SceneDef, Refusal> {
         "Vn" => Presentation::Vn,
         other => return unknown_variant("presentation", other),
     };
+    let participants = match fields.try_take("participants") {
+        None => Vec::new(),
+        Some(value) => match value {
+            Ron::List(items) => as_strings(items, "participants")?,
+            _ => return wrong_type("participants", "a list"),
+        },
+    };
     let scene = SceneDef {
         id: fields.string("id")?,
         presentation,
+        participants,
+        backdrop: opt_string_absent(&mut fields, "backdrop")?,
+        entry_condition: opt_string_absent(&mut fields, "entry_condition")?,
+        on_enter: opt_string_absent(&mut fields, "on_enter")?,
+        on_exit: opt_string_absent(&mut fields, "on_exit")?,
     };
     fields.done()?;
     Ok(scene)

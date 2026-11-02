@@ -345,13 +345,28 @@ fn dialogue_references_to_missing_scene_and_speaker_refuse_dangling() {
 }
 
 #[test]
-fn deferred_game_verbs_refuse_by_name() {
-    let root = test_root("deferred");
-    for name in ["choice_define", "ending_define"] {
+fn flow_verbs_are_live_not_deferred() {
+    // The AUTH-G flow verbs landed in Stage 2B: they no longer
+    // refuse by name. With no game section and empty inputs the
+    // refusal is the ordinary gate one (no section / malformed
+    // inputs), never the deferred-verb unknown-kind refusal.
+    let root = test_root("flow-live");
+    for name in [
+        "choice_define",
+        "ending_define",
+        "gallery_entry_define",
+        "game_save_schema_define",
+        "schedule_define",
+        "scene_bind_rig",
+        "scene_exit_define",
+    ] {
         let answer = verb(&root, name, json!({}));
         assert_eq!(answer.status, Status::Refused, "{name}");
-        assert_eq!(
-            answer.doc["code"], "TG-AUTH-UNKNOWN-KIND",
+        assert!(
+            !answer.doc["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("deferred to a later stage"),
             "{name}: {}",
             answer.doc
         );
@@ -547,6 +562,11 @@ fn game_section_codec_round_trips_every_record_shape() {
         scenes: vec![SceneDef {
             id: "intro".to_string(),
             presentation: Presentation::Vn,
+            participants: vec!["amy".to_string()],
+            backdrop: Some("bg_intro".to_string()),
+            entry_condition: None,
+            on_enter: None,
+            on_exit: None,
         }],
         dialogue: vec![DialogueLine {
             id: "line_1".to_string(),
@@ -657,6 +677,103 @@ fn game_section_codec_round_trips_every_record_shape() {
                 }),
             },
         ],
+        alter_ego_veto: Some("apply_control".to_string()),
+        choices: vec![ChoiceDef {
+            id: "first_choice".to_string(),
+            scene: "intro".to_string(),
+            prompt_line: Some("text_prompt".to_string()),
+            options: vec![
+                ChoiceOption {
+                    id: "stay".to_string(),
+                    label_ref: "text_stay".to_string(),
+                    visible_if: None,
+                    enabled_if: None,
+                    sort: None,
+                    origin: ChoiceOrigin::Player,
+                    effect_set: Some("apply_control".to_string()),
+                    target: ChoiceTarget::Line("line_1".to_string()),
+                },
+                ChoiceOption {
+                    id: "leave".to_string(),
+                    label_ref: "text_leave".to_string(),
+                    visible_if: Some("is_morning".to_string()),
+                    enabled_if: None,
+                    sort: Some(Expr::Clock(ClockField::Day)),
+                    origin: ChoiceOrigin::AlterEgo,
+                    effect_set: None,
+                    target: ChoiceTarget::EndingCheck,
+                },
+            ],
+        }],
+        endings: vec![EndingDef {
+            id: "held_ending".to_string(),
+            condition: "is_morning".to_string(),
+            priority: 10,
+            epilogue_scene: "intro".to_string(),
+        }],
+        gallery_entries: vec![GalleryEntryDef {
+            id: "first_glimpse".to_string(),
+            category: "scenes".to_string(),
+            unlock: GalleryUnlock::Condition("is_morning".to_string()),
+            replay_scene: "intro".to_string(),
+            replay_line: "line_1".to_string(),
+            thumbnail: None,
+        }],
+        schedules: vec![ScheduleDef {
+            character: "amy".to_string(),
+            slots: vec![
+                ScheduleSlot {
+                    slot: "morning".to_string(),
+                    scene: "intro".to_string(),
+                },
+                ScheduleSlot {
+                    slot: "night".to_string(),
+                    scene: "intro".to_string(),
+                },
+            ],
+            overrides: vec![ScheduleOverride {
+                condition: "is_morning".to_string(),
+                scene: "intro".to_string(),
+            }],
+        }],
+        scene_bindings: vec![SceneBindingDef {
+            scene: "intro".to_string(),
+            participant: "amy".to_string(),
+            rig_model: "amy_rig".to_string(),
+            entry_expression: "neutral".to_string(),
+            entry_motion: None,
+        }],
+        scene_exits: vec![SceneExitDef {
+            scene: "intro".to_string(),
+            id: "to_hall".to_string(),
+            target: "intro".to_string(),
+            condition: None,
+            effect_set: Some("apply_control".to_string()),
+        }],
+        save_schema: Some(SaveSchema {
+            version: 2,
+            slots: 8,
+            slot_holds: SlotHolds::OneRun,
+            slot_fields: vec![
+                "clock".to_string(),
+                "scene".to_string(),
+                "stats".to_string(),
+            ],
+            globals_fields: vec![
+                "ending".to_string(),
+                "flags_globals".to_string(),
+                "flags_run".to_string(),
+                "gallery".to_string(),
+                "rng_state".to_string(),
+                "triggers".to_string(),
+            ],
+            hash_algorithm: GAME_HASH_ALGO.to_string(),
+            policy: SaveContextPolicy::SafeScenesOnly(vec!["intro".to_string()]),
+            migrations: vec![Migration {
+                from: 1,
+                name: "first".to_string(),
+            }],
+        }),
     };
     let project = crate::model::Project {
         game: Some(game),

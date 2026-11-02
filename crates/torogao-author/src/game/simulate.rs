@@ -13,16 +13,30 @@
 //!    order; each applies its effect set as one transaction (or
 //!    becomes an offer, for offer-bearing triggers).
 //! 3. Consume one choice-log input: an advance, an event (its
-//!    `on_event` triggers fire as the transaction), or an offer
-//!    decision.
+//!    `on_event` triggers fire as the transaction), an offer
+//!    decision, or a choice. A choice resolves its authored
+//!    record: the offered options (visible and enabled, in
+//!    (sort value, authored ordinal) order) are recorded in the
+//!    trace, the picked option must be among them, its effect
+//!    set applies as one transaction, the game's alter-ego
+//!    veto set applies as its own transaction when an
+//!    alter-ego option was offered and a non-alter option was
+//!    picked (Amendment 2 §G5), and the option's target
+//!    resolves — a line target joins the scene's dialogue
+//!    chain, an exit or scene target sets the pending
+//!    transition for step 5.
 //! 4. Re-evaluate `on_threshold` / `on_flag` triggers and the
 //!    `on_event` triggers of events emitted in steps 2–3, in the
 //!    same order, looping until none fire; each trigger fires at
 //!    most once per tick.
 //! 5. Apply the scene transition (the last `enter_scene` of the
-//!    tick wins), then fire `on_enter_scene` triggers.
-//! 6. Ending rules evaluate — no ending records are authored in
-//!    this build, so a run never ends early.
+//!    tick wins): the old scene's `on_exit` effect set
+//!    transacts, then the new scene's `on_enter` effect set
+//!    transacts, then `on_enter_scene` triggers fire.
+//! 6. Ending rules evaluate in ascending priority order
+//!    (priorities are unique across endings, enforced at
+//!    define time); the first whose condition holds sets the
+//!    run's ending, and the run stops after this tick's hash.
 //! 7. Hash the state into the chain.
 //!
 //! Effect sets apply as transactions on a working copy: a
@@ -32,7 +46,9 @@
 
 use crate::game::codec::emit_content;
 use crate::game::expr::{Value as ExprValue, eval, eval_condition};
-use crate::game::model::{Atom, Game, OfferDef, Repetition, TriggerDef, TriggerKind};
+use crate::game::model::{
+    Atom, ChoiceOrigin, ChoiceTarget, Game, OfferDef, Repetition, TriggerDef, TriggerKind,
+};
 use crate::game::op::{LogEntryInput, SimulateInput};
 use crate::game::state::{GameState, StatKey, TriggerState, state_hash};
 use crate::intake::sha256_hex;
@@ -47,11 +63,12 @@ use std::collections::BTreeSet;
 pub struct LogEntry {
     /// The tick the input lands on (1-based).
     pub tick: u64,
-    /// `advance`, `event`, or `offer`.
+    /// `advance`, `event`, `offer`, or `choice`.
     pub kind: String,
-    /// The event name or trigger id, by kind.
+    /// The event name, trigger id, or choice id, by kind.
     pub id: String,
-    /// The offer decision (`accept` / `decline`), for offers.
+    /// The offer decision (`accept` / `decline`), for offers;
+    /// the chosen option id, for choices.
     pub option: Option<String>,
 }
 
@@ -234,13 +251,7 @@ pub fn parse_log(inputs: &[LogEntryInput], ticks: u64) -> Result<Vec<Option<LogE
             );
         }
         match input.kind.as_str() {
-            "advance" | "event" | "offer" => {}
-            "choice" => {
-                return refuse(
-                    RefusalClass::UnknownKind,
-                    "choice inputs need authored choices (choice_define lands in AUTH-G G2)",
-                );
-            }
+            "advance" | "choice" | "event" | "offer" => {}
             other => {
                 return refuse(
                     RefusalClass::UnknownKind,
@@ -283,6 +294,9 @@ pub fn run_ticks(
             .flatten();
         tick(game, state, entry.as_ref(), events)?;
         chain.push(state_hash(state));
+        if state.ending.is_some() {
+            break;
+        }
     }
     Ok(())
 }
@@ -319,17 +333,43 @@ fn tick(
     }
     // Step 4: re-evaluate threshold/flag/emitted-event triggers.
     reevaluate(game, state, events, &mut fired)?;
-    // Step 5: scene transition, then on_enter_scene triggers.
+    // Step 5: scene transition — the old scene's on_exit set,
+    // then the new scene's on_enter set, then on_enter_scene
+    // triggers.
     if let Some(scene) = state.pending_scene.take() {
+        if let Some(old) = state.current_scene.clone()
+            && let Some(set) = game.scene(&old).and_then(|def| def.on_exit.clone())
+        {
+            apply_named_set(game, state, &set, events, &format!("scene '{old}' exit"));
+        }
         state.current_scene = Some(scene.clone());
         state.line = game
             .lines_in_scene(&scene)
             .first()
             .map(|line| line.id.clone());
         events.push(format!("tick {}: entered scene '{scene}'", state.tick));
+        if let Some(set) = game.scene(&scene).and_then(|def| def.on_enter.clone()) {
+            apply_named_set(game, state, &set, events, &format!("scene '{scene}' entry"));
+        }
         fire_enter_scene(game, state, &scene, events, &mut fired)?;
     }
-    // Step 6: ending rules — none authored in this build.
+    // Step 6: ending rules, in ascending priority order; the
+    // first satisfied ending ends the run (run_ticks stops
+    // after this tick's hash).
+    if state.ending.is_none() && !game.endings.is_empty() {
+        let mut endings: Vec<&crate::game::model::EndingDef> = game.endings.iter().collect();
+        endings.sort_by(|a, b| a.priority.cmp(&b.priority).then_with(|| a.id.cmp(&b.id)));
+        for ending in endings {
+            if eval_condition(game, state, &ending.condition)? {
+                state.ending = Some(ending.id.clone());
+                events.push(format!(
+                    "tick {}: ending '{}' reached",
+                    state.tick, ending.id
+                ));
+                break;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -824,11 +864,214 @@ fn apply_input(
             Ok(())
         }
         "offer" => apply_offer_input(game, state, entry, events),
+        "choice" => apply_choice_input(game, state, entry, events),
         _ => refuse(
             RefusalClass::UnknownKind,
             format!("choice-log entry kind '{}' is not known", entry.kind),
         ),
     }
+}
+
+/// Applies a named effect set as one transaction on a
+/// working copy (the `apply_effect_set` discipline, without
+/// trigger bookkeeping): a refused atom discards the whole
+/// set and is recorded as a runtime event. Used by choice
+/// options, the veto rule, scene exits, and scene entry/exit
+/// sets.
+fn apply_named_set(
+    game: &Game,
+    state: &mut GameState,
+    set_id: &str,
+    events: &mut Vec<String>,
+    why: &str,
+) {
+    let Some(set) = game.effect_set(set_id) else {
+        events.push(format!(
+            "tick {}: {why} names missing effect set '{set_id}'",
+            state.tick
+        ));
+        return;
+    };
+    let mut working = state.clone();
+    let mut notes = Vec::new();
+    match apply_atoms(game, &mut working, &set.atoms, &mut notes, 0) {
+        Ok(()) => {
+            *state = working;
+            events.extend(notes);
+            events.push(format!(
+                "tick {}: {why} applied effect set '{}'",
+                state.tick, set.id
+            ));
+        }
+        Err(reason) => {
+            events.push(format!(
+                "tick {}: effect set '{}' refused ({reason}); no state changed",
+                state.tick, set.id
+            ));
+        }
+    }
+}
+
+/// Step 3 (choices): the input names an authored choice and
+/// the option the player picked. The choice must belong to
+/// the scene the run is in; the presented options are the
+/// visible ones, in (sort value, authored ordinal) order, and
+/// the picked option must be offered — visible AND enabled —
+/// or the run refuses (`TG-GAME-GRAPH`): the log and the game
+/// have diverged. The picked option's effect set applies as
+/// one transaction; when an alter-ego option was offered and
+/// the pick is not one, the game's veto set applies as its
+/// own transaction (Amendment 2 §G5). The option's target
+/// then resolves: a line target moves the run's line, an exit
+/// target applies the exit's own set (when its condition
+/// holds) and sets the pending transition, a scene target
+/// sets the pending transition directly.
+fn apply_choice_input(
+    game: &Game,
+    state: &mut GameState,
+    entry: &LogEntry,
+    events: &mut Vec<String>,
+) -> Result<(), Refusal> {
+    let Some(choice) = game.choice(&entry.id) else {
+        return refuse(
+            RefusalClass::GameGraph,
+            format!(
+                "input picks choice '{}', but the game defines no such choice",
+                entry.id
+            ),
+        );
+    };
+    let Some(option_id) = &entry.option else {
+        return refuse(
+            RefusalClass::Malformed,
+            "a choice input must carry an option (the chosen option id)",
+        );
+    };
+    let Some(option) = choice.options.iter().find(|row| &row.id == option_id) else {
+        return refuse(
+            RefusalClass::GameGraph,
+            format!(
+                "input picks option '{option_id}', but choice '{}' defines no such option",
+                entry.id
+            ),
+        );
+    };
+    if state.current_scene.as_deref() != Some(choice.scene.as_str()) {
+        return refuse(
+            RefusalClass::GameGraph,
+            format!(
+                "input picks choice '{}' of scene '{}', but the run is in scene '{}'",
+                entry.id,
+                choice.scene,
+                state.current_scene.as_deref().unwrap_or("<none>")
+            ),
+        );
+    }
+    // The presented order: visible options by (sort value,
+    // authored ordinal); sort defaults to 0.
+    let mut presented: Vec<(&crate::game::model::ChoiceOption, i64, usize, bool)> = Vec::new();
+    for (ordinal, row) in choice.options.iter().enumerate() {
+        let visible = match &row.visible_if {
+            None => true,
+            Some(condition) => eval_condition(game, state, condition)?,
+        };
+        if !visible {
+            continue;
+        }
+        let enabled = match &row.enabled_if {
+            None => true,
+            Some(condition) => eval_condition(game, state, condition)?,
+        };
+        let sort = match &row.sort {
+            None => 0,
+            Some(expr) => eval_int(game, state, expr)
+                .map_err(|message| Refusal::new(RefusalClass::GameExpr, message))?,
+        };
+        presented.push((row, sort, ordinal, enabled));
+    }
+    presented.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.2.cmp(&b.2)));
+    let offered_ids: Vec<&str> = presented.iter().map(|row| row.0.id.as_str()).collect();
+    events.push(format!(
+        "tick {}: choice '{}' presented [{}]",
+        state.tick,
+        choice.id,
+        offered_ids.join(", ")
+    ));
+    let picked = presented.iter().find(|row| row.0.id == *option_id).copied();
+    match picked {
+        Some((_, _, _, true)) => {}
+        Some((_, _, _, false)) => {
+            return refuse(
+                RefusalClass::GameGraph,
+                format!(
+                    "input picks option '{option_id}' of choice '{}', but the option is disabled in this state",
+                    entry.id
+                ),
+            );
+        }
+        None => {
+            return refuse(
+                RefusalClass::GameGraph,
+                format!(
+                    "input picks option '{option_id}' of choice '{}', but the option is not offered in this state",
+                    entry.id
+                ),
+            );
+        }
+    }
+    let alter_offered = presented
+        .iter()
+        .any(|row| row.3 && row.0.origin == ChoiceOrigin::AlterEgo);
+    if let Some(set) = &option.effect_set {
+        apply_named_set(
+            game,
+            state,
+            set,
+            events,
+            &format!("choice '{}' option '{}'", choice.id, option.id),
+        );
+    }
+    if alter_offered && option.origin != ChoiceOrigin::AlterEgo {
+        if let Some(veto) = &game.alter_ego_veto {
+            apply_named_set(game, state, veto, events, "the alter-ego veto");
+        }
+    }
+    match &option.target {
+        ChoiceTarget::EndingCheck => {}
+        ChoiceTarget::Line(line) => {
+            state.line = Some(line.clone());
+        }
+        ChoiceTarget::Scene(scene) => {
+            state.pending_scene = Some(scene.clone());
+        }
+        ChoiceTarget::Exit(exit_id) => {
+            let Some(exit) = game.scene_exit(&choice.scene, exit_id) else {
+                return refuse(
+                    RefusalClass::GameGraph,
+                    format!(
+                        "choice '{}' option '{}' targets exit '{exit_id}', which scene '{}' does not define",
+                        choice.id, option.id, choice.scene
+                    ),
+                );
+            };
+            let gated = match &exit.condition {
+                None => false,
+                Some(condition) => !eval_condition(game, state, condition)?,
+            };
+            if gated {
+                events.push(format!(
+                    "tick {}: exit '{exit_id}' is gated by its condition; no transition",
+                    state.tick
+                ));
+            } else {
+                if let Some(set) = &exit.effect_set {
+                    apply_named_set(game, state, set, events, &format!("exit '{exit_id}'"));
+                }
+                state.pending_scene = Some(exit.target.clone());
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Step 3 (offer decisions, D-464): the input names a trigger
@@ -1059,7 +1302,7 @@ pub fn run_simulation(
     Ok(json!({
         "chain": chain,
         "content_sha256": content_sha256,
-        "ending": Value::Null,
+        "ending": state.ending.clone().map_or(Value::Null, Value::String),
         "events": events,
         "final": {
             "day": state.day,
