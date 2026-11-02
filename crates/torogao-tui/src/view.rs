@@ -310,7 +310,7 @@ fn draw_console(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
         .iter()
         .map(|row| {
             let tags = match &row.deferred {
-                Some(slice) => format!(" [deferred: {slice}]"),
+                Some(tag) => format!(" [{tag}]"),
                 None if row.mutating => " [mutating]".to_string(),
                 None => " [read-only]".to_string(),
             };

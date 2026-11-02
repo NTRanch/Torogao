@@ -94,14 +94,17 @@ pub struct VerbRow {
     pub group: String,
     /// Whether the verb mutates the project.
     pub mutating: bool,
-    /// The slice label when the verb is not yet implemented.
+    /// Why the verb cannot run on this surface, when it cannot:
+    /// `deferred: <slice>` for a verb a later slice implements,
+    /// `descoped: <home>` for a verb a recorded ruling placed
+    /// in another crate or surface.
     pub deferred: Option<String>,
 }
 
 /// Console screen state.
 #[derive(Default)]
 pub struct ConsoleState {
-    /// All manifest verbs (implemented first, then deferred).
+    /// All manifest verbs (implemented, then deferred, then descoped).
     pub verbs: Vec<VerbRow>,
     /// Selected verb row.
     pub sel: usize,
@@ -1098,8 +1101,11 @@ impl App {
     }
 }
 
-/// The manifest's verb rows: implemented first, then deferred —
-/// each in the order `verbs_doc` reports.
+/// The manifest's verb rows: implemented first, then deferred,
+/// then descoped — each in the order `verbs_doc` reports. A
+/// descoped verb is not deferred: it will never be implemented
+/// on this surface, and its row carries the ruling's home so
+/// the refusal the author crate returns is no surprise.
 fn verb_rows() -> Vec<VerbRow> {
     let doc = torogao_author::verbs_doc();
     let mut rows = Vec::new();
@@ -1119,7 +1125,23 @@ fn verb_rows() -> Vec<VerbRow> {
                 name: row["verb"].as_str().unwrap_or("").to_string(),
                 group: row["group"].as_str().unwrap_or("").to_string(),
                 mutating: false,
-                deferred: Some(row["slice"].as_str().unwrap_or("later").to_string()),
+                deferred: Some(format!(
+                    "deferred: {}",
+                    row["slice"].as_str().unwrap_or("later")
+                )),
+            });
+        }
+    }
+    if let Some(list) = doc["descoped"].as_array() {
+        for row in list {
+            rows.push(VerbRow {
+                name: row["verb"].as_str().unwrap_or("").to_string(),
+                group: String::new(),
+                mutating: false,
+                deferred: Some(format!(
+                    "descoped: {}",
+                    row["home"].as_str().unwrap_or("elsewhere")
+                )),
             });
         }
     }

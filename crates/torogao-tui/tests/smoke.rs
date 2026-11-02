@@ -247,7 +247,7 @@ fn bad_json_is_a_diagnostic_and_writes_nothing() {
 }
 
 #[test]
-fn deferred_verb_refuses_by_name_and_writes_nothing() {
+fn descoped_verb_refuses_by_name_and_writes_nothing() {
     let root = fresh_root("deferred");
     let project_dir = build_fixture(&root);
     let sha_before = file_sha(&project_dir.join("project.ron"));
@@ -259,8 +259,12 @@ fn deferred_verb_refuses_by_name_and_writes_nothing() {
         .verbs
         .iter()
         .position(|row| row.name == "physics_bake")
-        .expect("deferred verb listed");
-    assert!(app.console.verbs[index].deferred.is_some());
+        .expect("descoped verb listed");
+    let tag = app.console.verbs[index]
+        .deferred
+        .clone()
+        .expect("descoped verb tagged");
+    assert!(tag.contains("descoped"), "tag names the descope: {tag}");
     app.console.sel = index;
     app.console.inputs = torogao_tui::textbuf::TextBuf::from_text("{}");
     ch(&mut app, 'x');
