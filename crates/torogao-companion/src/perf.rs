@@ -13,7 +13,7 @@
 use std::path::Path;
 
 use crate::core::{AMBIENT_ANIMATION, CompanionCore};
-use crate::error::CompanionResult;
+use crate::error::{CompanionError, CompanionResult};
 
 /// FNV-1a offset basis (64-bit), the estate's chain hash.
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
@@ -355,6 +355,87 @@ pub fn run_cycle_trace(model_path: &Path, frames: usize) -> CompanionResult<Cycl
         body_region,
         secondary_region,
         hair_region,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Stage 2.2 instrument: the roll performance trace. The
+// authored R-curve performance runs through the core
+// (the gaze driver live throughout: saccades and blink
+// discipline compose with the roll); the run records
+// the evaluated driver channels per step and the face
+// geometry reads every `FACE_READ_EVERY` steps — the
+// series the 2.2 gates read.
+// ---------------------------------------------------------------------------
+
+/// Face reads are taken every this many steps.
+pub const FACE_READ_EVERY: usize = 5;
+
+/// One roll performance run through the companion core.
+#[derive(Debug, Clone)]
+pub struct RollRun {
+    /// The chain hash over the per-step evaluated hashes.
+    pub trace_hash: u64,
+    /// Per-step evaluated state hashes.
+    pub step_hashes: Vec<u64>,
+    /// Per-step evaluated ParamEyeRoll internal.
+    pub roll: Vec<f64>,
+    /// Per-step evaluated ParamEyeCross internal.
+    pub cross: Vec<f64>,
+    /// Per-step evaluated ParamEyeLOpen internal.
+    pub eye_open: Vec<f64>,
+    /// Face reads: (step, read, eye-open at that step).
+    pub face_reads: Vec<(usize, crate::face::FaceRead, f64)>,
+}
+
+/// Runs the roll performance plus an afterglow
+/// observation window of `afterglow_steps` through the
+/// companion core on the given rig.
+pub fn run_roll_trace(model_path: &Path, afterglow_steps: usize) -> CompanionResult<RollRun> {
+    let mut core = CompanionCore::load(model_path, None, None, "torogao-companion roll")?;
+    let (roll_index, cross_index, open_index) = {
+        let scene = core.scene()?;
+        (
+            scene.puppet.param_index("ParamEyeRoll"),
+            scene.puppet.param_index("ParamEyeCross"),
+            scene.puppet.param_index("ParamEyeLOpen"),
+        )
+    };
+    core.start_roll();
+    let frames = crate::roll::ROLL_STEPS as usize + afterglow_steps;
+    let mut step_hashes = Vec::with_capacity(frames);
+    let mut roll = Vec::with_capacity(frames);
+    let mut cross = Vec::with_capacity(frames);
+    let mut eye_open = Vec::with_capacity(frames);
+    let mut face_reads = Vec::new();
+    for step in 0..frames {
+        step_hashes.push(core.tick()?);
+        {
+            let scene = core.scene()?;
+            let read = |index: Option<usize>| match index {
+                Some(index) => f64::from(scene.puppet.params[index].last_internal.x),
+                None => 0.0,
+            };
+            roll.push(read(roll_index));
+            cross.push(read(cross_index));
+            eye_open.push(read(open_index));
+        }
+        if step % FACE_READ_EVERY == 0 {
+            let scene = core.scene_mut()?;
+            let frame = torogao_app::render::prepare_frame(scene)
+                .map_err(|err| CompanionError::model(err.to_string()))?;
+            if let Some(read) = crate::face::read_face(&frame) {
+                face_reads.push((step, read, eye_open[step]));
+            }
+        }
+    }
+    Ok(RollRun {
+        trace_hash: chain_hash(&step_hashes),
+        step_hashes,
+        roll,
+        cross,
+        eye_open,
+        face_reads,
     })
 }
 

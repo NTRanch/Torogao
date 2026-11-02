@@ -32,6 +32,7 @@ use crate::cast::CastMember;
 use crate::cycle::{CycleChannels, CycleDriver};
 use crate::error::{CompanionError, CompanionResult};
 use crate::gaze::{GazeChannels, GazeDriver};
+use crate::roll::{RollChannels, RollDriver};
 
 /// The ambient performance (Daydream on loop) and the
 /// click performance (Greeting, once through).
@@ -84,6 +85,11 @@ pub struct CompanionCore {
     cycle: Option<CycleDriver>,
     /// The cycle driver's channels in the current scene.
     cycle_channels: CycleChannels,
+    /// The Stage 2.2 roll performance, when one is
+    /// running or holding its afterglow.
+    roll: Option<RollDriver>,
+    /// The roll driver's channels in the current scene.
+    roll_channels: RollChannels,
 }
 
 impl CompanionCore {
@@ -124,9 +130,12 @@ impl CompanionCore {
             gaze_gaps: Vec::new(),
             cycle: None,
             cycle_channels: CycleChannels::default(),
+            roll: None,
+            roll_channels: RollChannels::default(),
         };
         core.refresh_gaze_channels()?;
         core.refresh_cycle_channels()?;
+        core.refresh_roll_channels()?;
         if let Some(dir) = session_dir {
             let port = session_port.unwrap_or(torogao_session::transport::DEFAULT_WS_PORT);
             let (rx, session_id) =
@@ -273,6 +282,9 @@ impl CompanionCore {
                     cycle.step();
                 }
             }
+            if let Some(roll) = &mut self.roll {
+                roll.step();
+            }
             // Field-level borrows: the player, the shell,
             // and the drivers are disjoint fields, so the
             // step needs no take/replace dance.
@@ -284,6 +296,8 @@ impl CompanionCore {
                 None
             };
             let cycle_channels = &self.cycle_channels;
+            let roll = self.roll.as_ref();
+            let roll_channels = &self.roll_channels;
             let scene = self
                 .shell
                 .scene
@@ -294,6 +308,9 @@ impl CompanionCore {
                     crate::gaze::apply(gaze, channels, scene);
                     if let Some(cycle) = cycle {
                         crate::cycle::apply(cycle, cycle_channels, scene);
+                    }
+                    if let Some(roll) = roll {
+                        crate::roll::apply(roll, roll_channels, scene);
                     }
                 })
                 .map_err(|err| CompanionError::model(err.to_string()))?;
@@ -345,7 +362,37 @@ impl CompanionCore {
         self.cast_member = Some(member);
         self.refresh_gaze_channels()?;
         self.refresh_cycle_channels()?;
+        self.refresh_roll_channels()?;
         self.ensure_ambient()
+    }
+
+    /// Starts the roll performance (Stage 2.2): the
+    /// authored ParamEyeRoll curve with its ganged
+    /// crossing, ending in the afterglow state the
+    /// driver then holds.
+    pub fn start_roll(&mut self) {
+        self.roll = Some(RollDriver::new());
+    }
+
+    /// Whether the roll performance is still playing
+    /// (false once it holds the afterglow, and when no
+    /// performance was started).
+    pub fn roll_performing(&self) -> bool {
+        matches!(&self.roll, Some(roll) if roll.performing())
+    }
+
+    /// The roll channels the current rig does not carry
+    /// (empty for the governed cast).
+    pub fn roll_gaps(&self) -> Vec<&'static str> {
+        self.roll_channels.missing()
+    }
+
+    /// Re-resolves the roll channels against the
+    /// installed scene.
+    fn refresh_roll_channels(&mut self) -> CompanionResult<()> {
+        let scene = self.scene()?;
+        self.roll_channels = RollChannels::resolve(scene);
+        Ok(())
     }
 
     /// Starts a body-cycle performance (Stage 2.1) of
