@@ -10,10 +10,12 @@
 //! are `TG-AUTH-MALFORMED`.
 
 use crate::model::{
-    ArtBind, Asset, AssetKind, Blend, Clip, Completion, Consent, Deformer, DeformerKind, Draw,
-    Expression, ExpressionValue, ExpressionVisibility, Glue, Header, Keyform, Keyforms, Mesh,
-    MeshForm, PROJECT_FORMAT, PROJECT_FORMAT_VERSION, Parameter, Part, Point, PoseEntry, Project,
-    Provenance, Rect, Rotation, RotationForm, Stamp, VariantSet, Warp, WarpForm,
+    AnchorKind, ArtBind, Asset, AssetKind, AudioBind, AudioBindTarget, AudioMarker, AudioTrack,
+    Blend, Clip, Completion, Consent, Deformer, DeformerKind, Draw, Expression, ExpressionValue,
+    ExpressionVisibility, Glue, Header, Keyform, Keyforms, Mesh, MeshForm, Motion, MotionCurve,
+    MotionKeyframe, PROJECT_FORMAT, PROJECT_FORMAT_VERSION, Parameter, Part, PhysicsAnchor,
+    PhysicsGroup, PhysicsInput, PhysicsOutput, PhysicsParticle, PhysicsStrand, Point, PoseEntry,
+    Project, Provenance, Rect, Rotation, RotationForm, Stamp, VariantSet, Warp, WarpForm,
 };
 use crate::refusal::{Refusal, RefusalClass, refuse};
 use crate::ron::{Ron, emit_document, parse_document};
@@ -78,60 +80,98 @@ fn rect_to_ron(rect: &Rect) -> Ron {
 }
 
 fn project_to_ron(project: &Project) -> Ron {
+    // Sections sit in alphabetical order after the header. The
+    // optional sections — the game section and the G-10
+    // audio/motion/physics sections — are emitted only when
+    // present (non-empty), so a project that predates them
+    // serializes byte-identically to before they existed.
     let mut fields: Vec<(&str, Ron)> = vec![
         ("header", header_to_ron(&project.header)),
         (
             "assets",
             Ron::List(project.assets.iter().map(asset_to_ron).collect()),
         ),
-        (
-            "deformers",
-            Ron::List(project.deformers.iter().map(deformer_to_ron).collect()),
-        ),
-        (
-            "expressions",
-            Ron::List(project.expressions.iter().map(expression_to_ron).collect()),
-        ),
-        (
-            "glues",
-            Ron::List(project.glues.iter().map(glue_to_ron).collect()),
-        ),
-        (
-            "parameters",
-            Ron::List(project.parameters.iter().map(parameter_to_ron).collect()),
-        ),
-        (
-            "parts",
-            Ron::List(project.parts.iter().map(part_to_ron).collect()),
-        ),
-        (
-            "pose",
-            Ron::List(project.pose.iter().map(pose_to_ron).collect()),
-        ),
-        (
-            "variant_sets",
+    ];
+    if !project.audio_binds.is_empty() {
+        fields.push((
+            "audio_binds",
+            Ron::List(project.audio_binds.iter().map(audio_bind_to_ron).collect()),
+        ));
+    }
+    if !project.audio_tracks.is_empty() {
+        fields.push((
+            "audio_tracks",
             Ron::List(
                 project
-                    .variant_sets
+                    .audio_tracks
                     .iter()
-                    .map(variant_set_to_ron)
+                    .map(audio_track_to_ron)
                     .collect(),
             ),
-        ),
-    ];
+        ));
+    }
+    fields.push((
+        "deformers",
+        Ron::List(project.deformers.iter().map(deformer_to_ron).collect()),
+    ));
+    fields.push((
+        "expressions",
+        Ron::List(project.expressions.iter().map(expression_to_ron).collect()),
+    ));
     // The game section sits between `expressions` and `glues`
     // (the §G4 layout order); it is emitted only when present,
     // so a game-less project serializes byte-identically to
     // before the game layer existed.
     if let Some(game) = &project.game {
-        fields.insert(
-            4,
-            (
-                "game",
-                Ron::Opt(Some(Box::new(crate::game::codec::game_to_ron(game)))),
-            ),
-        );
+        fields.push((
+            "game",
+            Ron::Opt(Some(Box::new(crate::game::codec::game_to_ron(game)))),
+        ));
     }
+    fields.push((
+        "glues",
+        Ron::List(project.glues.iter().map(glue_to_ron).collect()),
+    ));
+    if !project.motions.is_empty() {
+        fields.push((
+            "motions",
+            Ron::List(project.motions.iter().map(motion_to_ron).collect()),
+        ));
+    }
+    fields.push((
+        "parameters",
+        Ron::List(project.parameters.iter().map(parameter_to_ron).collect()),
+    ));
+    fields.push((
+        "parts",
+        Ron::List(project.parts.iter().map(part_to_ron).collect()),
+    ));
+    if !project.physics_groups.is_empty() {
+        fields.push((
+            "physics_groups",
+            Ron::List(
+                project
+                    .physics_groups
+                    .iter()
+                    .map(physics_group_to_ron)
+                    .collect(),
+            ),
+        ));
+    }
+    fields.push((
+        "pose",
+        Ron::List(project.pose.iter().map(pose_to_ron).collect()),
+    ));
+    fields.push((
+        "variant_sets",
+        Ron::List(
+            project
+                .variant_sets
+                .iter()
+                .map(variant_set_to_ron)
+                .collect(),
+        ),
+    ));
     record("Project", fields)
 }
 
@@ -508,6 +548,200 @@ fn variant_set_to_ron(set: &VariantSet) -> Ron {
     )
 }
 
+fn physics_group_to_ron(group: &PhysicsGroup) -> Ron {
+    record(
+        "PhysicsGroup",
+        vec![
+            ("id", text(&group.id)),
+            ("gravity", point(&group.gravity)),
+            (
+                "inputs",
+                Ron::List(group.inputs.iter().map(physics_input_to_ron).collect()),
+            ),
+            (
+                "strands",
+                Ron::List(group.strands.iter().map(physics_strand_to_ron).collect()),
+            ),
+            (
+                "turbulence_amplitude",
+                Ron::Float(group.turbulence_amplitude),
+            ),
+            ("wind", point(&group.wind)),
+        ],
+    )
+}
+
+fn physics_input_to_ron(input: &PhysicsInput) -> Ron {
+    record(
+        "PhysicsInput",
+        vec![
+            ("parameter", text(&input.parameter)),
+            ("scale_degrees", Ron::Float(input.scale_degrees)),
+        ],
+    )
+}
+
+fn physics_strand_to_ron(strand: &PhysicsStrand) -> Ron {
+    record(
+        "PhysicsStrand",
+        vec![
+            ("id", text(&strand.id)),
+            ("anchor", physics_anchor_to_ron(&strand.anchor)),
+            ("output", opt(strand.output.as_ref(), physics_output_to_ron)),
+            (
+                "particles",
+                Ron::List(
+                    strand
+                        .particles
+                        .iter()
+                        .map(physics_particle_to_ron)
+                        .collect(),
+                ),
+            ),
+        ],
+    )
+}
+
+fn physics_anchor_to_ron(anchor: &PhysicsAnchor) -> Ron {
+    record(
+        "PhysicsAnchor",
+        vec![
+            ("id", text(&anchor.id)),
+            (
+                "kind",
+                Ron::Ident(
+                    match anchor.kind {
+                        AnchorKind::Deformer => "Deformer",
+                        AnchorKind::Mesh => "Mesh",
+                    }
+                    .to_string(),
+                ),
+            ),
+            ("offset", point(&anchor.offset)),
+        ],
+    )
+}
+
+fn physics_particle_to_ron(particle: &PhysicsParticle) -> Ron {
+    record(
+        "PhysicsParticle",
+        vec![
+            ("damping", Ron::Float(particle.damping)),
+            ("delay", Ron::Float(particle.delay)),
+            ("length", Ron::Float(particle.length)),
+            ("mobility", Ron::Float(particle.mobility)),
+            ("radius", Ron::Float(particle.radius)),
+        ],
+    )
+}
+
+fn physics_output_to_ron(output: &PhysicsOutput) -> Ron {
+    record(
+        "PhysicsOutput",
+        vec![
+            ("offset", Ron::Float(output.offset)),
+            ("parameter", text(&output.parameter)),
+            ("scale", Ron::Float(output.scale)),
+        ],
+    )
+}
+
+fn motion_to_ron(motion: &Motion) -> Ron {
+    record(
+        "Motion",
+        vec![
+            ("id", text(&motion.id)),
+            (
+                "curves",
+                Ron::List(motion.curves.iter().map(motion_curve_to_ron).collect()),
+            ),
+            ("length_ticks", Ron::Int(i64::from(motion.length_ticks))),
+            ("looped", Ron::Bool(motion.looped)),
+        ],
+    )
+}
+
+fn motion_curve_to_ron(curve: &MotionCurve) -> Ron {
+    record(
+        "MotionCurve",
+        vec![
+            (
+                "keyframes",
+                Ron::List(curve.keyframes.iter().map(motion_keyframe_to_ron).collect()),
+            ),
+            ("parameter", text(&curve.parameter)),
+            ("source", opt(curve.source.as_ref(), |source| text(source))),
+        ],
+    )
+}
+
+fn motion_keyframe_to_ron(keyframe: &MotionKeyframe) -> Ron {
+    record(
+        "MotionKeyframe",
+        vec![
+            ("tick", Ron::Int(i64::from(keyframe.tick))),
+            ("value", Ron::Float(keyframe.value)),
+        ],
+    )
+}
+
+fn audio_track_to_ron(track: &AudioTrack) -> Ron {
+    record(
+        "AudioTrack",
+        vec![
+            ("id", text(&track.id)),
+            (
+                "markers",
+                Ron::List(track.markers.iter().map(audio_marker_to_ron).collect()),
+            ),
+        ],
+    )
+}
+
+fn audio_marker_to_ron(marker: &AudioMarker) -> Ron {
+    record(
+        "AudioMarker",
+        vec![
+            ("id", text(&marker.id)),
+            ("tick", Ron::Int(i64::from(marker.tick))),
+        ],
+    )
+}
+
+fn audio_bind_to_ron(bind: &AudioBind) -> Ron {
+    record(
+        "AudioBind",
+        vec![
+            ("marker", text(&bind.marker)),
+            ("peak_tick", Ron::Int(i64::from(bind.peak_tick))),
+            ("sync_offset_ticks", Ron::Int(bind.sync_offset_ticks)),
+            ("target", audio_bind_target_to_ron(&bind.target)),
+            ("track", text(&bind.track)),
+            ("trail_ticks", Ron::Int(i64::from(bind.trail_ticks))),
+        ],
+    )
+}
+
+fn audio_bind_target_to_ron(target: &AudioBindTarget) -> Ron {
+    match target {
+        AudioBindTarget::ParameterOffset { parameter, offset } => record(
+            "AudioBindTarget",
+            vec![
+                ("kind", Ron::Ident("ParameterOffset".to_string())),
+                ("offset", Ron::Float(*offset)),
+                ("parameter", text(parameter)),
+            ],
+        ),
+        AudioBindTarget::ExpressionTrigger { expression } => record(
+            "AudioBindTarget",
+            vec![
+                ("expression", text(expression)),
+                ("kind", Ron::Ident("ExpressionTrigger".to_string())),
+            ],
+        ),
+    }
+}
+
 // ---- parsing helpers --------------------------------------------
 
 /// A struct record being consumed field by field.
@@ -723,15 +957,33 @@ pub(crate) fn sorted_unique<T>(
 
 // ---- parsing ----------------------------------------------------
 
+/// Reads a list section that older projects may not carry at
+/// all (the G-10 sections): absent maps to empty.
+fn list_section<T>(
+    fields: &mut Fields,
+    key: &str,
+    convert: impl Fn(Ron) -> Result<T, Refusal>,
+) -> Result<Vec<T>, Refusal> {
+    match fields.try_take(key) {
+        None => Ok(Vec::new()),
+        Some(Ron::List(items)) => collect(items, convert),
+        Some(_) => wrong_type(key, "a list"),
+    }
+}
+
 fn project_from_ron(value: Ron) -> Result<Project, Refusal> {
     let mut fields = open(value, "Project")?;
     let header = header_from_ron(fields.take("header")?)?;
     let assets = collect(fields.list("assets")?, asset_from_ron)?;
+    let audio_binds = list_section(&mut fields, "audio_binds", audio_bind_from_ron)?;
+    let audio_tracks = list_section(&mut fields, "audio_tracks", audio_track_from_ron)?;
     let deformers = collect(fields.list("deformers")?, deformer_from_ron)?;
     let expressions = collect(fields.list("expressions")?, expression_from_ron)?;
     let glues = collect(fields.list("glues")?, glue_from_ron)?;
+    let motions = list_section(&mut fields, "motions", motion_from_ron)?;
     let parameters = collect(fields.list("parameters")?, parameter_from_ron)?;
     let parts = collect(fields.list("parts")?, part_from_ron)?;
+    let physics_groups = list_section(&mut fields, "physics_groups", physics_group_from_ron)?;
     let pose = collect(fields.list("pose")?, pose_from_ron)?;
     let variant_sets = collect(fields.list("variant_sets")?, variant_set_from_ron)?;
     // The game section is the one optional section: a file
@@ -745,20 +997,213 @@ fn project_from_ron(value: Ron) -> Result<Project, Refusal> {
         Some(_) => return wrong_type("game", "None or Some(Game(...))"),
     };
     fields.done()?;
+    // Audio binds sort by the (track, marker) pair, which the
+    // &str-keyed sorted_unique cannot express; sort and check
+    // duplicates here.
+    let mut audio_binds = audio_binds;
+    audio_binds.sort_by(|a, b| a.track.cmp(&b.track).then_with(|| a.marker.cmp(&b.marker)));
+    for pair in audio_binds.windows(2) {
+        if pair[0].track == pair[1].track && pair[0].marker == pair[1].marker {
+            return refuse(
+                RefusalClass::Malformed,
+                format!(
+                    "audio binds carry duplicate row '{}'/'{}'",
+                    pair[0].track, pair[0].marker
+                ),
+            );
+        }
+    }
     Ok(Project {
         header,
         assets: sorted_unique(assets, "assets", |item| &item.id)?,
+        audio_binds,
+        audio_tracks: sorted_unique(audio_tracks, "audio tracks", |item| &item.id)?,
         deformers: sorted_unique(deformers, "deformers", |item| &item.id)?,
         expressions: sorted_unique(expressions, "expressions", |item| &item.id)?,
         glues: sorted_unique(glues, "glues", |item| &item.id)?,
+        motions: sorted_unique(motions, "motions", |item| &item.id)?,
         parameters: sorted_unique(parameters, "parameters", |item| &item.id)?,
         parts: sorted_unique(parts, "parts", |item| &item.id)?,
+        physics_groups: sorted_unique(physics_groups, "physics groups", |item| &item.id)?,
         pose: sorted_unique(pose, "pose entries", |item| &item.parameter)?,
         variant_sets: sorted_unique(variant_sets, "variant sets", |item| &item.id)?,
         game,
         content: Vec::new(),
         content_locale: None,
     })
+}
+
+fn physics_group_from_ron(value: Ron) -> Result<PhysicsGroup, Refusal> {
+    let mut fields = open(value, "PhysicsGroup")?;
+    let group = PhysicsGroup {
+        gravity: as_point(fields.take("gravity")?, "gravity")?,
+        id: fields.string("id")?,
+        inputs: collect(fields.list("inputs")?, physics_input_from_ron)?,
+        strands: collect(fields.list("strands")?, physics_strand_from_ron)?,
+        turbulence_amplitude: fields.float("turbulence_amplitude")?,
+        wind: as_point(fields.take("wind")?, "wind")?,
+    };
+    fields.done()?;
+    Ok(group)
+}
+
+fn physics_input_from_ron(value: Ron) -> Result<PhysicsInput, Refusal> {
+    let mut fields = open(value, "PhysicsInput")?;
+    let input = PhysicsInput {
+        parameter: fields.string("parameter")?,
+        scale_degrees: fields.float("scale_degrees")?,
+    };
+    fields.done()?;
+    Ok(input)
+}
+
+fn physics_strand_from_ron(value: Ron) -> Result<PhysicsStrand, Refusal> {
+    let mut fields = open(value, "PhysicsStrand")?;
+    let anchor = physics_anchor_from_ron(fields.take("anchor")?)?;
+    let id = fields.string("id")?;
+    let output = match fields.option("output")? {
+        Some(inner) => Some(physics_output_from_ron(inner)?),
+        None => None,
+    };
+    let particles = collect(fields.list("particles")?, physics_particle_from_ron)?;
+    fields.done()?;
+    Ok(PhysicsStrand {
+        id,
+        anchor,
+        particles,
+        output,
+    })
+}
+
+fn physics_anchor_from_ron(value: Ron) -> Result<PhysicsAnchor, Refusal> {
+    let mut fields = open(value, "PhysicsAnchor")?;
+    let id = fields.string("id")?;
+    let kind = match fields.ident("kind")?.as_str() {
+        "Deformer" => AnchorKind::Deformer,
+        "Mesh" => AnchorKind::Mesh,
+        other => return unknown_variant("kind", other),
+    };
+    let offset = as_point(fields.take("offset")?, "offset")?;
+    fields.done()?;
+    Ok(PhysicsAnchor { kind, id, offset })
+}
+
+fn physics_particle_from_ron(value: Ron) -> Result<PhysicsParticle, Refusal> {
+    let mut fields = open(value, "PhysicsParticle")?;
+    let particle = PhysicsParticle {
+        damping: fields.float("damping")?,
+        delay: fields.float("delay")?,
+        length: fields.float("length")?,
+        mobility: fields.float("mobility")?,
+        radius: fields.float("radius")?,
+    };
+    fields.done()?;
+    Ok(particle)
+}
+
+fn physics_output_from_ron(value: Ron) -> Result<PhysicsOutput, Refusal> {
+    let mut fields = open(value, "PhysicsOutput")?;
+    let output = PhysicsOutput {
+        offset: fields.float("offset")?,
+        parameter: fields.string("parameter")?,
+        scale: fields.float("scale")?,
+    };
+    fields.done()?;
+    Ok(output)
+}
+
+fn motion_from_ron(value: Ron) -> Result<Motion, Refusal> {
+    let mut fields = open(value, "Motion")?;
+    let mut curves = collect(fields.list("curves")?, motion_curve_from_ron)?;
+    curves.sort_by(|a, b| a.parameter.cmp(&b.parameter));
+    let motion = Motion {
+        id: fields.string("id")?,
+        length_ticks: fields.uint("length_ticks")?,
+        looped: fields.boolean("looped")?,
+        curves,
+    };
+    fields.done()?;
+    Ok(motion)
+}
+
+fn motion_curve_from_ron(value: Ron) -> Result<MotionCurve, Refusal> {
+    let mut fields = open(value, "MotionCurve")?;
+    let curve = MotionCurve {
+        keyframes: collect(fields.list("keyframes")?, motion_keyframe_from_ron)?,
+        parameter: fields.string("parameter")?,
+        source: fields.opt_string("source")?,
+    };
+    fields.done()?;
+    Ok(curve)
+}
+
+fn motion_keyframe_from_ron(value: Ron) -> Result<MotionKeyframe, Refusal> {
+    let mut fields = open(value, "MotionKeyframe")?;
+    let keyframe = MotionKeyframe {
+        tick: fields.uint("tick")?,
+        value: fields.float("value")?,
+    };
+    fields.done()?;
+    Ok(keyframe)
+}
+
+fn audio_track_from_ron(value: Ron) -> Result<AudioTrack, Refusal> {
+    let mut fields = open(value, "AudioTrack")?;
+    let track = AudioTrack {
+        id: fields.string("id")?,
+        markers: collect(fields.list("markers")?, audio_marker_from_ron)?,
+    };
+    fields.done()?;
+    Ok(track)
+}
+
+fn audio_marker_from_ron(value: Ron) -> Result<AudioMarker, Refusal> {
+    let mut fields = open(value, "AudioMarker")?;
+    let marker = AudioMarker {
+        id: fields.string("id")?,
+        tick: fields.uint("tick")?,
+    };
+    fields.done()?;
+    Ok(marker)
+}
+
+fn audio_bind_from_ron(value: Ron) -> Result<AudioBind, Refusal> {
+    let mut fields = open(value, "AudioBind")?;
+    let marker = fields.string("marker")?;
+    let peak_tick = fields.uint("peak_tick")?;
+    let sync_offset_ticks = match fields.take("sync_offset_ticks")? {
+        Ron::Int(number) => number,
+        _ => return wrong_type("sync_offset_ticks", "an integer"),
+    };
+    let target = audio_bind_target_from_ron(fields.take("target")?)?;
+    let track = fields.string("track")?;
+    let trail_ticks = fields.uint("trail_ticks")?;
+    fields.done()?;
+    Ok(AudioBind {
+        track,
+        marker,
+        target,
+        sync_offset_ticks,
+        peak_tick,
+        trail_ticks,
+    })
+}
+
+fn audio_bind_target_from_ron(value: Ron) -> Result<AudioBindTarget, Refusal> {
+    let mut fields = open(value, "AudioBindTarget")?;
+    let kind = fields.ident("kind")?;
+    let target = match kind.as_str() {
+        "ParameterOffset" => AudioBindTarget::ParameterOffset {
+            offset: fields.float("offset")?,
+            parameter: fields.string("parameter")?,
+        },
+        "ExpressionTrigger" => AudioBindTarget::ExpressionTrigger {
+            expression: fields.string("expression")?,
+        },
+        other => return unknown_variant("kind", other),
+    };
+    fields.done()?;
+    Ok(target)
 }
 
 pub(crate) fn collect<T>(

@@ -117,3 +117,28 @@ pub const GAME_SIM_LOG_MAX: usize = 10_000;
 /// in squared model units. Model coordinates are pixels at the
 /// art's resolution, so this is far below any painted feature.
 pub const TRIANGLE_AREA2_MIN: f64 = 1e-9;
+
+// ---- A2/A3 completion families (G-10) ---------------------------
+
+/// Maximum audio binding rows per project.
+pub const AUDIO_BINDS_MAX: usize = 1024;
+/// Maximum event markers on one audio track.
+pub const AUDIO_MARKERS_MAX: usize = 4096;
+/// Maximum audio tracks per project.
+pub const AUDIO_TRACKS_MAX: usize = 256;
+/// Maximum keyframe rows in one motion curve.
+pub const KEYFRAMES_MAX: usize = 100_000;
+/// Maximum motion clips per project.
+pub const MOTIONS_MAX: usize = 256;
+/// Maximum parameter inputs on one physics group.
+pub const PHYSICS_INPUTS_MAX: usize = 64;
+/// Maximum particles in one physics strand.
+pub const PHYSICS_PARTICLES_MAX: usize = 1024;
+/// Maximum physics groups per project.
+pub const PHYSICS_GROUPS_MAX: usize = 256;
+/// Maximum strands in one physics group.
+pub const PHYSICS_STRANDS_MAX: usize = 256;
+/// The tick bound shared by motion lengths, marker ticks, and
+/// envelope ticks: one million ticks is days of runtime at any
+/// plausible step rate, far past any authored clip.
+pub const TICKS_MAX: u32 = 1_000_000;

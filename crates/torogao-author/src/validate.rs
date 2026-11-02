@@ -106,6 +106,9 @@ pub fn sweep(project: &Project) -> Result<Project, Refusal> {
     for op in content_ops(project) {
         rebuilt = run(rebuilt, op)?;
     }
+    for op in rigx_ops(project) {
+        rebuilt = run(rebuilt, op)?;
+    }
     for op in game_ops(project) {
         rebuilt = run(rebuilt, op)?;
     }
@@ -208,6 +211,37 @@ fn check_asset(asset: &Asset) -> Result<(), Refusal> {
         ));
     }
     Ok(())
+}
+
+/// The G-10 sections: physics groups, motions and their
+/// curves, audio tracks and their binding rows rebuild through
+/// their define/set verbs. They run after `content_ops` in the
+/// sweep: they depend on parameters, parts, and deformers
+/// (rebuilt by `structure_ops`) and on expressions (rebuilt by
+/// `content_ops` — audio binds reference them).
+fn rigx_ops(project: &Project) -> Vec<Op> {
+    let mut ops = Vec::new();
+    for group in &project.physics_groups {
+        ops.push(Op::PhysicsGroupDefine(crate::physics::group_inputs(group)));
+    }
+    for motion in &project.motions {
+        ops.push(Op::MotionCreate(crate::motion::motion_inputs(motion)));
+        for curve in &motion.curves {
+            match crate::motion::curve_rebuild(&motion.id, curve) {
+                crate::motion::CurveRebuild::Set(inputs) => ops.push(Op::CurveSet(inputs)),
+                crate::motion::CurveRebuild::FromSamples(inputs) => {
+                    ops.push(Op::CurveFromSamples(inputs))
+                }
+            }
+        }
+    }
+    for track in &project.audio_tracks {
+        ops.push(Op::AudioTrackDefine(crate::audio::track_inputs(track)));
+    }
+    for bind in &project.audio_binds {
+        ops.push(Op::AudioBindSet(crate::audio::bind_inputs(bind)));
+    }
+    ops
 }
 
 /// Parameters, nodes, and the two trees.

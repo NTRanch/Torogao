@@ -63,7 +63,7 @@ pub fn census(project: &Project) -> Value {
         "mesh_density": mesh_census(project),
         "parameters": parameters_census(project),
         "parts": parts_census(project),
-        "physics": {"groups": 0, "note": "physics authoring arrives in slice A2"},
+        "physics": {"groups": project.physics_groups.len(), "note": "physics groups are authored records (A2, G-10); baking is the engine's"},
         "project": project.header.name,
         "stamp": {
             "lane": project.header.stamp.lane,

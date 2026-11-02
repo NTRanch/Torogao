@@ -116,14 +116,25 @@ pub fn run_verb(
         };
     }
     match verb_spec(verb) {
-        Some(spec) if spec.slice == crate::op::Slice::A1 && spec.mutating => {
-            let request = Request {
-                verb: verb.to_string(),
-                inputs: inputs.clone(),
-            };
-            return run_requests(root, base, &[request]);
-        }
+        // A mutating verb routes to the pipeline iff Op::parse
+        // implements it; the parse probe is pure, and its
+        // refusal (unimplemented, or descoped with its ruling)
+        // is the answer otherwise.
+        Some(spec) if spec.mutating => match crate::op::Op::parse(verb, inputs) {
+            Ok(_) => {
+                let request = Request {
+                    verb: verb.to_string(),
+                    inputs: inputs.clone(),
+                };
+                return run_requests(root, base, &[request]);
+            }
+            Err(refusal) => return refused(verb, &refusal),
+        },
         Some(spec) if spec.slice == crate::op::Slice::A1 => {}
+        // export_manifest is the export group's one read in
+        // this crate (G-10); the other export verbs are
+        // descoped and refuse above by name.
+        Some(_) if verb == "export_manifest" => {}
         _ => {
             let Err(refusal) = refuse_unimplemented::<()>(verb) else {
                 unreachable!("refuse_unimplemented always refuses")
@@ -223,6 +234,10 @@ fn query(
             let state = expression_test(&loaded.project, &input.id).map_err(Failure::Refused)?;
             Ok(ok(json!({"result": "ok", "state": state})))
         }
+        "export_manifest" => {
+            let loaded = open(root)?;
+            Ok(ok(crate::export::export_manifest_document(&loaded.project)))
+        }
         other => unreachable!("verb '{other}' is A1, read-only, and unrouted"),
     }
 }
@@ -295,16 +310,28 @@ pub fn parse_script(text: &str) -> Result<Vec<Request>, Refusal> {
 pub fn verbs_doc() -> Value {
     let implemented: Vec<Value> = crate::op::MANIFEST
         .iter()
-        .filter(|spec| spec.slice == crate::op::Slice::A1)
+        .filter(|spec| {
+            spec.slice == crate::op::Slice::A1 || crate::op::RIGX_IMPLEMENTED.contains(&spec.name)
+        })
         .map(|spec| json!({"group": spec.group, "mutating": spec.mutating, "verb": spec.name}))
         .collect();
     let deferred: Vec<Value> = crate::op::MANIFEST
         .iter()
-        .filter(|spec| spec.slice != crate::op::Slice::A1)
+        .filter(|spec| {
+            spec.slice != crate::op::Slice::A1
+                && !crate::op::RIGX_IMPLEMENTED.contains(&spec.name)
+                && crate::op::descope(spec.name).is_none()
+        })
         .map(|spec| json!({"group": spec.group, "slice": spec.slice.label(), "verb": spec.name}))
+        .collect();
+    let descoped: Vec<Value> = crate::op::DESCOPED
+        .iter()
+        .map(|entry| json!({"home": entry.home, "ruling": entry.ruling, "verb": entry.verb}))
         .collect();
     json!({
         "deferred": deferred,
+        "descoped": descoped,
+        "descoped_count": descoped.len(),
         "implemented": implemented,
         "implemented_count": implemented.len(),
         "manifest_count": crate::op::MANIFEST.len(),
