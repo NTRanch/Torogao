@@ -16,10 +16,12 @@ use crate::codec::{
     texts, unknown_variant, wrong_type,
 };
 use crate::game::model::{
-    Atom, CharacterDef, Clock, ClockField, CmpOp, ConditionDef, ContentEntry, DialogueLine,
-    Direction, EffectSetDef, Expr, FlagDef, FlagEdge, FlagScope, Game, Lifetime, OfferDef,
-    Overflow, Presentation, Repetition, RngStreamDef, SceneDef, StatDef, StatInitial, StatKind,
-    StatScope, TableDef, TableOutcome, TableWeight, TierDef, TriggerDef, TriggerKind, ValueDef,
+    AppearanceDef, AppearanceEntry, AppearanceKind, AppearanceSlot, AppearanceValue, Atom,
+    CharacterDef, Clock, ClockField, CmpOp, ConditionDef, ContentEntry, DialogueLine, Direction,
+    EffectSetDef, Expr, FlagDef, FlagEdge, FlagScope, Game, Lifetime, OfferDef, Overflow,
+    Presentation, Repetition, RngStreamDef, SceneDef, StatDef, StatInitial, StatKind, StatScope,
+    TableDef, TableOutcome, TableWeight, TierDef, TriggerDef, TriggerKind, ValueDef,
+    VisualStateDef,
 };
 use crate::refusal::{Refusal, RefusalClass, refuse};
 use crate::ron::Ron;
@@ -93,34 +95,130 @@ pub(crate) fn game_to_ron(game: &Game) -> Ron {
             Ron::List(game.values.iter().map(value_def_to_ron).collect()),
         ),
     ];
-    // Streams and tables are emitted only when present (absent
-    // means absent): a project authored before this surface —
-    // the plain-VN fixture is one — keeps its exact bytes.
-    if !game.streams.is_empty() || !game.tables.is_empty() {
-        let pos = fields
-            .iter()
-            .position(|(name, _)| *name == "tiers")
-            .unwrap_or(fields.len());
-        if !game.tables.is_empty() {
-            fields.insert(
-                pos,
-                (
-                    "tables",
-                    Ron::List(game.tables.iter().map(table_to_ron).collect()),
-                ),
-            );
-        }
-        if !game.streams.is_empty() {
-            fields.insert(
-                pos,
-                (
-                    "streams",
-                    Ron::List(game.streams.iter().map(stream_to_ron).collect()),
-                ),
-            );
-        }
+    // The later surfaces — appearances, streams, tables,
+    // visual states — are emitted only when present (absent
+    // means absent): a project authored before a surface — the
+    // plain-VN fixture predates all four — keeps its exact
+    // bytes.
+    if !game.tables.is_empty() {
+        insert_field(
+            &mut fields,
+            "tiers",
+            "tables",
+            Ron::List(game.tables.iter().map(table_to_ron).collect()),
+        );
+    }
+    if !game.streams.is_empty() {
+        insert_field(
+            &mut fields,
+            "tiers",
+            "streams",
+            Ron::List(game.streams.iter().map(stream_to_ron).collect()),
+        );
+    }
+    if !game.appearances.is_empty() {
+        insert_field(
+            &mut fields,
+            "characters",
+            "appearances",
+            Ron::List(game.appearances.iter().map(appearance_to_ron).collect()),
+        );
+    }
+    if !game.visual_states.is_empty() {
+        fields.push((
+            "visual_states",
+            Ron::List(game.visual_states.iter().map(visual_state_to_ron).collect()),
+        ));
     }
     record("Game", fields)
+}
+
+/// Inserts one field just before the named anchor field (or
+/// at the end when the anchor is absent), preserving the
+/// section's alphabetical order.
+fn insert_field(fields: &mut Vec<(&str, Ron)>, anchor: &str, name: &'static str, value: Ron) {
+    let pos = fields
+        .iter()
+        .position(|(field, _)| *field == anchor)
+        .unwrap_or(fields.len());
+    fields.insert(pos, (name, value));
+}
+
+fn appearance_to_ron(appearance: &AppearanceDef) -> Ron {
+    record(
+        "Appearance",
+        vec![
+            (
+                "base",
+                Ron::List(
+                    appearance
+                        .base
+                        .iter()
+                        .map(appearance_entry_to_ron)
+                        .collect(),
+                ),
+            ),
+            ("character", text(&appearance.character)),
+            (
+                "slots",
+                Ron::List(
+                    appearance
+                        .slots
+                        .iter()
+                        .map(appearance_slot_to_ron)
+                        .collect(),
+                ),
+            ),
+        ],
+    )
+}
+
+fn appearance_slot_to_ron(slot: &AppearanceSlot) -> Ron {
+    record(
+        "AppearanceSlot",
+        vec![
+            ("id", text(&slot.id)),
+            (
+                "kind",
+                Ron::Ident(match slot.kind {
+                    AppearanceKind::Ints => "Ints".to_string(),
+                    AppearanceKind::Text => "Text".to_string(),
+                }),
+            ),
+        ],
+    )
+}
+
+fn appearance_entry_to_ron(entry: &AppearanceEntry) -> Ron {
+    record(
+        "AppearanceEntry",
+        vec![
+            ("slot", text(&entry.slot)),
+            (
+                "value",
+                match &entry.value {
+                    AppearanceValue::Ints(values) => {
+                        Ron::List(values.iter().map(|v| Ron::Int(*v)).collect())
+                    }
+                    AppearanceValue::Text(token) => text(token),
+                },
+            ),
+        ],
+    )
+}
+
+fn visual_state_to_ron(state: &VisualStateDef) -> Ron {
+    record(
+        "VisualState",
+        vec![
+            ("character", text(&state.character)),
+            (
+                "delta",
+                Ron::List(state.delta.iter().map(appearance_entry_to_ron).collect()),
+            ),
+            ("state", text(&state.state)),
+        ],
+    )
 }
 
 fn stream_to_ron(stream: &RngStreamDef) -> Ron {
@@ -621,6 +719,17 @@ pub(crate) fn game_from_ron(value: Ron) -> Result<Game, Refusal> {
         Some(Ron::List(items)) => collect(items, table_from_ron)?,
         Some(_) => return wrong_type("tables", "a list"),
     };
+    // Appearances/visual states are absent-means-absent too.
+    let appearances = match fields.try_take("appearances") {
+        None => Vec::new(),
+        Some(Ron::List(items)) => collect(items, appearance_from_ron)?,
+        Some(_) => return wrong_type("appearances", "a list"),
+    };
+    let visual_states = match fields.try_take("visual_states") {
+        None => Vec::new(),
+        Some(Ron::List(items)) => collect(items, visual_state_from_ron)?,
+        Some(_) => return wrong_type("visual_states", "a list"),
+    };
     let tiers = collect(fields.list("tiers")?, tier_from_ron)?;
     let triggers = collect(fields.list("triggers")?, trigger_from_ron)?;
     let values = collect(fields.list("values")?, value_def_from_ron)?;
@@ -642,9 +751,97 @@ pub(crate) fn game_from_ron(value: Ron) -> Result<Game, Refusal> {
         scenes: sorted_unique(scenes, "scenes", |item| &item.id)?,
         dialogue: sorted_unique(dialogue, "dialogue lines", |item| &item.id)?,
         triggers: sorted_unique(triggers, "triggers", |item| &item.id)?,
+        appearances: sorted_unique(appearances, "appearances", |item| &item.character)?,
+        visual_states: sorted_visual_states(visual_states)?,
     };
     fields.done()?;
     Ok(game)
+}
+
+/// Sorts visual states by (character, state) and refuses
+/// duplicate (character, state) pairs.
+fn sorted_visual_states(mut items: Vec<VisualStateDef>) -> Result<Vec<VisualStateDef>, Refusal> {
+    items.sort_by(|left, right| {
+        (left.character.as_str(), left.state.as_str())
+            .cmp(&(right.character.as_str(), right.state.as_str()))
+    });
+    for pair in items.windows(2) {
+        if pair[0].character == pair[1].character && pair[0].state == pair[1].state {
+            return refuse(
+                RefusalClass::Malformed,
+                format!(
+                    "visual states carry duplicate state '{}' for character '{}'",
+                    pair[0].state, pair[0].character
+                ),
+            );
+        }
+    }
+    Ok(items)
+}
+
+fn appearance_from_ron(value: Ron) -> Result<AppearanceDef, Refusal> {
+    let mut fields = open(value, "Appearance")?;
+    let appearance = AppearanceDef {
+        base: collect(fields.list("base")?, appearance_entry_from_ron)?,
+        character: fields.string("character")?,
+        slots: collect(fields.list("slots")?, appearance_slot_from_ron)?,
+    };
+    fields.done()?;
+    Ok(appearance)
+}
+
+fn appearance_slot_from_ron(value: Ron) -> Result<AppearanceSlot, Refusal> {
+    let mut fields = open(value, "AppearanceSlot")?;
+    let slot = AppearanceSlot {
+        id: fields.string("id")?,
+        kind: match fields.ident("kind")?.as_str() {
+            "Ints" => AppearanceKind::Ints,
+            "Text" => AppearanceKind::Text,
+            other => {
+                return refuse(
+                    RefusalClass::UnknownKind,
+                    format!("appearance slot kind '{other}' is not implemented"),
+                );
+            }
+        },
+    };
+    fields.done()?;
+    Ok(slot)
+}
+
+fn appearance_entry_from_ron(value: Ron) -> Result<AppearanceEntry, Refusal> {
+    let mut fields = open(value, "AppearanceEntry")?;
+    let raw = fields.take("value")?;
+    let entry = AppearanceEntry {
+        slot: fields.string("slot")?,
+        value: match raw {
+            Ron::Str(token) => AppearanceValue::Text(token),
+            Ron::List(items) => {
+                let mut values = Vec::with_capacity(items.len());
+                for item in items {
+                    match item {
+                        Ron::Int(v) => values.push(v),
+                        _ => return wrong_type("appearance value", "an integer"),
+                    }
+                }
+                AppearanceValue::Ints(values)
+            }
+            _ => return wrong_type("appearance value", "a string or an integer list"),
+        },
+    };
+    fields.done()?;
+    Ok(entry)
+}
+
+fn visual_state_from_ron(value: Ron) -> Result<VisualStateDef, Refusal> {
+    let mut fields = open(value, "VisualState")?;
+    let state = VisualStateDef {
+        character: fields.string("character")?,
+        delta: collect(fields.list("delta")?, appearance_entry_from_ron)?,
+        state: fields.string("state")?,
+    };
+    fields.done()?;
+    Ok(state)
 }
 
 fn stream_from_ron(value: Ron) -> Result<RngStreamDef, Refusal> {

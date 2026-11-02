@@ -28,6 +28,9 @@ pub enum GameSlice {
     P23,
     /// Phase 2 slice 4: expression table weights (D-469).
     P24,
+    /// Phase 2 slice 6: visual-state delta table
+    /// (Modification App parity).
+    P26,
     /// AUTH-G slice G1 remainder (core records not yet needed by
     /// a Phase 2 slice).
     G1,
@@ -44,6 +47,7 @@ impl GameSlice {
             GameSlice::P22 => "Phase 2 slice 2 (state lifetime)",
             GameSlice::P23 => "Phase 2 slice 3 (deferral)",
             GameSlice::P24 => "Phase 2 slice 4 (expression table weights)",
+            GameSlice::P26 => "Phase 2 slice 6 (visual-state deltas)",
             GameSlice::G1 => "AUTH-G G1",
             GameSlice::G2 => "AUTH-G G2",
         }
@@ -81,8 +85,10 @@ const fn verb(
     }
 }
 
-/// The AUTH-G manifest: 22 verbs, alphabetical within group.
-pub const GAME_MANIFEST: [GameVerbSpec; 22] = [
+/// The AUTH-G manifest: the Amendment's 22 verbs plus the
+/// visual-state pair P2-6 adds (24), alphabetical within
+/// group.
+pub const GAME_MANIFEST: [GameVerbSpec; 24] = [
     verb("clock_define", "game core", GameSlice::P22, true, true),
     verb("game_define", "game core", GameSlice::P21, true, true),
     verb(
@@ -128,6 +134,20 @@ pub const GAME_MANIFEST: [GameVerbSpec; 22] = [
     verb("scene_exit_define", "game flow", GameSlice::G2, true, false),
     verb("schedule_define", "game flow", GameSlice::G2, true, false),
     verb("trigger_define", "game flow", GameSlice::P22, true, true),
+    verb(
+        "appearance_define",
+        "game appearance",
+        GameSlice::P26,
+        true,
+        true,
+    ),
+    verb(
+        "visual_state_define",
+        "game appearance",
+        GameSlice::P26,
+        true,
+        true,
+    ),
     verb("game_simulate", "game runtime", GameSlice::P22, false, true),
 ];
 
@@ -745,6 +765,76 @@ pub struct TableDefineInput {
     pub outcomes: Vec<TableOutcomeInput>,
 }
 
+/// An appearance slot's value kind, as input.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppearanceKindInput {
+    /// An integer list.
+    Ints,
+    /// A text token.
+    Text,
+}
+
+/// One appearance slot declaration, as input.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppearanceSlotInput {
+    /// Slot id.
+    pub id: String,
+    /// The kind of value the slot carries.
+    pub kind: AppearanceKindInput,
+}
+
+/// An appearance value, as input: a text token, or an integer
+/// list.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum AppearanceValueInput {
+    /// A text token.
+    Text(String),
+    /// An integer list.
+    Ints(Vec<i64>),
+}
+
+/// One appearance assignment, as input.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppearanceEntryInput {
+    /// The slot being assigned.
+    pub slot: String,
+    /// The assigned value.
+    pub value: AppearanceValueInput,
+}
+
+/// `appearance_define` inputs: a character's slot vocabulary
+/// and the baseline value of every slot.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppearanceDefineInput {
+    /// The character the table belongs to.
+    pub character: String,
+    /// The declared slots.
+    pub slots: Vec<AppearanceSlotInput>,
+    /// The baseline ("Default") value of every slot.
+    pub base: Vec<AppearanceEntryInput>,
+}
+
+/// `visual_state_define` inputs: one progression state's
+/// sparse delta over a character's baseline appearance. The
+/// delta may be empty — an empty delta is a first-class
+/// value, not a missing row.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct VisualStateDefineInput {
+    /// The character whose appearance the state overrides.
+    pub character: String,
+    /// The progression state's name.
+    pub state: String,
+    /// The sparse overrides.
+    #[serde(default)]
+    pub delta: Vec<AppearanceEntryInput>,
+}
+
 /// One choice-log entry, as input to `game_simulate`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -782,6 +872,8 @@ pub struct SimulateInput {
 /// A mutating game op: one game verb with its typed inputs.
 #[derive(Clone, Debug, PartialEq)]
 pub enum GameOp {
+    /// `appearance_define`.
+    AppearanceDefine(AppearanceDefineInput),
     /// `character_define`.
     CharacterDefine(CharacterDefineInput),
     /// `clock_define`.
@@ -810,6 +902,8 @@ pub enum GameOp {
     TriggerDefine(TriggerDefineInput),
     /// `value_define`.
     ValueDefine(ValueDefineInput),
+    /// `visual_state_define`.
+    VisualStateDefine(VisualStateDefineInput),
 }
 
 fn typed<T: for<'de> Deserialize<'de>>(verb: &str, inputs: &Value) -> Result<T, Refusal> {
@@ -826,6 +920,7 @@ fn typed<T: for<'de> Deserialize<'de>>(verb: &str, inputs: &Value) -> Result<T, 
 /// `game_simulate` is read-only and never parses as an op.
 pub fn parse_game_op(verb: &str, inputs: &Value) -> Result<crate::op::Op, Refusal> {
     let op = match verb {
+        "appearance_define" => GameOp::AppearanceDefine(typed(verb, inputs)?),
         "character_define" => GameOp::CharacterDefine(typed(verb, inputs)?),
         "clock_define" => GameOp::ClockDefine(typed(verb, inputs)?),
         "condition_define" => GameOp::ConditionDefine(typed(verb, inputs)?),
@@ -840,6 +935,7 @@ pub fn parse_game_op(verb: &str, inputs: &Value) -> Result<crate::op::Op, Refusa
         "table_define" => GameOp::TableDefine(typed(verb, inputs)?),
         "trigger_define" => GameOp::TriggerDefine(typed(verb, inputs)?),
         "value_define" => GameOp::ValueDefine(typed(verb, inputs)?),
+        "visual_state_define" => GameOp::VisualStateDefine(typed(verb, inputs)?),
         other => return refuse_game_unimplemented(other),
     };
     Ok(crate::op::Op::Game(op))
@@ -849,6 +945,7 @@ impl GameOp {
     /// The canonical verb name.
     pub fn verb(&self) -> &'static str {
         match self {
+            GameOp::AppearanceDefine(_) => "appearance_define",
             GameOp::CharacterDefine(_) => "character_define",
             GameOp::ClockDefine(_) => "clock_define",
             GameOp::ConditionDefine(_) => "condition_define",
@@ -863,12 +960,14 @@ impl GameOp {
             GameOp::TableDefine(_) => "table_define",
             GameOp::TriggerDefine(_) => "trigger_define",
             GameOp::ValueDefine(_) => "value_define",
+            GameOp::VisualStateDefine(_) => "visual_state_define",
         }
     }
 
     /// The normalized inputs as JSON (what the op log records).
     pub fn inputs_json(&self) -> Result<Value, Refusal> {
         let result = match self {
+            GameOp::AppearanceDefine(inputs) => serde_json::to_value(inputs),
             GameOp::CharacterDefine(inputs) => serde_json::to_value(inputs),
             GameOp::ClockDefine(inputs) => serde_json::to_value(inputs),
             GameOp::ConditionDefine(inputs) => serde_json::to_value(inputs),
@@ -883,6 +982,7 @@ impl GameOp {
             GameOp::TableDefine(inputs) => serde_json::to_value(inputs),
             GameOp::TriggerDefine(inputs) => serde_json::to_value(inputs),
             GameOp::ValueDefine(inputs) => serde_json::to_value(inputs),
+            GameOp::VisualStateDefine(inputs) => serde_json::to_value(inputs),
         };
         result.or_else(|err| {
             refuse(
@@ -898,8 +998,8 @@ mod tests {
     use super::{GAME_MANIFEST, GameSlice};
 
     #[test]
-    fn game_manifest_has_22_verbs_alphabetical_within_group() {
-        assert_eq!(GAME_MANIFEST.len(), 22);
+    fn game_manifest_has_24_verbs_alphabetical_within_group() {
+        assert_eq!(GAME_MANIFEST.len(), 24);
         let mut groups: Vec<&str> = Vec::new();
         for spec in GAME_MANIFEST {
             if groups.last() != Some(&spec.group) {
@@ -907,7 +1007,7 @@ mod tests {
                 groups.push(spec.group);
             }
         }
-        assert_eq!(groups.len(), 4);
+        assert_eq!(groups.len(), 5);
         for pair in GAME_MANIFEST.windows(2) {
             if pair[0].group == pair[1].group {
                 assert!(
@@ -924,6 +1024,6 @@ mod tests {
             .count();
         assert_eq!(p21, 4);
         let implemented = GAME_MANIFEST.iter().filter(|spec| spec.implemented).count();
-        assert_eq!(implemented, 15);
+        assert_eq!(implemented, 17);
     }
 }

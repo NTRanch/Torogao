@@ -6,24 +6,26 @@
 
 use crate::decide::{Verdict, check_id};
 use crate::game::apply::{
-    character_record, clock_record, condition_record, dialogue_record, effect_set_record,
-    flag_record, save_schema_version_of, scene_record, stat_record, stream_record, table_record,
-    tier_record, trigger_record, value_record,
+    appearance_record, character_record, clock_record, condition_record, dialogue_record,
+    effect_set_record, flag_record, save_schema_version_of, scene_record, stat_record,
+    stream_record, table_record, tier_record, trigger_record, value_record, visual_state_record,
 };
-use crate::game::model::{GAME_FORMAT_VERSION, GAME_FORMAT_VERSION_FIRST, Game};
+use crate::game::model::{AppearanceKind, GAME_FORMAT_VERSION, GAME_FORMAT_VERSION_FIRST, Game};
 use crate::game::op::{
-    AtomInput, CharacterDefineInput, ClockDefineInput, ConditionDefineInput,
-    DialogueLineDefineInput, EffectSetDefineInput, ExprInput, FlagDefineInput, GameDefineInput,
-    GameOp, RngStreamDefineInput, SceneDefineInput, StatDefineInput, StatKindInput,
-    StatTierDefineInput, TableDefineInput, TriggerDefineInput, TriggerKindInput, ValueDefineInput,
-    WeightInput,
+    AppearanceDefineInput, AppearanceEntryInput, AppearanceValueInput, AtomInput,
+    CharacterDefineInput, ClockDefineInput, ConditionDefineInput, DialogueLineDefineInput,
+    EffectSetDefineInput, ExprInput, FlagDefineInput, GameDefineInput, GameOp,
+    RngStreamDefineInput, SceneDefineInput, StatDefineInput, StatKindInput, StatTierDefineInput,
+    TableDefineInput, TriggerDefineInput, TriggerKindInput, ValueDefineInput,
+    VisualStateDefineInput, WeightInput,
 };
 use crate::limits::{
-    GAME_CHARACTERS_MAX, GAME_CONDITIONS_MAX, GAME_CONTENT_TEXT_BYTES_MAX, GAME_DIALOGUE_LINES_MAX,
-    GAME_EFFECT_ATOMS_MAX, GAME_EFFECT_SETS_MAX, GAME_FLAGS_MAX, GAME_LIFETIME_DAYS_MAX,
-    GAME_OFFER_DAYS_MAX, GAME_RNG_STREAMS_MAX, GAME_SCENES_MAX, GAME_SLOTS_MAX, GAME_STATS_MAX,
-    GAME_TABLE_OUTCOMES_MAX, GAME_TABLES_MAX, GAME_TIER_THRESHOLDS_MAX, GAME_TRIGGERS_MAX,
-    GAME_VALUES_MAX,
+    GAME_APPEARANCE_SLOTS_MAX, GAME_CHARACTERS_MAX, GAME_CONDITIONS_MAX,
+    GAME_CONTENT_TEXT_BYTES_MAX, GAME_DIALOGUE_LINES_MAX, GAME_EFFECT_ATOMS_MAX,
+    GAME_EFFECT_SETS_MAX, GAME_FLAGS_MAX, GAME_LIFETIME_DAYS_MAX, GAME_OFFER_DAYS_MAX,
+    GAME_RNG_STREAMS_MAX, GAME_SCENES_MAX, GAME_SLOTS_MAX, GAME_STATS_MAX, GAME_TABLE_OUTCOMES_MAX,
+    GAME_TABLES_MAX, GAME_TIER_THRESHOLDS_MAX, GAME_TRIGGERS_MAX, GAME_VALUES_MAX,
+    GAME_VISUAL_STATES_MAX,
 };
 use crate::model::Project;
 use crate::refusal::{Refusal, RefusalClass, refuse};
@@ -176,6 +178,14 @@ pub fn decide_game(project: &Project, op: &GameOp) -> Result<Verdict, Refusal> {
             let game = section(project)?;
             decide_table(game, inputs)
         }
+        GameOp::AppearanceDefine(inputs) => {
+            let game = section(project)?;
+            decide_appearance(game, inputs)
+        }
+        GameOp::VisualStateDefine(inputs) => {
+            let game = section(project)?;
+            decide_visual_state(game, inputs)
+        }
     }
 }
 
@@ -284,6 +294,121 @@ fn decide_table(game: &Game, inputs: &TableDefineInput) -> Result<Verdict, Refus
         game.tables.len() + 1,
         GAME_TABLES_MAX,
     )
+}
+
+/// Checks appearance assignments against a slot vocabulary:
+/// every entry names a declared slot (dangling otherwise),
+/// no slot is assigned twice, and each value's form matches
+/// its slot's declared kind (an ill-typed value is an
+/// expression-class refusal, like an ill-typed table weight).
+fn check_appearance_entries(
+    slots: &[crate::game::model::AppearanceSlot],
+    entries: &[AppearanceEntryInput],
+    what: &str,
+) -> Result<(), Refusal> {
+    let mut seen: Vec<&str> = Vec::new();
+    for entry in entries {
+        check_id(&entry.slot, "appearance slot id")?;
+        let Some(slot) = slots.iter().find(|slot| slot.id == entry.slot) else {
+            return dangling("appearance slot", &entry.slot);
+        };
+        if seen.contains(&entry.slot.as_str()) {
+            return refuse(
+                RefusalClass::Malformed,
+                format!("{what} assigns slot '{}' twice", entry.slot),
+            );
+        }
+        seen.push(entry.slot.as_str());
+        let matches = matches!(
+            (&slot.kind, &entry.value),
+            (AppearanceKind::Ints, AppearanceValueInput::Ints(_))
+                | (AppearanceKind::Text, AppearanceValueInput::Text(_))
+        );
+        if !matches {
+            return game_expr(format!(
+                "the value for appearance slot '{}' does not match its declared kind",
+                entry.slot
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn decide_appearance(game: &Game, inputs: &AppearanceDefineInput) -> Result<Verdict, Refusal> {
+    check_id(&inputs.character, "character id")?;
+    if game.character(&inputs.character).is_none() {
+        return dangling("character", &inputs.character);
+    }
+    if inputs.slots.is_empty() {
+        return refuse(
+            RefusalClass::Malformed,
+            "an appearance table declares at least one slot",
+        );
+    }
+    check_count(
+        inputs.slots.len(),
+        GAME_APPEARANCE_SLOTS_MAX,
+        "appearance slots",
+    )?;
+    let mut seen: Vec<&str> = Vec::new();
+    for slot in &inputs.slots {
+        check_id(&slot.id, "appearance slot id")?;
+        if seen.contains(&slot.id.as_str()) {
+            return refuse(
+                RefusalClass::Malformed,
+                format!("appearance slot '{}' is declared twice", slot.id),
+            );
+        }
+        seen.push(slot.id.as_str());
+    }
+    let record = appearance_record(inputs);
+    check_appearance_entries(&record.slots, &inputs.base, "the baseline appearance")?;
+    // The baseline is total: every declared slot has a value,
+    // so any delta — including the empty one — resolves.
+    for slot in &record.slots {
+        if record.base.iter().all(|entry| entry.slot != slot.id) {
+            return refuse(
+                RefusalClass::Malformed,
+                format!("the baseline appearance omits slot '{}'", slot.id),
+            );
+        }
+    }
+    upsert_verdict(
+        game.appearance(&inputs.character),
+        &record,
+        "appearance table",
+        &inputs.character,
+        game.appearances.len() + 1,
+        GAME_CHARACTERS_MAX,
+    )
+}
+
+fn decide_visual_state(game: &Game, inputs: &VisualStateDefineInput) -> Result<Verdict, Refusal> {
+    check_id(&inputs.character, "character id")?;
+    check_id(&inputs.state, "visual state name")?;
+    if game.character(&inputs.character).is_none() {
+        return dangling("character", &inputs.character);
+    }
+    let Some(appearance) = game.appearance(&inputs.character) else {
+        return dangling("appearance table for character", &inputs.character);
+    };
+    check_appearance_entries(&appearance.slots, &inputs.delta, "the delta")?;
+    let record = visual_state_record(inputs);
+    match game.visual_state(&inputs.character, &inputs.state) {
+        Some(found) if *found == record => Ok(Verdict::NoOp),
+        Some(_) => conflict(format!(
+            "visual state '{}' for character '{}' already exists with different inputs",
+            inputs.state, inputs.character
+        )),
+        None => {
+            check_count(
+                game.visual_states.len() + 1,
+                GAME_VISUAL_STATES_MAX,
+                "visual states",
+            )?;
+            Ok(Verdict::Apply)
+        }
+    }
 }
 
 fn game_expr<T>(message: impl Into<String>) -> Result<T, Refusal> {

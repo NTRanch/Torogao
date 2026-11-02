@@ -72,9 +72,20 @@ pub struct Game {
     pub dialogue: Vec<DialogueLine>,
     /// Triggers, sorted by id.
     pub triggers: Vec<TriggerDef>,
+    /// Per-character appearance tables, sorted by character
+    /// id. (Serialized only when non-empty, like `streams`.)
+    pub appearances: Vec<AppearanceDef>,
+    /// Progression-state appearance deltas, sorted by
+    /// (character, state). (Serialized only when non-empty.)
+    pub visual_states: Vec<VisualStateDef>,
 }
 
 impl Game {
+    /// The appearance table of this character.
+    pub fn appearance(&self, character: &str) -> Option<&AppearanceDef> {
+        find(&self.appearances, character, |item| &item.character)
+    }
+
     /// The character with this id.
     pub fn character(&self, id: &str) -> Option<&CharacterDef> {
         find(&self.characters, id, |item| &item.id)
@@ -128,6 +139,13 @@ impl Game {
     /// The trigger with this id.
     pub fn trigger(&self, id: &str) -> Option<&TriggerDef> {
         find(&self.triggers, id, |item| &item.id)
+    }
+
+    /// The visual-state delta of this character in this state.
+    pub fn visual_state(&self, character: &str, state: &str) -> Option<&VisualStateDef> {
+        self.visual_states
+            .iter()
+            .find(|row| row.character == character && row.state == state)
     }
 
     /// The named value with this id.
@@ -626,6 +644,80 @@ pub struct TriggerDef {
     /// The offered lifecycle, when the trigger offers instead of
     /// firing outright.
     pub offer: Option<OfferDef>,
+}
+
+/// The value kind an appearance slot carries: a text token
+/// (a part name, an expression id) or an integer list
+/// (transforms and per-slot vectors, in fixed point where the
+/// source data is fractional — floats never enter the format).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AppearanceKind {
+    /// An integer list (transforms, vectors).
+    Ints,
+    /// A text token (a part or expression name).
+    Text,
+}
+
+/// One declared appearance slot of a character's layered
+/// doll: an id and the kind of value it carries.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AppearanceSlot {
+    /// Stable id.
+    pub id: String,
+    /// The kind of value the slot carries.
+    pub kind: AppearanceKind,
+}
+
+/// One appearance assignment: a slot and its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AppearanceEntry {
+    /// The slot being assigned.
+    pub slot: String,
+    /// The assigned value.
+    pub value: AppearanceValue,
+}
+
+/// An appearance value. Text tokens name parts and
+/// expressions; integer lists carry transforms and vectors.
+#[derive(Clone, Debug, PartialEq)]
+pub enum AppearanceValue {
+    /// An integer list (fixed point where fractional).
+    Ints(Vec<i64>),
+    /// A text token naming a part or expression.
+    Text(String),
+}
+
+/// A character's appearance table (P2-6): the declared slots
+/// of its layered doll and the baseline ("Default") value of
+/// every slot. The base is total by construction — every
+/// declared slot has a baseline — so an empty delta resolves
+/// to exactly this.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AppearanceDef {
+    /// The baseline value of every declared slot, sorted by
+    /// slot id.
+    pub base: Vec<AppearanceEntry>,
+    /// The character this table belongs to.
+    pub character: String,
+    /// The declared slots, sorted by id.
+    pub slots: Vec<AppearanceSlot>,
+}
+
+/// One progression state's sparse appearance delta (P2-6):
+/// the slots this state overrides on the character's baseline
+/// doll. The delta is sparse by design, and an EMPTY delta is
+/// a first-class value — a state that changes no visual
+/// property at all (the Modification App's MindControl path)
+/// is a row with no entries, not a missing row.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VisualStateDef {
+    /// The character whose appearance this state overrides.
+    pub character: String,
+    /// The sparse overrides, sorted by slot id. Empty is a
+    /// first-class value.
+    pub delta: Vec<AppearanceEntry>,
+    /// The progression state's name.
+    pub state: String,
 }
 
 /// The one RNG algorithm this build implements: SplitMix64,

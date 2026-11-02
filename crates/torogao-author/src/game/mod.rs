@@ -27,6 +27,7 @@ pub mod simulate;
 pub mod state;
 #[cfg(test)]
 mod tests;
+pub mod visual;
 
 pub use model::Game;
 pub use op::{GAME_MANIFEST, GameOp, GameSlice, GameVerbSpec, game_verb_spec};
