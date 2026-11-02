@@ -35,12 +35,29 @@ use crate::error::{CompanionError, CompanionResult};
 pub const AMBIENT_ANIMATION: &str = "Daydream";
 /// The click reaction performance.
 pub const CLICK_ANIMATION: &str = "Greeting";
+/// The salience she idles at while quiet hours are on:
+/// the Persona rule-10 idle budget (PROGRAM.md §3.3 —
+/// idle salience below focus salience). The presentations
+/// apply it as a scale on the prepared frame's part
+/// opacities; her evaluated state is never touched, so a
+/// quiet run's trace hash equals the loud run's.
+pub const QUIET_SALIENCE: f32 = torogao_app::persona::HOST_IDLE_SALIENCE;
+
+/// Compile-time gate for the §3.3 parenthetical: the
+/// quiet idle salience sits below the focus salience.
+const _: () = assert!(QUIET_SALIENCE < torogao_app::persona::FOCUS_SALIENCE);
 
 /// The companion's live host state.
 pub struct CompanionCore {
     shell: ShellState,
     play: PlayHost,
     session_rx: Option<Receiver<BridgeRequest>>,
+    /// Quiet hours (PROGRAM.md §3.3): while on, reaction
+    /// performances are suppressed (see `play_reaction`).
+    /// The persisted toggle lives in the placement state;
+    /// the presentations mirror it here so the reaction
+    /// gate is one law for every surface.
+    quiet_hours: bool,
     /// The hosted session's id, when serving.
     pub session_id: Option<String>,
     /// The model path the scene was loaded from (the
@@ -74,6 +91,7 @@ impl CompanionCore {
             shell,
             play: PlayHost::new(),
             session_rx: None,
+            quiet_hours: false,
             session_id: None,
             model_path: model_path.to_path_buf(),
         };
@@ -181,6 +199,35 @@ impl CompanionCore {
         Ok(())
     }
 
+    /// Sets quiet hours (PROGRAM.md §3.3). The
+    /// presentations call this at startup with the loaded
+    /// placement state and again whenever the menu toggle
+    /// flips it.
+    pub fn set_quiet_hours(&mut self, quiet_hours: bool) {
+        self.quiet_hours = quiet_hours;
+    }
+
+    /// Whether quiet hours are on.
+    pub fn quiet_hours(&self) -> bool {
+        self.quiet_hours
+    }
+
+    /// The reaction entry: a click on her (and the menu's
+    /// Greeting item, the same performance) plays the
+    /// click reaction — except under quiet hours, when
+    /// reactions are suppressed (PROGRAM.md §3.3) and this
+    /// is a silent no-op, not a refusal. Performances the
+    /// session host invokes through the bridge are
+    /// authored invocations, not reactions, and are not
+    /// gated here; a reaction already playing when quiet
+    /// hours begin finishes, then the ambient yields back.
+    pub fn play_reaction(&mut self) -> CompanionResult<()> {
+        if self.quiet_hours {
+            return Ok(());
+        }
+        self.play(CLICK_ANIMATION, false)
+    }
+
     /// Starts the ambient performance when nothing else owns
     /// the player: Daydream loops as her at-rest state. A
     /// finished Greeting yields back to it; a paused or
@@ -242,6 +289,15 @@ impl CompanionCore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quiet_salience_is_the_persona_idle_budget() {
+        // PROGRAM.md §3.3: the quiet idle salience is the
+        // Persona rule-10 idle budget (its being below the
+        // focus salience is the compile-time gate beside
+        // the constant).
+        assert_eq!(QUIET_SALIENCE, torogao_app::persona::HOST_IDLE_SALIENCE);
+    }
 
     #[test]
     fn ambient_and_click_names_are_the_landed_repertoire() {

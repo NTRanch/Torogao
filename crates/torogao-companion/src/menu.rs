@@ -1,8 +1,9 @@
 //! The right-click menu: her name and a portrait swatch,
 //! Play submenu entries (Greeting, Daydream), Open
-//! Torogao, the click-through lock toggle, and Quit —
-//! Persona-register styling (PROGRAM.md §3.3 host rules:
-//! Persona red on near-black, serif).
+//! Torogao, the click-through lock and quiet-hours
+//! toggles, and Quit — Persona-register styling
+//! (PROGRAM.md §3.3 host rules: Persona red on
+//! near-black, serif).
 //!
 //! egui is driven manually (no eframe / egui-winit): each
 //! presentation translates its own pointer events into
@@ -30,6 +31,8 @@ pub enum MenuAction {
     OpenTorogao,
     /// Flip the click-through lock.
     ToggleClickThrough,
+    /// Flip quiet hours (PROGRAM.md §3.3).
+    ToggleQuietHours,
     /// Quit the companion.
     Quit,
     /// Dismiss the menu.
@@ -41,7 +44,7 @@ fn persona_color(color: [u8; 3]) -> egui::Color32 {
 }
 
 /// Menu window size, logical pixels.
-pub const MENU_SIZE: (f32, f32) = (232.0, 292.0);
+pub const MENU_SIZE: (f32, f32) = (232.0, 322.0);
 
 /// The menu's egui context + GPU renderer + input state.
 pub struct MenuUi {
@@ -53,6 +56,8 @@ pub struct MenuUi {
     /// Mirrored from placement so the toggle row can show
     /// its state; the presentation writes it at open.
     pub click_through_locked: bool,
+    /// Same mirroring for the quiet-hours toggle row.
+    pub quiet_hours: bool,
     started: Instant,
 }
 
@@ -84,6 +89,7 @@ impl MenuUi {
             pointer_pos: None,
             pending_events: Vec::new(),
             click_through_locked: false,
+            quiet_hours: false,
             started: Instant::now(),
         }
     }
@@ -197,6 +203,14 @@ impl MenuUi {
                     };
                     if menu_button(ui, lock_label) {
                         actions.push(MenuAction::ToggleClickThrough);
+                    }
+                    let quiet_label = if self.quiet_hours {
+                        "Quiet hours: ON"
+                    } else {
+                        "Quiet hours: off"
+                    };
+                    if menu_button(ui, quiet_label) {
+                        actions.push(MenuAction::ToggleQuietHours);
                     }
                     ui.separator();
                     if menu_button(ui, "Quit") {

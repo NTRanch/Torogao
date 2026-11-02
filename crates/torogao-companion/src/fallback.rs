@@ -30,7 +30,7 @@ use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{WindowAttributes, WindowId, WindowLevel};
 
-use crate::core::{AMBIENT_ANIMATION, CLICK_ANIMATION, CompanionCore};
+use crate::core::{AMBIENT_ANIMATION, CompanionCore, QUIET_SALIENCE};
 use crate::error::{CompanionError, CompanionResult};
 use crate::menu::{MenuAction, MenuUi};
 use crate::silhouette::{Silhouette, bbox_materially_changed, point_in_silhouette, silhouette_of};
@@ -149,6 +149,11 @@ impl FallbackApp {
             }
         };
         prepared.canvas.view = fit_view(&prepared.canvas, self.size.0, self.size.1);
+        if self.options.placement.quiet_hours {
+            // Quiet hours (PROGRAM.md §3.3), as the
+            // Wayland route applies it.
+            crate::view::scale_frame_opacity(&mut prepared, QUIET_SALIENCE);
+        }
         renderer.draw_into(
             scene,
             &prepared,
@@ -207,6 +212,7 @@ impl FallbackApp {
         };
         let mut menu = MenuUi::new(renderer.device(), format, self.cursor);
         menu.click_through_locked = self.options.placement.click_through_locked;
+        menu.quiet_hours = self.options.placement.quiet_hours;
         self.menu = Some(menu);
     }
 
@@ -215,7 +221,7 @@ impl FallbackApp {
         for action in actions {
             match action {
                 MenuAction::PlayGreeting => {
-                    if let Err(err) = self.core.play(CLICK_ANIMATION, false) {
+                    if let Err(err) = self.core.play_reaction() {
                         eprintln!("torogao-companion: greeting refused: {err}");
                     }
                     self.menu = None;
@@ -234,6 +240,14 @@ impl FallbackApp {
                     placement.click_through_locked = !placement.click_through_locked;
                     if let Some(menu) = &mut self.menu {
                         menu.click_through_locked = placement.click_through_locked;
+                    }
+                    self.placement_dirty = true;
+                }
+                MenuAction::ToggleQuietHours => {
+                    placement.quiet_hours = !placement.quiet_hours;
+                    self.core.set_quiet_hours(placement.quiet_hours);
+                    if let Some(menu) = &mut self.menu {
+                        menu.quiet_hours = placement.quiet_hours;
                     }
                     self.placement_dirty = true;
                 }
@@ -447,7 +461,7 @@ impl ApplicationHandler for FallbackApp {
                                 && delta.0.abs() <= DRAG_THRESHOLD_PX
                                 && delta.1.abs() <= DRAG_THRESHOLD_PX
                             {
-                                if let Err(err) = self.core.play(CLICK_ANIMATION, false) {
+                                if let Err(err) = self.core.play_reaction() {
                                     eprintln!("torogao-companion: greeting refused: {err}");
                                 }
                             }
@@ -520,6 +534,7 @@ pub fn run(options: RunOptions) -> CompanionResult<RunSummary> {
         options.session_port,
         &options.held_by,
     )?;
+    core.set_quiet_hours(options.placement.quiet_hours);
     let size = {
         let scene = core.scene_mut()?;
         let prepared =
