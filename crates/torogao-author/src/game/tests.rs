@@ -1067,3 +1067,402 @@ fn stats_without_a_lifetime_never_decay() {
     assert_eq!(state.stats[&key], 4, "no lifetime, no decay");
     assert!(state.lifetimes.is_empty());
 }
+
+// ---- P2-3: deferral semantics (D-464) --------------------------------
+
+/// Authors the deferral fixture: Amy starts with affection 1,
+/// so the gate condition `offer_ready` holds from genesis. The
+/// `gift` trigger matches the afternoon_1 slot, is gated on
+/// `offer_ready`, adds +1 affection when it fires, and carries
+/// an offer expiring after 2 days.
+fn author_offer_game(root: &Path) {
+    let answer = script(
+        root,
+        vec![
+            ("project_init", init_inputs()),
+            (
+                "game_define",
+                json!({"id": "offer_fixture", "start_scene": "room"}),
+            ),
+            (
+                "clock_define",
+                json!({
+                    "slots": ["morning_1", "morning_2", "afternoon_1", "afternoon_2",
+                              "evening_1", "evening_2", "night_1", "night_2"],
+                    "days_per_week": 7,
+                }),
+            ),
+            (
+                "stat_define",
+                json!({
+                    "id": "affection", "scope": "character", "kind": {"kind": "int"},
+                    "min": 0, "max": 10, "default": 0, "overflow": "clamp",
+                }),
+            ),
+            (
+                "character_define",
+                json!({
+                    "id": "amy", "name_ref": "name_amy", "name_text": "Amy",
+                    "initials": [{"stat": "affection", "value": 1}],
+                }),
+            ),
+            (
+                "scene_define",
+                json!({"id": "room", "presentation": "room"}),
+            ),
+            (
+                "condition_define",
+                json!({
+                    "id": "offer_ready",
+                    "expr": {
+                        "kind": "cmp", "op": "ge",
+                        "left": {"kind": "stat", "stat": "affection", "character": "amy"},
+                        "right": {"kind": "lit", "value": 1},
+                    },
+                }),
+            ),
+            (
+                "effect_set_define",
+                json!({
+                    "id": "gift_set",
+                    "atoms": [{
+                        "kind": "stat_add", "stat": "affection", "character": "amy",
+                        "amount": {"kind": "lit", "value": 1},
+                    }],
+                }),
+            ),
+            (
+                "trigger_define",
+                json!({
+                    "id": "gift",
+                    "kind": {"kind": "on_tick", "slots": ["afternoon_1"]},
+                    "effect_set": "gift_set",
+                    "gate": "offer_ready",
+                    "offer": {"expires_days": 2},
+                }),
+            ),
+        ],
+    );
+    assert_eq!(answer.status, Status::Ok, "offer fixture: {}", answer.doc);
+    assert!(
+        validate_codes(root).is_empty(),
+        "offer fixture validates: {:?}",
+        validate_codes(root)
+    );
+}
+
+fn offer_log(
+    entries: &[(u64, &str, &str)],
+    ticks: u64,
+) -> Vec<Option<crate::game::simulate::LogEntry>> {
+    let inputs: Vec<LogEntryInput> = entries
+        .iter()
+        .map(|(tick, id, option)| LogEntryInput {
+            tick: *tick,
+            kind: "offer".to_string(),
+            id: (*id).to_string(),
+            option: Some((*option).to_string()),
+        })
+        .collect();
+    parse_log(&inputs, ticks).expect("log parses")
+}
+
+fn offered_count(events: &[String]) -> usize {
+    events
+        .iter()
+        .filter(|event| event.contains("offered"))
+        .count()
+}
+
+#[test]
+fn decline_defers_for_the_day_and_reoffers_the_next_matching_day() {
+    let root = test_root("offer-decline");
+    author_offer_game(&root);
+    let loaded = load_project(&root);
+    let project = &loaded.project;
+    let log = offer_log(&[(3, "gift", "decline"), (11, "gift", "accept")], 20);
+    let mut state = genesis(project).expect("genesis");
+    let key = StatKey {
+        character: Some("amy".to_string()),
+        stat: "affection".to_string(),
+    };
+    // Tick 2 is day 1's afternoon_1: the trigger offers instead
+    // of firing (affection unchanged).
+    let (events, _c) = run_to(project, &mut state, &log, 2);
+    assert_eq!(offered_count(&events), 1);
+    assert!(state.triggers["gift"].offer.is_some());
+    assert_eq!(
+        state.stats[&key], 1,
+        "an offer does not apply its effect set"
+    );
+    // Decline on day 1: no re-offer for the rest of day 1.
+    let (events, _c) = run_to(project, &mut state, &log, 7);
+    assert_eq!(offered_count(&events), 0, "no re-offer on the decline day");
+    assert_eq!(state.triggers["gift"].deferred_day, Some(1));
+    assert!(state.triggers["gift"].offer.is_none());
+    // Day 2's afternoon_1 (tick 10) re-offers; accepting on
+    // tick 11 applies the effect set.
+    let (events, _c) = run_to(project, &mut state, &log, 10);
+    assert!(
+        events
+            .iter()
+            .any(|event| event.contains("tick 10") && event.contains("offered")),
+        "re-offer on the next matching day: {events:?}"
+    );
+    let (events, _c) = run_to(project, &mut state, &log, 11);
+    assert!(
+        events
+            .iter()
+            .any(|event| event.contains("tick 11") && event.contains("accepted")),
+        "{events:?}"
+    );
+    assert_eq!(state.stats[&key], 2, "acceptance applies the effect set");
+    assert!(state.triggers["gift"].offer.is_none());
+}
+
+#[test]
+fn decline_suppresses_even_an_every_tick_trigger_for_the_whole_day() {
+    // The deferral's teeth: a trigger matching every tick is
+    // offered once on day 1, declined, and stays silent for the
+    // remaining ticks of day 1 — it re-offers on day 2's first
+    // tick.
+    let root = test_root("offer-deferral-teeth");
+    let answer = script(
+        &root,
+        vec![
+            ("project_init", init_inputs()),
+            (
+                "game_define",
+                json!({"id": "teeth_fixture", "start_scene": "room"}),
+            ),
+            (
+                "clock_define",
+                json!({"slots": ["a", "b", "c", "d"], "days_per_week": 7}),
+            ),
+            (
+                "stat_define",
+                json!({
+                    "id": "visits", "scope": "game", "kind": {"kind": "int"},
+                    "min": 0, "max": 100, "default": 0, "overflow": "clamp",
+                }),
+            ),
+            (
+                "scene_define",
+                json!({"id": "room", "presentation": "room"}),
+            ),
+            (
+                "effect_set_define",
+                json!({
+                    "id": "visit_set",
+                    "atoms": [{
+                        "kind": "stat_add", "stat": "visits",
+                        "amount": {"kind": "lit", "value": 1},
+                    }],
+                }),
+            ),
+            (
+                "trigger_define",
+                json!({
+                    "id": "daily_visit",
+                    "kind": {"kind": "on_tick"},
+                    "effect_set": "visit_set",
+                    "offer": {},
+                }),
+            ),
+        ],
+    );
+    assert_eq!(answer.status, Status::Ok, "{}", answer.doc);
+    let loaded = load_project(&root);
+    let project = &loaded.project;
+    let log = offer_log(&[(2, "daily_visit", "decline")], 8);
+    let mut state = genesis(project).expect("genesis");
+    let (events, _c) = run_to(project, &mut state, &log, 2);
+    assert_eq!(
+        offered_count(&events),
+        1,
+        "offered on tick 1, declined on tick 2"
+    );
+    assert_eq!(state.triggers["daily_visit"].deferred_day, Some(1));
+    // Tick 3 matches too (the pattern is every tick) but the
+    // day-1 deferral suppresses it.
+    let (events, _c) = run_to(project, &mut state, &log, 3);
+    assert_eq!(
+        offered_count(&events),
+        0,
+        "suppressed for the rest of day 1"
+    );
+    // Tick 4 rolls over to day 2: the deferral clears and the
+    // trigger re-offers at once.
+    let (events, _c) = run_to(project, &mut state, &log, 4);
+    assert_eq!(offered_count(&events), 1, "re-offer on day 2's first tick");
+    assert_eq!(state.day, 2);
+}
+
+#[test]
+fn offer_expiry_fires_on_the_lifetime_clock_at_the_boundary_tick() {
+    let root = test_root("offer-expiry");
+    author_offer_game(&root);
+    let loaded = load_project(&root);
+    let project = &loaded.project;
+    let log = parse_log(&[], 24).expect("empty log");
+    let mut state = genesis(project).expect("genesis");
+    // Offered tick 2 (day 1, age 0). Rollover tick 8: age 1.
+    // Rollover tick 16: age 2 reaches expires_days — the offer
+    // dies at exactly that tick, through the rollover path.
+    let (events, _c) = run_to(project, &mut state, &log, 15);
+    assert_eq!(offered_count(&events), 1);
+    assert!(
+        state.triggers["gift"].offer.is_some(),
+        "still pending the tick before expiry"
+    );
+    let (events, _c) = run_to(project, &mut state, &log, 16);
+    assert!(
+        events
+            .iter()
+            .any(|event| { event.contains("tick 16") && event.contains("expired unfired") }),
+        "expiry at the boundary tick: {events:?}"
+    );
+    assert!(state.triggers["gift"].offer.is_none());
+    // The settled trigger re-offers on the next matching day:
+    // day 3's afternoon_1 is tick 18.
+    let (events, _c) = run_to(project, &mut state, &log, 18);
+    assert!(
+        events
+            .iter()
+            .any(|event| event.contains("tick 18") && event.contains("offered")),
+        "re-offer after expiry: {events:?}"
+    );
+}
+
+#[test]
+fn offer_inputs_without_a_pending_offer_refuse_the_run() {
+    let root = test_root("offer-adversarial");
+    author_offer_game(&root);
+    let loaded = load_project(&root);
+    let project = &loaded.project;
+    // Deciding an offer on tick 1, before any offer exists.
+    let log = offer_log(&[(1, "gift", "accept")], 4);
+    let mut state = genesis(project).expect("genesis");
+    let mut events = Vec::new();
+    let mut chain = Vec::new();
+    let err = run_ticks(project, &mut state, &log, 4, &mut events, &mut chain)
+        .expect_err("deciding a non-pending offer refuses");
+    assert_eq!(err.code(), "TG-AUTH-CONFLICT", "{err}");
+    // An unknown decision word, with an offer pending.
+    let log = offer_log(&[(3, "gift", "maybe")], 4);
+    let mut state = genesis(project).expect("genesis");
+    let mut events = Vec::new();
+    let mut chain = Vec::new();
+    let err = run_ticks(project, &mut state, &log, 4, &mut events, &mut chain)
+        .expect_err("an unknown decision refuses");
+    assert_eq!(err.code(), "TG-AUTH-MALFORMED", "{err}");
+    // Deciding a trigger the game does not define.
+    let log = offer_log(&[(3, "nope", "accept")], 4);
+    let mut state = genesis(project).expect("genesis");
+    let mut events = Vec::new();
+    let mut chain = Vec::new();
+    let err = run_ticks(project, &mut state, &log, 4, &mut events, &mut chain)
+        .expect_err("deciding an unknown trigger refuses");
+    assert_eq!(err.code(), "TG-AUTH-CONFLICT", "{err}");
+}
+
+#[test]
+fn offer_expiry_zero_days_is_refused_at_define() {
+    let root = test_root("offer-bad-expiry");
+    author_offer_game(&root);
+    let bad = verb(
+        &root,
+        "trigger_define",
+        json!({
+            "id": "bad_offer",
+            "kind": {"kind": "on_tick", "slots": ["morning_1"]},
+            "effect_set": "gift_set",
+            "offer": {"expires_days": 0},
+        }),
+    );
+    assert_eq!(bad.doc["code"], "TG-AUTH-RANGE", "{}", bad.doc);
+}
+
+#[test]
+fn deferral_simulation_hash_chain_is_identical_across_three_runs() {
+    let root = test_root("offer-chain");
+    author_offer_game(&root);
+    let inputs = json!({
+        "run_seed": 11,
+        "ticks": 20,
+        "choice_log": [
+            {"tick": 3, "kind": "offer", "id": "gift", "option": "decline"},
+            {"tick": 11, "kind": "offer", "id": "gift", "option": "accept"},
+        ],
+    });
+    let first = verb(&root, "game_simulate", inputs.clone());
+    assert_eq!(first.status, Status::Ok, "{}", first.doc);
+    for _ in 0..2 {
+        let again = verb(&root, "game_simulate", inputs.clone());
+        assert_eq!(again.doc, first.doc, "run evidence is byte-identical");
+    }
+    assert_eq!(first.doc["chain"].as_array().expect("chain").len(), 20);
+}
+
+#[test]
+fn same_tick_triggers_fire_in_priority_order() {
+    // §G3.1 ordering is undisturbed by the offer machinery:
+    // two plain triggers on one event fire priority-desc.
+    let root = test_root("offer-ordering");
+    let answer = script(
+        &root,
+        vec![
+            ("project_init", init_inputs()),
+            (
+                "game_define",
+                json!({"id": "order_fixture", "start_scene": "room"}),
+            ),
+            ("clock_define", json!({"slots": ["morning", "night"]})),
+            (
+                "scene_define",
+                json!({"id": "room", "presentation": "room"}),
+            ),
+            (
+                "effect_set_define",
+                json!({"id": "set_low", "atoms": [{"kind": "emit_event", "event": "low_done"}]}),
+            ),
+            (
+                "effect_set_define",
+                json!({"id": "set_high", "atoms": [{"kind": "emit_event", "event": "high_done"}]}),
+            ),
+            (
+                "trigger_define",
+                json!({
+                    "id": "low",
+                    "kind": {"kind": "on_event", "event": "go"},
+                    "effect_set": "set_low",
+                    "priority": 1,
+                }),
+            ),
+            (
+                "trigger_define",
+                json!({
+                    "id": "high",
+                    "kind": {"kind": "on_event", "event": "go"},
+                    "effect_set": "set_high",
+                    "priority": 5,
+                }),
+            ),
+        ],
+    );
+    assert_eq!(answer.status, Status::Ok, "{}", answer.doc);
+    let loaded = load_project(&root);
+    let project = &loaded.project;
+    let log = event_log(&[(1, "go")], 2);
+    let mut state = genesis(project).expect("genesis");
+    let (events, _c) = run_to(project, &mut state, &log, 2);
+    let high = events
+        .iter()
+        .position(|event| event.contains("'high' fired"))
+        .expect("high fired");
+    let low = events
+        .iter()
+        .position(|event| event.contains("'low' fired"))
+        .expect("low fired");
+    assert!(high < low, "priority order in the trace: {events:?}");
+}

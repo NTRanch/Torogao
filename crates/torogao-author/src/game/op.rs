@@ -644,8 +644,18 @@ pub enum RepetitionInput {
     Repeat,
 }
 
-/// `trigger_define` inputs. (The offered lifecycle's `offer`
-/// field joins this record in slice P2-3.)
+/// The offered lifecycle, as input (D-464): when present on a
+/// trigger, a match offers instead of firing.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OfferInput {
+    /// Days an offer may stay open before it expires; absent
+    /// means the offer does not expire.
+    #[serde(default)]
+    pub expires_days: Option<u32>,
+}
+
+/// `trigger_define` inputs.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TriggerDefineInput {
@@ -667,6 +677,10 @@ pub struct TriggerDefineInput {
     /// Ticks the trigger sits out after firing (default 0).
     #[serde(default)]
     pub cooldown_ticks: u32,
+    /// The offered lifecycle (D-464), when the trigger offers
+    /// instead of firing outright.
+    #[serde(default)]
+    pub offer: Option<OfferInput>,
 }
 
 fn default_repetition() -> RepetitionInput {

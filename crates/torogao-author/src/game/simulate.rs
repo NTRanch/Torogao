@@ -14,7 +14,7 @@
 //!    becomes an offer, for offer-bearing triggers).
 //! 3. Consume one choice-log input: an advance, an event (its
 //!    `on_event` triggers fire as the transaction), or an offer
-//!    decision (P2-3).
+//!    decision.
 //! 4. Re-evaluate `on_threshold` / `on_flag` triggers and the
 //!    `on_event` triggers of events emitted in steps 2–3, in the
 //!    same order, looping until none fire; each trigger fires at
@@ -343,10 +343,48 @@ fn decay_lifetimes(game: &Game, state: &mut GameState, events: &mut Vec<String>)
     }
 }
 
-/// Step 1b: offer ageing at day rollover (D-464) — filled in by
-/// slice P2-3; in P2-2 no trigger can be offered, so this is a
-/// documented no-op extension point of the same step.
-fn age_offers(_game: &Game, _state: &mut GameState, _events: &mut Vec<String>) {}
+/// Step 1b: offer ageing at day rollover (D-464). Each pending
+/// offer ages one day on the same rollover that decrements
+/// lifetimes (one clock); an offer whose age reaches its
+/// authored `expires_days` is withdrawn unfired and its
+/// trigger settles (a `once` trigger is spent; a repeating one
+/// cools down) — so a lapsed offer can be re-offered on a
+/// later matching day, never the same tick it died.
+fn age_offers(game: &Game, state: &mut GameState, events: &mut Vec<String>) {
+    let pending: Vec<String> = state
+        .triggers
+        .iter()
+        .filter(|(_, trigger)| trigger.offer.is_some())
+        .map(|(id, _)| id.clone())
+        .collect();
+    for id in pending {
+        let Some(def) = game.trigger(&id) else {
+            continue;
+        };
+        let Some(offer_def) = def.offer else {
+            continue;
+        };
+        let expired = {
+            let Some(trigger) = state.triggers.get_mut(&id) else {
+                continue;
+            };
+            let Some(offer) = trigger.offer.as_mut() else {
+                continue;
+            };
+            offer.age_days += 1;
+            offer_def
+                .expires_days
+                .is_some_and(|limit| offer.age_days >= limit)
+        };
+        if expired {
+            events.push(format!(
+                "tick {}: offer from trigger '{}' expired unfired",
+                state.tick, id
+            ));
+            settle_trigger(state, def);
+        }
+    }
+}
 
 /// Step 1c: deferrals are per-day; a new day clears them.
 fn clear_deferrals(state: &mut GameState) {
@@ -383,9 +421,8 @@ fn gate_passes(game: &Game, state: &GameState, def: &TriggerDef) -> Result<bool,
 
 /// Fires one trigger: applies its effect set as one transaction
 /// and does the repetition/cooldown bookkeeping. Offer-bearing
-/// triggers become offers instead (P2-3 fills this in; P2-2
-/// records cannot carry offers through the input schema, so the
-/// arm is unreachable here and fires outright).
+/// triggers become offers instead (D-464): the effect set runs
+/// only if the run accepts the offer.
 fn fire(
     game: &Game,
     state: &mut GameState,
@@ -673,20 +710,71 @@ fn apply_input(
     }
 }
 
-/// Step 3 (offer decisions) — filled in by slice P2-3.
+/// Step 3 (offer decisions, D-464): the input names a trigger
+/// whose offer is pending and decides it. Accepting applies
+/// the trigger's effect set as the step's transaction and
+/// settles the trigger; declining withdraws the offer and
+/// defers the trigger for the rest of the day (it re-offers on
+/// the next matching day). Deciding an offer that is not
+/// pending refuses the run (`TG-AUTH-CONFLICT`): the log and
+/// the run have diverged.
 fn apply_offer_input(
-    _game: &Game,
-    _state: &mut GameState,
+    game: &Game,
+    state: &mut GameState,
     entry: &LogEntry,
-    _events: &mut Vec<String>,
+    events: &mut Vec<String>,
 ) -> Result<(), Refusal> {
-    refuse(
-        RefusalClass::Conflict,
-        format!(
-            "input decides offer '{}', but no offer lifecycle exists in this build",
-            entry.id
+    let Some(def) = game.trigger(&entry.id) else {
+        return refuse(
+            RefusalClass::Conflict,
+            format!(
+                "input decides offer '{}', but the game defines no such trigger",
+                entry.id
+            ),
+        );
+    };
+    let pending = state
+        .triggers
+        .get(&def.id)
+        .is_some_and(|trigger| trigger.offer.is_some());
+    if !pending {
+        return refuse(
+            RefusalClass::Conflict,
+            format!(
+                "input decides offer '{}', but no offer from it is pending",
+                def.id
+            ),
+        );
+    }
+    match entry.option.as_deref() {
+        Some("accept") => {
+            events.push(format!(
+                "tick {}: offer from trigger '{}' accepted",
+                state.tick, def.id
+            ));
+            apply_effect_set(game, state, def, events);
+            Ok(())
+        }
+        Some("decline") => {
+            if let Some(trigger) = state.triggers.get_mut(&def.id) {
+                trigger.offer = None;
+                trigger.deferred_day = Some(state.day);
+            }
+            events.push(format!(
+                "tick {}: offer from trigger '{}' declined; deferred for the rest of day {}",
+                state.tick, def.id, state.day
+            ));
+            Ok(())
+        }
+        Some(other) => refuse(
+            RefusalClass::Malformed,
+            format!("offer decision '{other}' is not known; use accept or decline"),
         ),
-    )
+        None => refuse(
+            RefusalClass::Malformed,
+            "an offer input must carry an option (accept or decline)",
+        ),
+    }
 }
 
 /// Step 4: threshold/flag edges plus emitted events, looping

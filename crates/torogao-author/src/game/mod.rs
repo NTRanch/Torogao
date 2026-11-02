@@ -26,7 +26,6 @@ pub mod save;
 pub mod simulate;
 pub mod state;
 #[cfg(test)]
-#[cfg(test)]
 mod tests;
 
 pub use model::Game;
