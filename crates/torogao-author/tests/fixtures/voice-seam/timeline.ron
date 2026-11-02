@@ -1,0 +1,16 @@
+// FIXTURE STUB — a take timeline (voice plan §5): where each
+// line starts in the take, in milliseconds. Cue ends come
+// from the delivered manifest's measured durations
+// (delivery.ron), never from the text.
+Timeline(
+    entries: [
+        TimelineEntry(
+            line_id: "line.001",
+            start_ms: 0,
+        ),
+        TimelineEntry(
+            line_id: "line.002",
+            start_ms: 5000,
+        ),
+    ],
+)
