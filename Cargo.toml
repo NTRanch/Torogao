@@ -8,6 +8,7 @@ members = [
     "crates/torogao-format",
     "crates/torogao-jam-laws",
     "crates/torogao-session",
+    "crates/torogao-tui",
     "crates/torogao-voice",
 ]
 resolver = "3"

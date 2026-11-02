@@ -65,7 +65,7 @@ use wayland_client::globals::registry_queue_init;
 use wayland_client::protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_surface};
 use wayland_client::{Connection, Proxy, QueueHandle};
 
-use crate::core::{AMBIENT_ANIMATION, CLICK_ANIMATION, CompanionCore};
+use crate::core::{AMBIENT_ANIMATION, CompanionCore, QUIET_SALIENCE};
 use crate::error::{CompanionError, CompanionResult};
 use crate::menu::{MenuAction, MenuUi};
 use crate::silhouette::{Silhouette, bbox_materially_changed, scale_rects, silhouette_of};
@@ -440,6 +440,11 @@ impl Presentation {
             }
         };
         prepared.canvas.view = fit_view(&prepared.canvas, width, height);
+        if self.placement.quiet_hours {
+            // Quiet hours (PROGRAM.md §3.3): her idle
+            // presence recedes to the Persona idle budget.
+            crate::view::scale_frame_opacity(&mut prepared, QUIET_SALIENCE);
+        }
         renderer.draw_into(
             scene,
             &prepared,
@@ -640,10 +645,11 @@ impl Presentation {
                 }
                 self.placement_dirty = true;
                 self.persist_placement();
-            } else if let Err(err) = self.core.play(CLICK_ANIMATION, false) {
-                // A click on her: Greeting through the
-                // bridge — the same entry the session host's
-                // play_control tool lands in.
+            } else if let Err(err) = self.core.play_reaction() {
+                // A click on her: the Greeting reaction
+                // through the bridge — the same entry the
+                // session host's play_control tool lands
+                // in. Suppressed silently under quiet hours.
                 eprintln!("torogao-companion: greeting refused: {err}");
             }
         }
@@ -656,6 +662,7 @@ impl Presentation {
         };
         let mut menu = MenuUi::new(renderer.device(), format, self.pointer_pos);
         menu.click_through_locked = self.placement.click_through_locked;
+        menu.quiet_hours = self.placement.quiet_hours;
         self.menu = Some(menu);
         self.apply_input_region();
     }
@@ -664,7 +671,7 @@ impl Presentation {
         for action in actions {
             match action {
                 MenuAction::PlayGreeting => {
-                    if let Err(err) = self.core.play(CLICK_ANIMATION, false) {
+                    if let Err(err) = self.core.play_reaction() {
                         eprintln!("torogao-companion: greeting refused: {err}");
                     }
                     self.menu = None;
@@ -683,6 +690,15 @@ impl Presentation {
                     self.placement.click_through_locked = !self.placement.click_through_locked;
                     if let Some(menu) = &mut self.menu {
                         menu.click_through_locked = self.placement.click_through_locked;
+                    }
+                    self.placement_dirty = true;
+                    self.persist_placement();
+                }
+                MenuAction::ToggleQuietHours => {
+                    self.placement.quiet_hours = !self.placement.quiet_hours;
+                    self.core.set_quiet_hours(self.placement.quiet_hours);
+                    if let Some(menu) = &mut self.menu {
+                        menu.quiet_hours = self.placement.quiet_hours;
                     }
                     self.placement_dirty = true;
                     self.persist_placement();
@@ -1032,6 +1048,7 @@ pub fn run(options: RunOptions) -> CompanionResult<RunSummary> {
         options.session_port,
         &options.held_by,
     )?;
+    core.set_quiet_hours(options.placement.quiet_hours);
     let desired_size = {
         let scene = core.scene_mut()?;
         let prepared =

@@ -57,6 +57,8 @@ OPTIONS:
                               Set the persisted click-through lock and
                               save it before running (the way to lift
                               the lock from outside the window).
+    --quiet-hours <on|off>    Set the persisted quiet-hours toggle and
+                              save it before running.
     --trace-check <frames>    Headless determinism check: trace the
                               Daydream performance 3x through the
                               companion core; exit 0 iff all hashes
@@ -77,6 +79,7 @@ struct Cli {
     screenshot: Option<PathBuf>,
     report: Option<PathBuf>,
     click_through_lock: Option<bool>,
+    quiet_hours: Option<bool>,
     trace_check: Option<usize>,
     print_state_path: bool,
 }
@@ -100,6 +103,7 @@ fn parse_cli(args: &[String]) -> Result<Cli, CompanionError> {
         screenshot: None,
         report: None,
         click_through_lock: None,
+        quiet_hours: None,
         trace_check: None,
         print_state_path: false,
     };
@@ -154,6 +158,19 @@ fn parse_cli(args: &[String]) -> Result<Cli, CompanionError> {
                         return Err(CompanionError::new(
                             "TG-COMP-CLI",
                             format!("--click-through-lock: '{value}' (want on|off)"),
+                        ));
+                    }
+                });
+            }
+            "--quiet-hours" => {
+                let value = take(&mut index, arg)?;
+                cli.quiet_hours = Some(match value.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    _ => {
+                        return Err(CompanionError::new(
+                            "TG-COMP-CLI",
+                            format!("--quiet-hours: '{value}' (want on|off)"),
                         ));
                     }
                 });
@@ -266,6 +283,11 @@ fn run() -> CompanionResult<i32> {
     }
     if let Some(locked) = cli.click_through_lock {
         placement.click_through_locked = locked;
+        placement.validate()?;
+        save_state(&state_path, &placement)?;
+    }
+    if let Some(quiet) = cli.quiet_hours {
+        placement.quiet_hours = quiet;
         placement.validate()?;
         save_state(&state_path, &placement)?;
     }

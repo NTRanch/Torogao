@@ -2,10 +2,12 @@
 //! `~/.local/state/torogao/companion.json` on Linux
 //! (XDG state), `%LOCALAPPDATA%\Torogao\companion.json` on
 //! Windows. Only placement-class facts live here — anchor,
-//! margins, output choice, display height, and the
-//! click-through lock toggle. No session state: the
-//! character, her area, and her current performance belong
-//! to the session host (PROGRAM.md §3.4).
+//! margins, output choice, display height, the
+//! click-through lock toggle, and the quiet-hours toggle
+//! (PROGRAM.md §3.5 names quiet mode as one of this file's
+//! facts). No session state: the character, her area, and
+//! her current performance belong to the session host
+//! (PROGRAM.md §3.4).
 //!
 //! Writes follow the shell's proven pattern (Phase F write
 //! class #5): serialize, write a sibling temp file, rename
@@ -107,6 +109,15 @@ pub struct CompanionState {
     /// module's note).
     #[serde(default)]
     pub click_through_locked: bool,
+    /// Quiet hours / focus mode (PROGRAM.md §3.3): while
+    /// set, she idles at reduced salience and reaction
+    /// performances are suppressed. A persisted toggle,
+    /// like the click-through lock — and, like it, added
+    /// as a serde default under version 1, so a state file
+    /// written before this field existed loads with quiet
+    /// hours off.
+    #[serde(default)]
+    pub quiet_hours: bool,
 }
 
 impl Default for CompanionState {
@@ -119,6 +130,7 @@ impl Default for CompanionState {
             display_height: DISPLAY_HEIGHT_DEFAULT,
             output_name: None,
             click_through_locked: false,
+            quiet_hours: false,
         }
     }
 }
@@ -320,6 +332,30 @@ mod tests {
         let state = CompanionState::default();
         state.validate().expect("default is valid");
         let json = state.to_json().expect("serializes");
+        let back = CompanionState::from_json(&json).expect("parses back");
+        assert_eq!(state, back);
+    }
+
+    #[test]
+    fn state_written_before_quiet_hours_loads_with_it_off() {
+        // A version-1 document from before the quiet-hours
+        // field existed (it also predates the lock field):
+        // both toggles default off, nothing refuses.
+        let text = "{\"version\": 1, \"anchor\": \"bottom-right\", \"margin_side\": 24, \"margin_edge\": 0, \"display_height\": 480}";
+        let state = CompanionState::from_json(text).expect("legacy document parses");
+        assert!(!state.quiet_hours);
+        assert!(!state.click_through_locked);
+        assert_eq!(state.output_name, None);
+    }
+
+    #[test]
+    fn quiet_hours_round_trips_through_json() {
+        let state = CompanionState {
+            quiet_hours: true,
+            ..CompanionState::default()
+        };
+        let json = state.to_json().expect("serializes");
+        assert!(json.contains("\"quiet_hours\": true"), "json: {json}");
         let back = CompanionState::from_json(&json).expect("parses back");
         assert_eq!(state, back);
     }
