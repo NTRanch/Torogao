@@ -19,6 +19,13 @@ torogao-format = { path = "../torogao-format" }
 rmcp = { version = "=3.8.0", default-features = false, features = ["server"] }
 tokio = { version = "1", features = ["io-std", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
 
+[dev-dependencies]
+# Stage 1.0's Torogao half (G-07/G-11 remainder): the R2
+# consumption gate test links the estate's one rig runtime
+# at its landed main, pinned by rev so the gate's numbers
+# always name the exact evaluator they were taken against.
+lumen-rig-core = { git = "https://github.com/qompassai/lumen", rev = "16e4cfc8a41914bc17f3c3fdb87af434a47b4871" }
+
 [lib]
 name = "torogao_cli"
 path = "src/lib.rs"
