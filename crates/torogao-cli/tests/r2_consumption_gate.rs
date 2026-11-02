@@ -6,26 +6,26 @@
 //! cast repertoire fixtures and feeds the emitted documents
 //! to the real lumen loader/evaluator, in two forms:
 //!
-//! 1. **As exported.** The model document carries Torogao's
-//!    own current format token (`torogao-rig-model`, ruling
-//!    RP1-D1); lumen's loader probes for `lumen-rig-model`
-//!    and must refuse (LRF-105). This is the consumption
-//!    boundary, measured, not assumed.
-//! 2. **Token-converted.** The one-field conversion lumen's
-//!    own conformance fixtures document (GATE-REPORT §4 gap
-//!    1): the derived export's `format` field set to
-//!    `lumen-rig-model`, nothing else touched — Torogao's
-//!    stored data and the bridge's writer rule are NOT
-//!    changed by this test. Models that then parse take
-//!    their motions through `parse_motion`, and every parsed
-//!    curve is swept against the torogao engine sampler.
-//!    The Stage 1.0 bounds (cubic < 2e-3, linear/stepped
-//!    < 1e-6 flat) are printed beside the measurements; the
-//!    cast's linear curves measure 2.001e-6 worst — the f32
-//!    engine sampler's own quantization at these magnitudes
-//!    — so the hard assertion is the stated f32 envelope
-//!    (see `PLAIN_ENVELOPE_MAX`), with the flat-bound miss
+//! 1. **As exported.** Under Pax's token ruling (TRUE 1.0
+//!    integration — a converter emits the token of the
+//!    format it is actually writing), the bridge writes
+//!    lumen's format and stamps `lumen-rig-model`; lumen's
+//!    loader must accept the document as-is. Models that
+//!    parse take their motions through `parse_motion`, and
+//!    every parsed curve is swept against the torogao
+//!    engine sampler. The Stage 1.0 bounds (cubic < 2e-3,
+//!    linear/stepped < 1e-6 flat) are printed beside the
+//!    measurements; the cast's linear curves measure
+//!    2.001e-6 worst — the f32 engine sampler's own
+//!    quantization at these magnitudes — so the hard
+//!    assertion is the stated f32 envelope (see
+//!    `PLAIN_ENVELOPE_MAX`), with the flat-bound miss
 //!    carried in the table, not smoothed over.
+//! 2. **Re-stamped native.** The same document with its
+//!    `format` field set to Torogao's native token
+//!    (`torogao-rig-model`) must be refused (LRF-105):
+//!    lumen stays strict, and the token boundary is still
+//!    measured — from the other side.
 //!
 //! Fixture-gated like the repertoire parity suite: set
 //! `TOROGAO_PHASE_F_FIXTURES` to the directory holding the
@@ -88,12 +88,12 @@ fn document_bytes(document: &Value) -> Vec<u8> {
     format!("{}\n", torogao_format::jsonfmt::to_d_json(document)).into_bytes()
 }
 
-/// The documented one-field conversion: the derived export's
-/// `format` field set to lumen's token. Nothing else moves.
-fn token_converted(document: &Value) -> Value {
-    let mut converted = document.clone();
-    converted["format"] = Value::String("lumen-rig-model".to_string());
-    converted
+/// The boundary probe: the export's `format` field set to
+/// Torogao's native token. Nothing else moves.
+fn token_restamped_native(document: &Value) -> Value {
+    let mut restamped = document.clone();
+    restamped["format"] = Value::String("torogao-rig-model".to_string());
+    restamped
 }
 
 /// Names a lumen refusal by its LRF class for the report
@@ -207,32 +207,32 @@ fn r2_consumption_gate() {
         let mut walk = Walk::build(&mut puppet);
         let exported = RigExporter::run(&puppet, &mut walk, puppet.texture_slots.len())
             .expect("the bridge exports the cast rig");
-        // (1) As exported: lumen's loader must refuse the
-        // model on its format token (LRF-105).
-        let raw = parse_model(&document_bytes(&exported.model));
-        match &raw {
+        // (1) Re-stamped native: lumen's loader must refuse
+        // the model on its format token (LRF-105) — lumen
+        // stays strict under the token ruling.
+        let restamped = token_restamped_native(&exported.model);
+        match parse_model(&document_bytes(&restamped)) {
             Err(ParseError::UnsupportedFormat { .. }) => {
                 lines.push(format!(
-                    "{stem}: as-exported model refused LRF-105 (expected)"
+                    "{stem}: native-restamped model refused LRF-105 (expected)"
                 ));
             }
-            Err(other) => panic!("{stem}: as-exported model refused unexpectedly: {other:?}"),
-            Ok(_) => panic!("{stem}: as-exported model parsed; the token boundary moved"),
+            Err(other) => panic!("{stem}: native-restamped model refused unexpectedly: {other:?}"),
+            Ok(_) => panic!("{stem}: native-restamped model parsed; lumen's token boundary moved"),
         }
-        // (2) Token-converted: the documented one-field
-        // conversion, applied to the derived export only.
-        let converted = token_converted(&exported.model);
-        let model = match parse_model(&document_bytes(&converted)) {
+        // (2) As exported: the bridge's own document, lumen
+        // token stamped by the writer itself.
+        let model = match parse_model(&document_bytes(&exported.model)) {
             Ok(model) => model,
             Err(error) => {
                 lines.push(format!(
-                    "{stem}: token-converted model refused {}",
+                    "{stem}: as-exported model refused {}",
                     refusal_name(&error)
                 ));
                 continue;
             }
         };
-        lines.push(format!("{stem}: token-converted model parses"));
+        lines.push(format!("{stem}: as-exported model parses"));
         // (3) Motions through the real loader + evaluator.
         for (suffix, document) in &exported.motions {
             let motion = match parse_motion(&document_bytes(document), &model) {
