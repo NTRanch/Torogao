@@ -25,9 +25,11 @@
 //! absolute bands the PROGRAM sets for aperture / iris
 //! / sclera are renderer reads (the cast-rigs battery
 //! routes them to its FR-08 lane as OPEN); the gate
-//! test reports these reads against the bands and pins
-//! the measured frame deviation rather than redefining
-//! the read to fit.
+//! test reports these reads against the bands rather
+//! than redefining the read to fit. The constant
+//! ~0.212 frame offset the first gates measured was
+//! corrected in the rig data under D-511 (the eyelid
+//! re-frame), not here.
 
 use torogao_app::render::{PreparedFrame, PreparedPart};
 

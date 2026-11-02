@@ -12,11 +12,12 @@
 //! - partner gaze settled within 2° of the partner's
 //!   face during the other's deep hold;
 //! - the Stage 2.2 per-face reads for BOTH faces
-//!   simultaneously: the performer's pinned hold reads
-//!   (visible iris 0.000, the rig finding carried from
-//!   2.2) while the watcher's face reads at rest — the
-//!   absolute aperture/iris/sclera bands stay
-//!   OWNER-PENDING with the 2.2 deviation;
+//!   simultaneously: the performer's post-reframe hold
+//!   reads (visible iris ~0.01 in the plate frame, the
+//!   2.2 state carried from the D-511 eyelid re-frame)
+//!   while the watcher's face reads at rest — the
+//!   absolute iris/sclera bands stay OWNER-PENDING on
+//!   the FR-08 renderer-read route;
 //! - determinism: the full take hash-equal across
 //!   three runs.
 
@@ -182,32 +183,39 @@ fn the_duo_gate() {
         let watcher_iris_median = median(&mut watcher_iris);
         let watcher_aperture_median = median(&mut watcher_aperture);
         println!(
-            "duo gate: {label}: performer iris {performer_iris_median:.3} sclera {performer_sclera_median:.3} (pinned rig finding); watcher iris {watcher_iris_median:.3} aperture {watcher_aperture_median:.3}"
+            "duo gate: {label}: performer iris {performer_iris_median:.3} sclera {performer_sclera_median:.3} (post-reframe plate-frame read); watcher iris {watcher_iris_median:.3} aperture {watcher_aperture_median:.3}"
         );
         assert!(
             performer_iris_median < 0.02,
-            "{label}: performer visible iris {performer_iris_median} (pinned finding)"
+            "{label}: performer visible iris {performer_iris_median} (post-reframe read)"
         );
         assert!(
             performer_sclera_median > 0.95,
-            "{label}: performer sclera {performer_sclera_median} (pinned finding)"
+            "{label}: performer sclera {performer_sclera_median} (post-reframe read)"
         );
         // The watcher's face, read in the same frames:
         // she is turned ~23° toward the performer (the
         // AngleX keyforms narrow the visible iris and
         // open the lid line relative to her forward
-        // face), so her bands are the turned-face bands:
-        // iris well above the performer's rolled-away
-        // 0.000, aperture open, and — the simultaneity
-        // content — her reads steady across the other's
-        // hold (interquartile spread, blink dips
-        // excepted), unperturbed by the performance.
+        // face), so her bands are the turned-face bands,
+        // re-measured under the D-511 re-frame (iris
+        // 0.57 / 0.68; aperture 1.00 / 0.89 — the plate
+        // read runs high on the turned face and Yui's
+        // saturates at the 1.0 clamp, so aperture is
+        // asserted as a floor; her forward-face rest
+        // aperture is the on-table 0.85 of the 2.2 pure
+        // reads): iris well above the performer's
+        // rolled-away ~0.01, aperture open, and — the
+        // simultaneity content — her reads steady
+        // across the other's hold (interquartile spread,
+        // blink dips excepted), unperturbed by the
+        // performance.
         assert!(
-            (0.25..=0.55).contains(&watcher_iris_median),
+            (0.45..=0.80).contains(&watcher_iris_median),
             "{label}: watcher iris {watcher_iris_median} is not a turned watching face"
         );
         assert!(
-            (0.60..=0.85).contains(&watcher_aperture_median),
+            watcher_aperture_median >= 0.85,
             "{label}: watcher aperture {watcher_aperture_median} is not a turned watching face"
         );
         assert!(

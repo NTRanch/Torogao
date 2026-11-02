@@ -13,20 +13,24 @@
 //!   hold ≥ 0.8 across the authored window, return
 //!   ≈2.0 s ± 0.3 (key-span reading);
 //! - coupling at the nodes R = 0.3/0.5/0.8/1.0: the
-//!   aperture *shape* against the cast-rigs table
-//!   (per-node deltas within ±0.05) and iris travel in
-//!   its 0.50–0.65 band — plus the pinned frame finding:
-//!   the repertoire rigs' lid band sits a constant
-//!   ~0.21 lower than the table's frame, on all three
-//!   rigs, so the absolute aperture reads miss the
-//!   table by that constant (a rig-data deviation, the
-//!   same class as the cast-rigs battery's F-1/FR-08
-//!   OPEN item; the absolute bands are renderer reads
-//!   and stay OWNER-PENDING);
-//! - visible-iris at hold reads 0.00 — agreeing with
-//!   the cast-rigs battery's own F-1 finding (0.00,
-//!   gate OPEN there) — pinned so a rig change re-opens
-//!   it rather than passing silently;
+//!   aperture against the cast-rigs table — per-node
+//!   deltas within ±0.05 (shape) and, since the D-511
+//!   eyelid re-frame (2026-11-02), the absolute reads
+//!   on the table within ±0.01 at every node on all
+//!   three rigs (the pre-frame constant offset of
+//!   ~0.212 was corrected in the rig data, not in the
+//!   read); iris travel in its 0.50–0.65 band;
+//! - visible-iris at hold reads ~0.01 in the plate
+//!   frame — the PROGRAM renderer-read bands
+//!   (0.20–0.35 iris / 0.63–0.73 sclera) stay unmet
+//!   and OWNER-PENDING: at full roll the iris's own
+//!   travel carries it entirely above the re-framed
+//!   lid line (clearance 0.039 world units at R = 1),
+//!   so the plate-frame read sees no iris below the
+//!   lid — the FR-08 renderer-read question, not a
+//!   lid-frame error. Pinned at the post-frame values
+//!   so a rig change re-opens it rather than passing
+//!   silently;
 //! - L/R ganging at the nodes within 0.03 aperture /
 //!   0.05 iris fraction;
 //! - afterglow: the eye-open channels settle at 0.80,
@@ -174,8 +178,10 @@ fn the_roll_gate() {
         }
     }
 
-    // ---- Hold reads: the pinned rig finding (visible
-    // iris 0.00, as the cast-rigs battery's F-1 records).
+    // ---- Hold reads: the post-reframe plate-frame
+    // state (visible iris ~0.01; the PROGRAM bands are
+    // renderer reads and stay OWNER-PENDING — see the
+    // header note).
     let mut hold_iris: Vec<f64> = Vec::new();
     let mut hold_sclera: Vec<f64> = Vec::new();
     for (step, read, _) in &run.face_reads {
@@ -192,11 +198,11 @@ fn the_roll_gate() {
     );
     assert!(
         hold_iris_median < 0.02,
-        "visible iris at hold {hold_iris_median}: the pinned rig finding changed"
+        "visible iris at hold {hold_iris_median}: the post-reframe plate-frame read changed"
     );
     assert!(
         hold_sclera_median > 0.95,
-        "sclera field at hold {hold_sclera_median}: the pinned rig finding changed"
+        "sclera field at hold {hold_sclera_median}: the post-reframe plate-frame read changed"
     );
 
     // ---- Afterglow: eye-open settles at 0.80 and holds
@@ -232,11 +238,11 @@ fn the_roll_gate() {
 }
 
 #[test]
-fn iris_travel_and_the_frame_deviation_hold_on_all_three_rigs() {
+fn iris_travel_and_the_reframed_coupling_hold_on_all_three_rigs() {
     // Pure coupling reads (no animation): each rig's
     // iris travel at the peak inside the template band,
-    // and the same constant frame deviation at the
-    // nodes.
+    // and the aperture on the coupling table at the
+    // nodes since the D-511 eyelid re-frame.
     for file in [
         "prima-repertoire.inx",
         "yui-repertoire.inx",
@@ -326,8 +332,8 @@ fn iris_travel_and_the_frame_deviation_hold_on_all_three_rigs() {
         );
         for offset in &offsets {
             assert!(
-                (0.19..=0.23).contains(offset),
-                "{file}: frame deviation {offset:.3} is not the pinned ~0.212"
+                offset.abs() <= 0.01,
+                "{file}: post-reframe frame offset {offset:.4} is off the coupling table"
             );
         }
         // Coupling shape: consecutive node deltas match
