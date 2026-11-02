@@ -26,6 +26,7 @@
 pub mod cast;
 pub mod core;
 pub mod cycle;
+pub mod duo;
 pub mod error;
 pub mod face;
 pub mod fallback;
