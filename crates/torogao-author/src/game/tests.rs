@@ -1843,3 +1843,277 @@ fn table_and_stream_gates_refuse_typed() {
     );
     assert_eq!(bad.doc["code"], "TG-AUTH-DANGLING", "{}", bad.doc);
 }
+
+// ---- P2-5: ledger day-stamps + activity counters (RJ318915) ----------
+//
+// The slice's hypothesis, proven here: the RJ318915 ledger
+// shape (SaveData `...Day` / `...Conv` fields — per-activity
+// last-day stamps and counters, read by personality gates) is
+// a PATTERN over the existing surface, not a primitive:
+//
+//   * a counter is a plain stat, advanced by `stat_add`;
+//   * a day-stamp is a plain stat, written by a named effect
+//     atom `stat_set` whose value expression is the clock's
+//     day leaf — the stamp is written from the clock, by data;
+//   * "within n days" is a condition over
+//     `clock.day - stamp`, composed with counter/level
+//     comparisons by ordinary boolean logic.
+//
+// The fixture below authors the pattern with no new records,
+// verbs, or atoms; the slice's commit touches tests and the
+// report only. If the pattern had failed to express the gate,
+// the slice would have stopped and named the primitive it
+// needed (the plan's fork). It did not.
+
+/// Authors the RJ318915 ledger fixture: Amy carries a `visits`
+/// counter, a `last_visit_day` stamp, and a `bond_level`; the
+/// personality gate is (visits >= 3 AND today - stamp <= 2 AND
+/// bond_level >= 2) — the original's gate shape.
+fn author_ledger(root: &Path) {
+    let answer = script(
+        root,
+        vec![
+            ("project_init", init_inputs()),
+            (
+                "game_define",
+                json!({"id": "ledger_fixture", "start_scene": "room"}),
+            ),
+            (
+                "clock_define",
+                json!({"slots": ["morning", "night"], "days_per_week": 7}),
+            ),
+            (
+                "stat_define",
+                json!({
+                    "id": "visits", "scope": "character", "kind": {"kind": "int"},
+                    "min": 0, "max": 1000, "default": 0, "overflow": "clamp",
+                }),
+            ),
+            (
+                "stat_define",
+                json!({
+                    "id": "last_visit_day", "scope": "character", "kind": {"kind": "int"},
+                    "min": 0, "max": 10000, "default": 0, "overflow": "clamp",
+                }),
+            ),
+            (
+                "stat_define",
+                json!({
+                    "id": "bond_level", "scope": "character", "kind": {"kind": "int"},
+                    "min": 0, "max": 5, "default": 0, "overflow": "clamp",
+                }),
+            ),
+            (
+                "character_define",
+                json!({"id": "amy", "name_ref": "name_amy", "name_text": "Amy"}),
+            ),
+            (
+                "scene_define",
+                json!({"id": "room", "presentation": "room"}),
+            ),
+            (
+                "flag_define",
+                json!({"id": "gate_open", "scope": "run", "default": false}),
+            ),
+            (
+                "effect_set_define",
+                json!({
+                    "id": "visit_set",
+                    "atoms": [
+                        {
+                            "kind": "stat_add", "stat": "visits", "character": "amy",
+                            "amount": {"kind": "lit", "value": 1},
+                        },
+                        {
+                            "kind": "stat_set", "stat": "last_visit_day", "character": "amy",
+                            "value": {"kind": "clock", "field": "day"},
+                        },
+                    ],
+                }),
+            ),
+            (
+                "effect_set_define",
+                json!({
+                    "id": "bond_set",
+                    "atoms": [{
+                        "kind": "stat_set", "stat": "bond_level", "character": "amy",
+                        "value": {"kind": "lit", "value": 2},
+                    }],
+                }),
+            ),
+            (
+                "condition_define",
+                json!({
+                    "id": "personality_gate",
+                    "expr": {
+                        "kind": "and",
+                        "args": [
+                            {
+                                "kind": "cmp", "op": "ge",
+                                "left": {"kind": "stat", "stat": "visits", "character": "amy"},
+                                "right": {"kind": "lit", "value": 3},
+                            },
+                            {
+                                "kind": "cmp", "op": "le",
+                                "left": {
+                                    "kind": "sub",
+                                    "left": {"kind": "clock", "field": "day"},
+                                    "right": {"kind": "stat", "stat": "last_visit_day", "character": "amy"},
+                                },
+                                "right": {"kind": "lit", "value": 2},
+                            },
+                            {
+                                "kind": "cmp", "op": "ge",
+                                "left": {"kind": "stat", "stat": "bond_level", "character": "amy"},
+                                "right": {"kind": "lit", "value": 2},
+                            },
+                        ],
+                    },
+                }),
+            ),
+            (
+                "effect_set_define",
+                json!({"id": "check_set", "atoms": [{"kind": "flag_set", "flag": "gate_open"}]}),
+            ),
+            (
+                "trigger_define",
+                json!({
+                    "id": "visit",
+                    "kind": {"kind": "on_event", "event": "visit"},
+                    "effect_set": "visit_set",
+                }),
+            ),
+            (
+                "trigger_define",
+                json!({
+                    "id": "bond",
+                    "kind": {"kind": "on_event", "event": "bond"},
+                    "effect_set": "bond_set",
+                }),
+            ),
+            (
+                "trigger_define",
+                json!({
+                    "id": "check",
+                    "kind": {"kind": "on_event", "event": "check"},
+                    "effect_set": "check_set",
+                    "gate": "personality_gate",
+                }),
+            ),
+        ],
+    );
+    assert_eq!(answer.status, Status::Ok, "ledger fixture: {}", answer.doc);
+    assert!(
+        validate_codes(root).is_empty(),
+        "ledger fixture validates: {:?}",
+        validate_codes(root)
+    );
+}
+
+fn ledger_run(root: &Path, entries: &[(u64, &str)], target: u64) -> GameState {
+    let loaded = load_project(root);
+    let log = event_log(entries, target);
+    let mut state = genesis(&loaded.project, 7).expect("genesis");
+    let (_e, _c) = run_to(&loaded.project, &mut state, &log, target);
+    state
+}
+
+#[test]
+fn ledger_pattern_gate_opens_when_counter_stamp_and_level_align() {
+    let root = test_root("ledger-open");
+    author_ledger(&root);
+    // Visits on days 1, 2, 2 (stamps written from the clock
+    // leaf at each visit), bond raised on day 3, check on day
+    // 3: counter 3, stamp age 1 day, level 2 — the gate opens.
+    let state = ledger_run(
+        &root,
+        &[
+            (1, "visit"),
+            (2, "visit"),
+            (3, "visit"),
+            (4, "bond"),
+            (5, "check"),
+        ],
+        5,
+    );
+    let visits = StatKey {
+        character: Some("amy".to_string()),
+        stat: "visits".to_string(),
+    };
+    let stamp = StatKey {
+        character: Some("amy".to_string()),
+        stat: "last_visit_day".to_string(),
+    };
+    assert_eq!(state.stats[&visits], 3);
+    assert_eq!(
+        state.stats[&stamp], 2,
+        "the stamp holds the last visit's day"
+    );
+    assert!(state.flags_run["gate_open"], "the personality gate opened");
+}
+
+#[test]
+fn ledger_pattern_gate_closes_when_the_stamp_goes_stale_or_the_counter_is_short() {
+    let root = test_root("ledger-closed");
+    author_ledger(&root);
+    // Same ledger, but the check lands on day 6 — four days
+    // after the stamp: outside the 2-day window.
+    let state = ledger_run(
+        &root,
+        &[
+            (1, "visit"),
+            (2, "visit"),
+            (3, "visit"),
+            (4, "bond"),
+            (11, "check"),
+        ],
+        11,
+    );
+    assert!(
+        !state.flags_run["gate_open"],
+        "a stale stamp closes the gate"
+    );
+    // Same timing as the opening run, but only two visits:
+    // the counter leg fails.
+    let state = ledger_run(
+        &root,
+        &[(1, "visit"), (2, "visit"), (4, "bond"), (5, "check")],
+        5,
+    );
+    assert!(
+        !state.flags_run["gate_open"],
+        "a short counter closes the gate"
+    );
+}
+
+#[test]
+fn ledger_pattern_evaluates_identically_across_three_replays() {
+    let root = test_root("ledger-replay");
+    author_ledger(&root);
+    let inputs = json!({
+        "run_seed": 7,
+        "ticks": 5,
+        "choice_log": [
+            {"tick": 1, "kind": "event", "id": "visit"},
+            {"tick": 2, "kind": "event", "id": "visit"},
+            {"tick": 3, "kind": "event", "id": "visit"},
+            {"tick": 4, "kind": "event", "id": "bond"},
+            {"tick": 5, "kind": "event", "id": "check"},
+        ],
+    });
+    let first = verb(&root, "game_simulate", inputs.clone());
+    assert_eq!(first.status, Status::Ok, "{}", first.doc);
+    assert!(
+        first.doc["events"]
+            .as_array()
+            .expect("events")
+            .iter()
+            .any(|event| event.as_str().is_some_and(|e| e.contains("'check' fired"))),
+        "the gated trigger fired in the replay: {}",
+        first.doc
+    );
+    for _ in 0..2 {
+        let again = verb(&root, "game_simulate", inputs.clone());
+        assert_eq!(again.doc, first.doc, "replay evidence is byte-identical");
+    }
+}
