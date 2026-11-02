@@ -7,7 +7,7 @@
 //! centred, aspect preserved, transparent margins — in
 //! that case. Pure matrix arithmetic, unit-gated.
 
-use torogao_app::render::Canvas;
+use torogao_app::render::{Canvas, PreparedFrame};
 
 /// Returns `canvas`'s view matrix adjusted to draw into a
 /// `surface_w`×`surface_h` target without stretching: the
@@ -28,6 +28,21 @@ pub fn fit_view(canvas: &Canvas, surface_w: u32, surface_h: u32) -> [f32; 16] {
         view[5] *= (surface_aspect / canvas_aspect) as f32;
     }
     view
+}
+
+/// Scales every presented part's effective opacity by
+/// `factor` — the quiet-hours salience application
+/// (PROGRAM.md §3.3): her rendered presence recedes to
+/// the Persona idle budget while quiet hours are on.
+/// Mask sources are stencil geometry, not presentation,
+/// so their tints are left alone and masking is
+/// unchanged; the puppet is never touched, so the
+/// evaluated state (and its hash) is identical loud or
+/// quiet.
+pub fn scale_frame_opacity(frame: &mut PreparedFrame, factor: f32) {
+    for part in &mut frame.parts {
+        part.tint[3] *= factor;
+    }
 }
 
 /// Configures a wgpu surface for transparent presentation
@@ -142,5 +157,41 @@ mod tests {
     fn surface_size_follows_canvas_aspect() {
         let c = canvas(512, 1024);
         assert_eq!(surface_size_for_height(480, &c), (240, 480));
+    }
+
+    fn part(path: &str, opacity: f32) -> torogao_app::render::PreparedPart {
+        torogao_app::render::PreparedPart {
+            path: path.to_string(),
+            positions: Vec::new(),
+            uvs: Vec::new(),
+            indices: Vec::new(),
+            texture_slot: None,
+            blend_slug: "normal",
+            blend_mode: "Normal".to_string(),
+            blend_note: None,
+            tint: [1.0, 1.0, 1.0, opacity],
+            screen: [0.0, 0.0, 0.0],
+            node: 0,
+            masks: Vec::new(),
+            mask_threshold: 0.0,
+        }
+    }
+
+    #[test]
+    fn opacity_scale_touches_presented_parts_only() {
+        let mut frame = PreparedFrame {
+            canvas: canvas(512, 1024),
+            parts: vec![part("body", 1.0), part("face", 0.8)],
+            mask_sources: vec![part("mask", 1.0)],
+            skipped: Vec::new(),
+            notes: Vec::new(),
+        };
+        scale_frame_opacity(&mut frame, 0.35);
+        assert!((frame.parts[0].tint[3] - 0.35).abs() < 1e-6);
+        assert!((frame.parts[1].tint[3] - 0.28).abs() < 1e-6);
+        // Mask-source tint is geometry state, not salience.
+        assert_eq!(frame.mask_sources[0].tint[3], 1.0);
+        // Tint rgb is not salience either.
+        assert_eq!(frame.parts[0].tint[..3], [1.0, 1.0, 1.0]);
     }
 }
