@@ -45,6 +45,20 @@ pub struct Project {
     pub pose: Vec<PoseEntry>,
     /// Named variant stacks from separated art, sorted by id.
     pub variant_sets: Vec<VariantSet>,
+    /// The AUTH-G game section, when the project authors a game.
+    /// Absent means absent: rig-only projects carry no field and
+    /// serialize exactly as before the game layer existed.
+    pub game: Option<crate::game::model::Game>,
+    /// The `content.ron` sidecar's prose entries, sorted by id.
+    /// Sidecar state: the store merges them in at load and writes
+    /// them back at commit; they are never serialized into
+    /// `project.ron`, so a prose-only edit cannot churn the
+    /// project hash (D-468).
+    pub content: Vec<crate::game::model::ContentEntry>,
+    /// The sidecar's locale as loaded (the canonical authored
+    /// locale is `en`, D-472); preserved verbatim on re-emission
+    /// so a translation sidecar stays itself.
+    pub content_locale: Option<String>,
 }
 
 /// The project header.

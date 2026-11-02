@@ -92,6 +92,21 @@ pub fn run_verb(
     inputs: &Value,
     resolve: &dyn Fn(&str) -> Result<PathBuf, Refusal>,
 ) -> Answer {
+    if let Some(spec) = crate::game::op::game_verb_spec(verb) {
+        if !spec.implemented {
+            let Err(refusal) = crate::game::op::refuse_game_unimplemented::<()>(verb) else {
+                unreachable!("refuse_game_unimplemented always refuses")
+            };
+            return refused(verb, &refusal);
+        }
+        if spec.mutating {
+            let request = Request {
+                verb: verb.to_string(),
+                inputs: inputs.clone(),
+            };
+            return run_requests(root, base, &[request]);
+        }
+    }
     match verb_spec(verb) {
         Some(spec) if spec.slice == crate::op::Slice::A1 && spec.mutating => {
             let request = Request {

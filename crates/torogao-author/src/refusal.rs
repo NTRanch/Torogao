@@ -47,6 +47,25 @@ pub enum RefusalClass {
     UnknownKind,
     /// An op names a target id that does not exist.
     UnknownTarget,
+    /// AUTH-G: an expression is ill-typed, names an unknown
+    /// stat/flag/value/clock field, or its value references cycle
+    /// (`TG-GAME-EXPR`).
+    GameExpr,
+    /// AUTH-G: the scene/dialogue/ending graph is malformed: an
+    /// ordinal gap, a chain cycle that passes through no choice,
+    /// or an unreachable scene (`TG-GAME-GRAPH`).
+    GameGraph,
+    /// AUTH-G: a save names a newer schema than the project
+    /// authors, fails its state-hash check, or was written under
+    /// a newer game format (`TG-GAME-SAVE-SCHEMA`).
+    GameSaveSchema,
+    /// AUTH-G: a draw table is malformed: weights do not sum or
+    /// a row is out of domain (`TG-GAME-TABLE`).
+    GameTable,
+    /// AUTH-G: a tier band is out of order or outside its stat's
+    /// declared range, or its names do not number thresholds + 1
+    /// (`TG-GAME-TIER`).
+    GameTier,
 }
 
 impl RefusalClass {
@@ -66,6 +85,11 @@ impl RefusalClass {
             RefusalClass::Stamp => "TG-AUTH-STAMP",
             RefusalClass::UnknownKind => "TG-AUTH-UNKNOWN-KIND",
             RefusalClass::UnknownTarget => "TG-AUTH-UNKNOWN-TARGET",
+            RefusalClass::GameExpr => "TG-GAME-EXPR",
+            RefusalClass::GameGraph => "TG-GAME-GRAPH",
+            RefusalClass::GameSaveSchema => "TG-GAME-SAVE-SCHEMA",
+            RefusalClass::GameTable => "TG-GAME-TABLE",
+            RefusalClass::GameTier => "TG-GAME-TIER",
         }
     }
 }

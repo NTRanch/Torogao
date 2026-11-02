@@ -20,6 +20,10 @@
 use crate::apply::step;
 use crate::codec::emit_project;
 use crate::decide::{Observed, check_id};
+use crate::game::op::{
+    CharacterDefineInput, DialogueLineDefineInput, GameDefineInput, GameOp, PresentationInput,
+    SceneDefineInput, StatInitialInput,
+};
 use crate::intake::sha256_hex;
 use crate::limits::{ASSETS_MAX, IMAGE_SIDE_MAX, PROVENANCE_TEXT_BYTES_MAX};
 use crate::model::{Asset, DeformerKind, Keyforms, Project};
@@ -62,6 +66,7 @@ pub fn validate(project: &Project, text: &str, root: &Path) -> Vec<Refusal> {
     }
     findings.extend(lattice_findings(project));
     findings.extend(asset_findings(project, root));
+    findings.extend(game_findings(project));
     findings
 }
 
@@ -98,6 +103,34 @@ pub fn sweep(project: &Project) -> Result<Project, Refusal> {
     }
     for op in content_ops(project) {
         rebuilt = run(rebuilt, op)?;
+    }
+    for op in game_ops(project) {
+        rebuilt = run(rebuilt, op)?;
+    }
+    // Sidecar and version state the ops do not author: the
+    // game format stamp is migration state (an untouched older
+    // section is valid, not non-canonical), the sidecar locale
+    // is a property of the sidecar file, and content entries no
+    // record references are game_findings' business, not the
+    // sweep's. Each is copied across so the sweep judges exactly
+    // the op-authored records.
+    if let (Some(rebuilt_game), Some(stored_game)) = (&mut rebuilt.game, &project.game) {
+        rebuilt_game.format_version = stored_game.format_version;
+    }
+    rebuilt.content_locale = project.content_locale.clone();
+    for entry in &project.content {
+        let referenced = project.game.as_ref().is_some_and(|game| {
+            game.characters.iter().any(|c| c.name_ref == entry.id)
+                || game.dialogue.iter().any(|l| l.text_ref == entry.id)
+        });
+        if !referenced && rebuilt.content.iter().all(|e| e.id != entry.id) {
+            let position = rebuilt
+                .content
+                .iter()
+                .position(|e| e.id > entry.id)
+                .unwrap_or(rebuilt.content.len());
+            rebuilt.content.insert(position, entry.clone());
+        }
     }
     for set in &project.variant_sets {
         check_id(&set.id, "variant set id")?;
@@ -438,6 +471,230 @@ fn lattice_findings(project: &Project) -> Vec<Refusal> {
                 .and_then(|k| lattice_finding(&deformer.id, k)),
         };
         findings.extend(finding);
+    }
+    findings
+}
+
+/// The game section's ops, in authoring (dependency) order:
+/// the section itself, then characters and scenes, then the
+/// dialogue chains in (scene, ordinal) order. The prose each
+/// prose-authoring op carries is read back from the stored
+/// sidecar entries; a reference with no entry synthesizes an
+/// empty text, which the gate refuses — and `game_findings`
+/// names the dangling reference itself.
+fn game_ops(project: &Project) -> Vec<Op> {
+    let mut ops = Vec::new();
+    let Some(game) = &project.game else {
+        return ops;
+    };
+    let prose = |id: &str| {
+        project
+            .content
+            .iter()
+            .find(|entry| entry.id == id)
+            .map(|entry| entry.text.clone())
+            .unwrap_or_default()
+    };
+    ops.push(Op::Game(GameOp::GameDefine(GameDefineInput {
+        id: game.id.clone(),
+        start_scene: game.start_scene.clone(),
+        save_schema_version: Some(game.save_schema_version),
+    })));
+    for character in &game.characters {
+        ops.push(Op::Game(GameOp::CharacterDefine(CharacterDefineInput {
+            id: character.id.clone(),
+            name_ref: character.name_ref.clone(),
+            name_text: prose(&character.name_ref),
+            initials: character
+                .initials
+                .iter()
+                .map(|row| StatInitialInput {
+                    stat: row.stat.clone(),
+                    value: row.value,
+                })
+                .collect(),
+        })));
+    }
+    for scene in &game.scenes {
+        ops.push(Op::Game(GameOp::SceneDefine(SceneDefineInput {
+            id: scene.id.clone(),
+            presentation: match scene.presentation {
+                crate::game::model::Presentation::Event => PresentationInput::Event,
+                crate::game::model::Presentation::Room => PresentationInput::Room,
+                crate::game::model::Presentation::Vn => PresentationInput::Vn,
+            },
+        })));
+    }
+    let mut lines: Vec<&crate::game::model::DialogueLine> = game.dialogue.iter().collect();
+    lines.sort_by(|a, b| (a.scene.as_str(), a.ordinal).cmp(&(b.scene.as_str(), b.ordinal)));
+    for line in lines {
+        ops.push(Op::Game(GameOp::DialogueLineDefine(
+            DialogueLineDefineInput {
+                id: line.id.clone(),
+                scene: line.scene.clone(),
+                ordinal: line.ordinal,
+                speaker: line.speaker.clone(),
+                text_ref: line.text_ref.clone(),
+                text: prose(&line.text_ref),
+                next: line.next.clone(),
+                hook_expression: line.hook_expression.clone(),
+            },
+        )));
+    }
+    ops
+}
+
+/// The game reference sweeps `decide()` cannot see at define
+/// time (validation-time references, the sidecar, and the
+/// dialogue chain graph).
+fn game_findings(project: &Project) -> Vec<Refusal> {
+    let mut findings = Vec::new();
+    let has_entry = |id: &str| project.content.iter().any(|entry| entry.id == id);
+    if let Some(game) = &project.game {
+        if game.format_version < crate::game::model::GAME_FORMAT_VERSION_FIRST
+            || game.format_version > crate::game::model::GAME_FORMAT_VERSION
+        {
+            findings.push(Refusal::new(
+                RefusalClass::UnknownKind,
+                format!(
+                    "game format_version {} is outside the supported range {}..={}",
+                    game.format_version,
+                    crate::game::model::GAME_FORMAT_VERSION_FIRST,
+                    crate::game::model::GAME_FORMAT_VERSION
+                ),
+            ));
+        }
+        if let Some(start) = &game.start_scene
+            && game.scene(start).is_none()
+        {
+            findings.push(Refusal::new(
+                RefusalClass::Dangling,
+                format!("start scene '{start}' does not exist"),
+            ));
+        }
+        for character in &game.characters {
+            if !has_entry(&character.name_ref) {
+                findings.push(Refusal::new(
+                    RefusalClass::Dangling,
+                    format!(
+                        "character '{}' name reference '{}' has no content.ron entry",
+                        character.id, character.name_ref
+                    ),
+                ));
+            }
+        }
+        for line in &game.dialogue {
+            if game.scene(&line.scene).is_none() {
+                findings.push(Refusal::new(
+                    RefusalClass::Dangling,
+                    format!(
+                        "dialogue line '{}' names missing scene '{}'",
+                        line.id, line.scene
+                    ),
+                ));
+            }
+            if !has_entry(&line.text_ref) {
+                findings.push(Refusal::new(
+                    RefusalClass::Dangling,
+                    format!(
+                        "dialogue line '{}' text reference '{}' has no content.ron entry",
+                        line.id, line.text_ref
+                    ),
+                ));
+            }
+            if let Some(next) = &line.next {
+                match game.dialogue_line(next) {
+                    None => findings.push(Refusal::new(
+                        RefusalClass::Dangling,
+                        format!(
+                            "dialogue line '{}' chains to missing line '{next}'",
+                            line.id
+                        ),
+                    )),
+                    Some(target) if target.scene != line.scene => findings.push(Refusal::new(
+                        RefusalClass::GameGraph,
+                        format!(
+                            "dialogue line '{}' chains across scenes to '{next}'",
+                            line.id
+                        ),
+                    )),
+                    _ => {}
+                }
+            }
+            if let Some(hook) = &line.hook_expression
+                && project.expression(hook).is_none()
+            {
+                findings.push(Refusal::new(
+                    RefusalClass::Dangling,
+                    format!(
+                        "dialogue line '{}' hook expression '{hook}' does not exist",
+                        line.id
+                    ),
+                ));
+            }
+        }
+        findings.extend(chain_cycle_findings(game));
+    }
+    // Orphan sidecar entries: prose no record references. The
+    // sweep cannot rebuild them (no op authors them), so they
+    // are reported here and only here.
+    let referenced = |id: &str| {
+        project.game.as_ref().is_some_and(|game| {
+            game.characters.iter().any(|c| c.name_ref == id)
+                || game.dialogue.iter().any(|l| l.text_ref == id)
+        })
+    };
+    for entry in &project.content {
+        if !referenced(&entry.id) {
+            findings.push(Refusal::new(
+                RefusalClass::Dangling,
+                format!(
+                    "content entry '{}' is not referenced by any game record",
+                    entry.id
+                ),
+            ));
+        }
+    }
+    findings
+}
+
+/// A dialogue chain that loops without passing through a choice
+/// can never be exited; with choices not yet authored, any
+/// `next` cycle is one. One finding per scene with a cycle.
+fn chain_cycle_findings(game: &crate::game::model::Game) -> Vec<Refusal> {
+    let mut findings = Vec::new();
+    for scene in &game.scenes {
+        let mut cyclic = false;
+        for start in game.dialogue.iter().filter(|line| line.scene == scene.id) {
+            let mut seen: Vec<&str> = Vec::new();
+            let mut current = Some(start);
+            while let Some(line) = current {
+                if seen.contains(&line.id.as_str()) {
+                    cyclic = true;
+                    break;
+                }
+                seen.push(&line.id);
+                // The walk stays inside the scene: a chain
+                // leaving the scene is the cross-scene finding's
+                // business, not this scene's cycle.
+                current = line.next.as_deref().and_then(|id| {
+                    game.dialogue_line(id)
+                        .filter(|target| target.scene == scene.id)
+                });
+            }
+            if cyclic {
+                break;
+            }
+        }
+        if cyclic {
+            findings.push(Refusal::new(
+                RefusalClass::GameGraph,
+                format!(
+                    "scene '{}' dialogue chain cycles without passing through a choice",
+                    scene.id
+                ),
+            ));
+        }
     }
     findings
 }

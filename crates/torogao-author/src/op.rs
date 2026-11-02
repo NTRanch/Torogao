@@ -572,6 +572,8 @@ pub enum Op {
     ExpressionDefine(ExpressionDefineInput),
     /// `expression_remove`.
     ExpressionRemove(IdInput),
+    /// An AUTH-G game verb (see `game::op::GameOp`).
+    Game(crate::game::op::GameOp),
     /// `intake_image`.
     IntakeImage(IntakeImageInput),
     /// `intake_psd`.
@@ -623,6 +625,9 @@ impl Op {
     /// Parses a mutating verb and its JSON inputs. Read-only and
     /// non-A1 verbs are refused by name.
     pub fn parse(verb: &str, inputs: &Value) -> Result<Op, Refusal> {
+        if crate::game::op::game_verb_spec(verb).is_some() {
+            return crate::game::op::parse_game_op(verb, inputs);
+        }
         let op = match verb {
             "deformer_glue_set" => Op::DeformerGlueSet(typed(verb, inputs)?),
             "deformer_parent_set" => Op::DeformerParentSet(typed(verb, inputs)?),
@@ -664,6 +669,7 @@ impl Op {
             Op::DeformerWarpCreate(_) => "deformer_warp_create",
             Op::ExpressionDefine(_) => "expression_define",
             Op::ExpressionRemove(_) => "expression_remove",
+            Op::Game(game_op) => game_op.verb(),
             Op::IntakeImage(_) => "intake_image",
             Op::IntakePsd(_) => "intake_psd",
             Op::KeyformSet(_) => "keyform_set",
@@ -687,7 +693,11 @@ impl Op {
 
     /// The normalized inputs as JSON (what the op log records).
     pub fn inputs_json(&self) -> Result<Value, Refusal> {
+        if let Op::Game(game_op) = self {
+            return game_op.inputs_json();
+        }
         let result = match self {
+            Op::Game(_) => unreachable!("handled above"),
             Op::DeformerGlueSet(inputs) => serde_json::to_value(inputs),
             Op::DeformerParentSet(inputs) => serde_json::to_value(inputs),
             Op::DeformerRemove(inputs) => serde_json::to_value(inputs),
