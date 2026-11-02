@@ -180,6 +180,85 @@ fn median(values: &mut [f64]) -> f64 {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Stage 1.2 instruments: the scripted-input trace. A fixed
+// script of pointer positions (surface fractions) and click
+// steps drives the core headlessly; the run records the
+// per-step evaluated hash, the gaze driver's evaluated
+// direction, and the playing animation — the three series
+// the 1.2 gates read (gaze accuracy over a scripted cursor
+// path, pointer-event → first-changed-frame latency, and
+// fixed-script determinism ×3).
+// ---------------------------------------------------------------------------
+
+/// One scripted-input run through the companion core.
+#[derive(Debug, Clone)]
+pub struct ScriptRun {
+    /// Per-step evaluated state hashes, in order.
+    pub step_hashes: Vec<u64>,
+    /// The chain hash over `step_hashes`.
+    pub trace_hash: u64,
+    /// Per-step evaluated gaze direction (yaw, pitch),
+    /// degrees, read after the step.
+    pub gaze: Vec<(f64, f64)>,
+    /// Per-step evaluated `ParamAngleX` internal value
+    /// (degrees): the head channel as it landed in the
+    /// evaluation, performance sway included — the
+    /// plumbing instrument differences two runs to
+    /// isolate the driver's contribution.
+    pub angle_x_internal: Vec<f32>,
+    /// Per-step playing animation name, when one is
+    /// loaded.
+    pub animations: Vec<Option<String>>,
+}
+
+/// Runs `frames` fixed steps under a fixed input script:
+/// at step `i` the pointer is set to `pointer[i]` (surface
+/// fractions; the slice repeats its last entry when the
+/// script is shorter than the run) at the given surface
+/// aspect, and a click reaction fires before the step
+/// when `clicks` contains `i`. The script is data, so a
+/// gate can replay it verbatim.
+pub fn run_scripted_trace(
+    model_path: &Path,
+    frames: usize,
+    pointer: &[Option<(f64, f64)>],
+    clicks: &std::collections::BTreeSet<usize>,
+    surface_aspect: f64,
+) -> CompanionResult<ScriptRun> {
+    let mut core = CompanionCore::load(model_path, None, None, "torogao-companion script")?;
+    let angle_x = core.scene()?.puppet.param_index("ParamAngleX");
+    let mut step_hashes = Vec::with_capacity(frames);
+    let mut gaze = Vec::with_capacity(frames);
+    let mut angle_x_internal = Vec::with_capacity(frames);
+    let mut animations = Vec::with_capacity(frames);
+    for step in 0..frames {
+        let position = if pointer.is_empty() {
+            None
+        } else {
+            pointer[step.min(pointer.len() - 1)]
+        };
+        core.set_pointer(position, surface_aspect);
+        if clicks.contains(&step) {
+            core.click_reaction()?;
+        }
+        step_hashes.push(core.tick()?);
+        gaze.push(core.gaze_degrees());
+        angle_x_internal.push(match angle_x {
+            Some(index) => core.scene()?.puppet.params[index].last_internal.x,
+            None => 0.0,
+        });
+        animations.push(core.play_snapshot()?.animation);
+    }
+    Ok(ScriptRun {
+        trace_hash: chain_hash(&step_hashes),
+        step_hashes,
+        gaze,
+        angle_x_internal,
+        animations,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

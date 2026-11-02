@@ -107,6 +107,15 @@ pub struct CompanionState {
     /// module's note).
     #[serde(default)]
     pub click_through_locked: bool,
+    /// Quiet hours / focus mode (§3.3): reduced gaze
+    /// salience, slower cadence, click reactions
+    /// suppressed. Persisted beside the placement because
+    /// it is a standing behaviour choice, not session
+    /// state — the field is additive and defaults off, so
+    /// state files written by the slice build parse
+    /// unchanged.
+    #[serde(default)]
+    pub quiet_mode: bool,
 }
 
 impl Default for CompanionState {
@@ -119,6 +128,7 @@ impl Default for CompanionState {
             display_height: DISPLAY_HEIGHT_DEFAULT,
             output_name: None,
             click_through_locked: false,
+            quiet_mode: false,
         }
     }
 }
