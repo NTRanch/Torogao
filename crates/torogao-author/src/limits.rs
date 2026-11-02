@@ -53,6 +53,53 @@ pub const RON_DEPTH_MAX: usize = 32;
 pub const SCRIPT_OPS_MAX: usize = 10_000;
 /// Maximum variant sets per project.
 pub const VARIANT_SETS_MAX: usize = 256;
+
+// ---- AUTH-G (game layer) bounds ----------------------------------
+
+/// Maximum characters in one game.
+pub const GAME_CHARACTERS_MAX: usize = 256;
+/// Maximum conditions in one game.
+pub const GAME_CONDITIONS_MAX: usize = 1024;
+/// Maximum size of `content.ron`, in bytes (64 MiB).
+pub const GAME_CONTENT_BYTES_MAX: u64 = 67_108_864;
+/// Maximum prose entries in `content.ron`.
+pub const GAME_CONTENT_ENTRIES_MAX: usize = 16_384;
+/// Maximum bytes of prose in one `content.ron` entry.
+pub const GAME_CONTENT_TEXT_BYTES_MAX: usize = 16_384;
+/// Maximum dialogue lines in one game.
+pub const GAME_DIALOGUE_LINES_MAX: usize = 16_384;
+/// Maximum effect sets in one game.
+pub const GAME_EFFECT_SETS_MAX: usize = 1024;
+/// Maximum atoms in one effect set.
+pub const GAME_EFFECT_ATOMS_MAX: usize = 256;
+/// Maximum expression depth (nodes on the longest root-to-leaf
+/// path). The project document's own depth bound leaves room for
+/// the records wrapping an expression.
+pub const GAME_EXPR_DEPTH_MAX: usize = 24;
+/// Maximum expression nodes in one expression tree.
+pub const GAME_EXPR_NODES_MAX: usize = 4096;
+/// Maximum flags in one game.
+pub const GAME_FLAGS_MAX: usize = 1024;
+/// Maximum lifetime window on a stat, in days.
+pub const GAME_LIFETIME_DAYS_MAX: u32 = 36_500;
+/// Maximum offer expiry window on a trigger, in days.
+pub const GAME_OFFER_DAYS_MAX: u32 = 36_500;
+/// Maximum scenes in one game.
+pub const GAME_SCENES_MAX: usize = 1024;
+/// Maximum slots in one clock (periods per day).
+pub const GAME_SLOTS_MAX: usize = 64;
+/// Maximum stats in one game.
+pub const GAME_STATS_MAX: usize = 1024;
+/// Maximum thresholds in one tier definition.
+pub const GAME_TIER_THRESHOLDS_MAX: usize = 64;
+/// Maximum triggers in one game.
+pub const GAME_TRIGGERS_MAX: usize = 1024;
+/// Maximum named values in one game.
+pub const GAME_VALUES_MAX: usize = 1024;
+/// Maximum ticks in one `game_simulate` run.
+pub const GAME_SIM_TICKS_MAX: u64 = 10_000;
+/// Maximum choice-log entries in one `game_simulate` run.
+pub const GAME_SIM_LOG_MAX: usize = 10_000;
 /// Twice the triangle area below which a triangle is degenerate,
 /// in squared model units. Model coordinates are pixels at the
 /// art's resolution, so this is far below any painted feature.

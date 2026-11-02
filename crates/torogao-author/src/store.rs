@@ -33,6 +33,8 @@ use torogao_format::jsonfmt::to_d_json;
 
 /// The canonical project file name.
 pub const PROJECT_FILE: &str = "project.ron";
+/// The dialogue-prose sidecar file name (AUTH-G, D-468).
+pub const CONTENT_FILE: &str = "content.ron";
 /// The op log file name.
 pub const OPS_FILE: &str = "ops.jsonl";
 /// The lock file name.
@@ -67,7 +69,32 @@ pub fn load(root: &Path) -> Result<Option<Loaded>, Refusal> {
     let Ok(text) = String::from_utf8(bytes) else {
         return refuse(RefusalClass::Malformed, "project.ron is not UTF-8");
     };
-    let project = parse_project(&text)?;
+    let mut project = parse_project(&text)?;
+    // The prose sidecar rides beside project.ron: its entries
+    // merge into the loaded project (they are never serialized
+    // into project.ron itself, so loading one cannot change the
+    // project hash). A missing sidecar is not an error here —
+    // validation reports the references it leaves dangling.
+    let content_path = root.join(CONTENT_FILE);
+    if content_path.exists() {
+        let bytes = read_bounded(&content_path, crate::limits::GAME_CONTENT_BYTES_MAX)?;
+        let Ok(content_text) = String::from_utf8(bytes) else {
+            return refuse(RefusalClass::Malformed, "content.ron is not UTF-8");
+        };
+        let doc = crate::game::codec::parse_content(&content_text)?;
+        if doc.entries.len() > crate::limits::GAME_CONTENT_ENTRIES_MAX {
+            return refuse(
+                RefusalClass::Range,
+                format!(
+                    "content.ron carries {} entries; the bound is {}",
+                    doc.entries.len(),
+                    crate::limits::GAME_CONTENT_ENTRIES_MAX
+                ),
+            );
+        }
+        project.content = doc.entries;
+        project.content_locale = Some(doc.locale);
+    }
     let sha256 = sha256_hex(text.as_bytes());
     Ok(Some(Loaded {
         project,
@@ -427,6 +454,22 @@ fn commit(root: &Path, admitted: &Admitted) -> Result<(), Refusal> {
             write_atomic(&path, bytes)?;
         }
     }
+    // The sidecar is written before project.ron: a crash between
+    // the two leaves a project whose references the older
+    // sidecar cannot satisfy (a typed validation finding),
+    // never a project.ron naming prose that was never written.
+    // A project with no prose writes no sidecar at all.
+    if !admitted.project.content.is_empty() {
+        let locale = admitted
+            .project
+            .content_locale
+            .as_deref()
+            .unwrap_or(crate::game::model::CONTENT_LOCALE_CANONICAL);
+        write_atomic(
+            &root.join(CONTENT_FILE),
+            crate::game::codec::emit_content(&admitted.project.content, locale).as_bytes(),
+        )?;
+    }
     write_atomic(
         &root.join(PROJECT_FILE),
         emit_project(&admitted.project).as_bytes(),
@@ -574,12 +617,31 @@ pub fn replay(root: &Path) -> Result<ReplayReport, Refusal> {
         return refuse(RefusalClass::ReplayDivergence, "the op log applies no ops");
     };
     let replayed = emit_project(&project);
-    let on_disk = load(root)?.map(|l| l.sha256).unwrap_or_default();
+    let on_disk_loaded = load(root)?;
+    let on_disk = on_disk_loaded
+        .as_ref()
+        .map(|l| l.sha256.clone())
+        .unwrap_or_default();
     let sha256 = sha256_hex(replayed.as_bytes());
     if sha256 != on_disk {
         return refuse(
             RefusalClass::ReplayDivergence,
             format!("replay produced {sha256}; project.ron on disk is {on_disk}"),
+        );
+    }
+    // The sidecar binds by key set, not prose bytes (D-468):
+    // editorial prose edits and per-locale swaps (same keys)
+    // leave replay valid, while a key the log never authored —
+    // or one it authored that is now missing — is divergence.
+    let replayed_keys: Vec<&str> = project.content.iter().map(|e| e.id.as_str()).collect();
+    let disk_keys: Vec<&str> = on_disk_loaded
+        .as_ref()
+        .map(|l| l.project.content.iter().map(|e| e.id.as_str()).collect())
+        .unwrap_or_default();
+    if replayed_keys != disk_keys {
+        return refuse(
+            RefusalClass::ReplayDivergence,
+            "content.ron key set differs from the op log's authored keys",
         );
     }
     Ok(ReplayReport {

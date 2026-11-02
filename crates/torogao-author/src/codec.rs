@@ -31,7 +31,7 @@ pub fn parse_project(text: &str) -> Result<Project, Refusal> {
 
 // ---- emission helpers -------------------------------------------
 
-fn text(value: &str) -> Ron {
+pub(crate) fn text(value: &str) -> Ron {
     Ron::Str(value.to_string())
 }
 
@@ -47,15 +47,15 @@ fn floats(values: &[f64]) -> Ron {
     Ron::List(values.iter().map(|value| Ron::Float(*value)).collect())
 }
 
-fn texts(values: &[String]) -> Ron {
+pub(crate) fn texts(values: &[String]) -> Ron {
     Ron::List(values.iter().map(|value| text(value)).collect())
 }
 
-fn opt<T>(value: Option<&T>, convert: impl Fn(&T) -> Ron) -> Ron {
+pub(crate) fn opt<T>(value: Option<&T>, convert: impl Fn(&T) -> Ron) -> Ron {
     Ron::Opt(value.map(|inner| Box::new(convert(inner))))
 }
 
-fn record(name: &str, fields: Vec<(&str, Ron)>) -> Ron {
+pub(crate) fn record(name: &str, fields: Vec<(&str, Ron)>) -> Ron {
     Ron::Struct(
         name.to_string(),
         fields
@@ -78,50 +78,61 @@ fn rect_to_ron(rect: &Rect) -> Ron {
 }
 
 fn project_to_ron(project: &Project) -> Ron {
-    record(
-        "Project",
-        vec![
-            ("header", header_to_ron(&project.header)),
-            (
-                "assets",
-                Ron::List(project.assets.iter().map(asset_to_ron).collect()),
+    let mut fields: Vec<(&str, Ron)> = vec![
+        ("header", header_to_ron(&project.header)),
+        (
+            "assets",
+            Ron::List(project.assets.iter().map(asset_to_ron).collect()),
+        ),
+        (
+            "deformers",
+            Ron::List(project.deformers.iter().map(deformer_to_ron).collect()),
+        ),
+        (
+            "expressions",
+            Ron::List(project.expressions.iter().map(expression_to_ron).collect()),
+        ),
+        (
+            "glues",
+            Ron::List(project.glues.iter().map(glue_to_ron).collect()),
+        ),
+        (
+            "parameters",
+            Ron::List(project.parameters.iter().map(parameter_to_ron).collect()),
+        ),
+        (
+            "parts",
+            Ron::List(project.parts.iter().map(part_to_ron).collect()),
+        ),
+        (
+            "pose",
+            Ron::List(project.pose.iter().map(pose_to_ron).collect()),
+        ),
+        (
+            "variant_sets",
+            Ron::List(
+                project
+                    .variant_sets
+                    .iter()
+                    .map(variant_set_to_ron)
+                    .collect(),
             ),
+        ),
+    ];
+    // The game section sits between `expressions` and `glues`
+    // (the §G4 layout order); it is emitted only when present,
+    // so a game-less project serializes byte-identically to
+    // before the game layer existed.
+    if let Some(game) = &project.game {
+        fields.insert(
+            4,
             (
-                "deformers",
-                Ron::List(project.deformers.iter().map(deformer_to_ron).collect()),
+                "game",
+                Ron::Opt(Some(Box::new(crate::game::codec::game_to_ron(game)))),
             ),
-            (
-                "expressions",
-                Ron::List(project.expressions.iter().map(expression_to_ron).collect()),
-            ),
-            (
-                "glues",
-                Ron::List(project.glues.iter().map(glue_to_ron).collect()),
-            ),
-            (
-                "parameters",
-                Ron::List(project.parameters.iter().map(parameter_to_ron).collect()),
-            ),
-            (
-                "parts",
-                Ron::List(project.parts.iter().map(part_to_ron).collect()),
-            ),
-            (
-                "pose",
-                Ron::List(project.pose.iter().map(pose_to_ron).collect()),
-            ),
-            (
-                "variant_sets",
-                Ron::List(
-                    project
-                        .variant_sets
-                        .iter()
-                        .map(variant_set_to_ron)
-                        .collect(),
-                ),
-            ),
-        ],
-    )
+        );
+    }
+    record("Project", fields)
 }
 
 fn header_to_ron(header: &Header) -> Ron {
@@ -500,12 +511,12 @@ fn variant_set_to_ron(set: &VariantSet) -> Ron {
 // ---- parsing helpers --------------------------------------------
 
 /// A struct record being consumed field by field.
-struct Fields {
+pub(crate) struct Fields {
     kind: String,
     items: Vec<(String, Ron)>,
 }
 
-fn open(value: Ron, expected: &str) -> Result<Fields, Refusal> {
+pub(crate) fn open(value: Ron, expected: &str) -> Result<Fields, Refusal> {
     match value {
         Ron::Struct(name, items) if name == expected => Ok(Fields { kind: name, items }),
         Ron::Struct(name, _) => refuse(
@@ -520,7 +531,7 @@ fn open(value: Ron, expected: &str) -> Result<Fields, Refusal> {
 }
 
 impl Fields {
-    fn take(&mut self, key: &str) -> Result<Ron, Refusal> {
+    pub(crate) fn take(&mut self, key: &str) -> Result<Ron, Refusal> {
         match self.items.iter().position(|(name, _)| name == key) {
             Some(index) => Ok(self.items.remove(index).1),
             None => refuse(
@@ -530,7 +541,7 @@ impl Fields {
         }
     }
 
-    fn done(self) -> Result<(), Refusal> {
+    pub(crate) fn done(self) -> Result<(), Refusal> {
         match self.items.first() {
             Some((name, _)) => refuse(
                 RefusalClass::Malformed,
@@ -540,55 +551,94 @@ impl Fields {
         }
     }
 
-    fn string(&mut self, key: &str) -> Result<String, Refusal> {
+    pub(crate) fn string(&mut self, key: &str) -> Result<String, Refusal> {
         as_string(self.take(key)?, key)
     }
 
-    fn float(&mut self, key: &str) -> Result<f64, Refusal> {
+    pub(crate) fn float(&mut self, key: &str) -> Result<f64, Refusal> {
         as_float(self.take(key)?, key)
     }
 
-    fn uint(&mut self, key: &str) -> Result<u32, Refusal> {
+    pub(crate) fn uint(&mut self, key: &str) -> Result<u32, Refusal> {
         as_u32(self.take(key)?, key)
     }
 
-    fn boolean(&mut self, key: &str) -> Result<bool, Refusal> {
+    pub(crate) fn boolean(&mut self, key: &str) -> Result<bool, Refusal> {
         match self.take(key)? {
             Ron::Bool(flag) => Ok(flag),
             _ => wrong_type(key, "a boolean"),
         }
     }
 
-    fn option(&mut self, key: &str) -> Result<Option<Ron>, Refusal> {
+    pub(crate) fn option(&mut self, key: &str) -> Result<Option<Ron>, Refusal> {
         match self.take(key)? {
             Ron::Opt(inner) => Ok(inner.map(|boxed| *boxed)),
             _ => wrong_type(key, "None or Some(...)"),
         }
     }
 
-    fn list(&mut self, key: &str) -> Result<Vec<Ron>, Refusal> {
+    pub(crate) fn list(&mut self, key: &str) -> Result<Vec<Ron>, Refusal> {
         match self.take(key)? {
             Ron::List(items) => Ok(items),
             _ => wrong_type(key, "a list"),
         }
     }
 
-    fn ident(&mut self, key: &str) -> Result<String, Refusal> {
+    pub(crate) fn ident(&mut self, key: &str) -> Result<String, Refusal> {
         match self.take(key)? {
             Ron::Ident(name) => Ok(name),
             _ => wrong_type(key, "a variant name"),
         }
     }
+
+    /// Takes a field when present; `None` when absent (for
+    /// sections a file may legitimately lack entirely).
+    pub(crate) fn try_take(&mut self, key: &str) -> Option<Ron> {
+        self.items
+            .iter()
+            .position(|(name, _)| name == key)
+            .map(|index| self.items.remove(index).1)
+    }
+
+    /// Takes an integer field.
+    pub(crate) fn int(&mut self, key: &str) -> Result<i64, Refusal> {
+        as_i64(self.take(key)?, key)
+    }
+
+    /// Takes an optional string field.
+    pub(crate) fn opt_string(&mut self, key: &str) -> Result<Option<String>, Refusal> {
+        match self.option(key)? {
+            None => Ok(None),
+            Some(value) => as_string(value, key).map(Some),
+        }
+    }
 }
 
-fn wrong_type<T>(key: &str, expected: &str) -> Result<T, Refusal> {
+/// Opens a struct record of any kind, returning its kind name
+/// with its fields (for sum-typed records dispatched by name).
+pub(crate) fn open_any(value: Ron) -> Result<(String, Fields), Refusal> {
+    match value {
+        Ron::Struct(name, items) => Ok((name.clone(), Fields { kind: name, items })),
+        _ => refuse(RefusalClass::Malformed, "expected a named record"),
+    }
+}
+
+/// An integer field value.
+pub(crate) fn as_i64(value: Ron, key: &str) -> Result<i64, Refusal> {
+    match value {
+        Ron::Int(number) => Ok(number),
+        _ => wrong_type(key, "an integer"),
+    }
+}
+
+pub(crate) fn wrong_type<T>(key: &str, expected: &str) -> Result<T, Refusal> {
     refuse(
         RefusalClass::Malformed,
         format!("field '{key}' must be {expected}"),
     )
 }
 
-fn as_string(value: Ron, key: &str) -> Result<String, Refusal> {
+pub(crate) fn as_string(value: Ron, key: &str) -> Result<String, Refusal> {
     match value {
         Ron::Str(text) => Ok(text),
         _ => wrong_type(key, "a string"),
@@ -606,7 +656,7 @@ fn as_float(value: Ron, key: &str) -> Result<f64, Refusal> {
     }
 }
 
-fn as_u32(value: Ron, key: &str) -> Result<u32, Refusal> {
+pub(crate) fn as_u32(value: Ron, key: &str) -> Result<u32, Refusal> {
     match value {
         Ron::Int(number) => u32::try_from(number).or_else(|_| wrong_type(key, "a u32")),
         _ => wrong_type(key, "an integer"),
@@ -630,7 +680,7 @@ fn as_points(items: Vec<Ron>, key: &str) -> Result<Vec<Point>, Refusal> {
     items.into_iter().map(|item| as_point(item, key)).collect()
 }
 
-fn as_strings(items: Vec<Ron>, key: &str) -> Result<Vec<String>, Refusal> {
+pub(crate) fn as_strings(items: Vec<Ron>, key: &str) -> Result<Vec<String>, Refusal> {
     items.into_iter().map(|item| as_string(item, key)).collect()
 }
 
@@ -646,7 +696,7 @@ fn as_rect(value: Ron) -> Result<Rect, Refusal> {
     Ok(rect)
 }
 
-fn unknown_variant<T>(key: &str, name: &str) -> Result<T, Refusal> {
+pub(crate) fn unknown_variant<T>(key: &str, name: &str) -> Result<T, Refusal> {
     refuse(
         RefusalClass::UnknownKind,
         format!("field '{key}' names unknown kind '{name}'"),
@@ -654,7 +704,7 @@ fn unknown_variant<T>(key: &str, name: &str) -> Result<T, Refusal> {
 }
 
 /// Sorts a collection by id and refuses duplicate ids.
-fn sorted_unique<T>(
+pub(crate) fn sorted_unique<T>(
     mut items: Vec<T>,
     collection: &str,
     key: impl Fn(&T) -> &str,
@@ -684,6 +734,16 @@ fn project_from_ron(value: Ron) -> Result<Project, Refusal> {
     let parts = collect(fields.list("parts")?, part_from_ron)?;
     let pose = collect(fields.list("pose")?, pose_from_ron)?;
     let variant_sets = collect(fields.list("variant_sets")?, variant_set_from_ron)?;
+    // The game section is the one optional section: a file
+    // without it is a rig-only project. `game: None` written out
+    // longhand parses to the same absence and is non-canonical
+    // (the emitter omits the field), which validation reports.
+    let game = match fields.try_take("game") {
+        None => None,
+        Some(Ron::Opt(None)) => None,
+        Some(Ron::Opt(Some(inner))) => Some(crate::game::codec::game_from_ron(*inner)?),
+        Some(_) => return wrong_type("game", "None or Some(Game(...))"),
+    };
     fields.done()?;
     Ok(Project {
         header,
@@ -695,10 +755,13 @@ fn project_from_ron(value: Ron) -> Result<Project, Refusal> {
         parts: sorted_unique(parts, "parts", |item| &item.id)?,
         pose: sorted_unique(pose, "pose entries", |item| &item.parameter)?,
         variant_sets: sorted_unique(variant_sets, "variant sets", |item| &item.id)?,
+        game,
+        content: Vec::new(),
+        content_locale: None,
     })
 }
 
-fn collect<T>(
+pub(crate) fn collect<T>(
     items: Vec<Ron>,
     convert: impl Fn(Ron) -> Result<T, Refusal>,
 ) -> Result<Vec<T>, Refusal> {

@@ -94,6 +94,7 @@ pub fn decide(state: Option<&Project>, op: &Op, observed: &Observed) -> Result<V
         Op::PartDrawOrderSet(inputs) => decide_draw(project, inputs),
         Op::MeshSet(inputs) => decide_mesh_set(project, inputs),
         Op::MeshTrim(inputs) => decide_mesh_trim(project, &inputs.part),
+        Op::Game(game_op) => crate::game::decide::decide_game(project, game_op),
         _ => decide_rig(project, op),
     }
 }

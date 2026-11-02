@@ -130,6 +130,7 @@ fn apply<'a>(
         Op::ProjectImport(inputs) => {
             return crate::import::apply_import(project, inputs, observed, files);
         }
+        Op::Game(game_op) => crate::game::apply::apply_game(&mut project, game_op)?,
         Op::IntakeImage(inputs) => {
             let Observed::Image(image) = observed else {
                 invariant("image observation")

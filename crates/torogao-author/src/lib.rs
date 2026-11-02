@@ -25,6 +25,7 @@ pub mod census;
 pub mod codec;
 pub mod decide;
 pub mod diff;
+pub mod game;
 pub mod import;
 pub mod intake;
 pub mod limits;
