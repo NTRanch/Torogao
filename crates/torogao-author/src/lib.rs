@@ -35,6 +35,7 @@ pub mod ron;
 pub mod session;
 pub mod store;
 pub mod validate;
+pub mod voice;
 
 pub use refusal::{Refusal, RefusalClass};
 pub use session::{Answer, Status, parse_script, run_requests, run_verb, verbs_doc};
