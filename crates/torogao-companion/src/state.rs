@@ -115,7 +115,9 @@ pub struct CompanionState {
     /// like the click-through lock — and, like it, added
     /// as a serde default under version 1, so a state file
     /// written before this field existed loads with quiet
-    /// hours off.
+    /// hours off. (The T2 line carried the same toggle as
+    /// `quiet_mode`; integration keeps this name — it is
+    /// the one the D-530 live verification exercised.)
     #[serde(default)]
     pub quiet_hours: bool,
 }

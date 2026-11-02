@@ -23,11 +23,18 @@
 //! is no companion-private scene or player. The companion
 //! ships no audio code path at all (Gate G8).
 
+pub mod cast;
 pub mod core;
+pub mod cycle;
+pub mod duo;
 pub mod error;
+pub mod face;
 pub mod fallback;
+pub mod gaze;
+pub mod lag;
 pub mod menu;
 pub mod perf;
+pub mod roll;
 pub mod silhouette;
 pub mod state;
 pub mod view;

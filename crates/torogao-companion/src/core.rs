@@ -28,7 +28,11 @@ use torogao_app::state::ShellState;
 use torogao_app::state_hash::evaluated_state_hash;
 use torogao_session::host::LiveBridge;
 
+use crate::cast::CastMember;
+use crate::cycle::{CycleChannels, CycleDriver};
 use crate::error::{CompanionError, CompanionResult};
+use crate::gaze::{GazeChannels, GazeDriver};
+use crate::roll::{RollChannels, RollDriver};
 
 /// The ambient performance (Daydream on loop) and the
 /// click performance (Greeting, once through).
@@ -47,6 +51,19 @@ pub const QUIET_SALIENCE: f32 = torogao_app::persona::HOST_IDLE_SALIENCE;
 /// quiet idle salience sits below the focus salience.
 const _: () = assert!(QUIET_SALIENCE < torogao_app::persona::FOCUS_SALIENCE);
 
+/// Her face's anchor in surface fractions (x, y): the
+/// cast rigs share one portrait framing — full body,
+/// head in the top band, horizontally centred — so the
+/// pointer's direction is measured from this point.
+/// Declared here because the gaze gate's scripted paths
+/// are written against the same anchor.
+pub const FACE_ANCHOR: (f64, f64) = (0.5, 0.14);
+/// The governed viewing distance for the pointer
+/// conversion, in surface heights: the cursor sits this
+/// far from her face plane, so a half-surface horizontal
+/// offset reads as atan(0.5 × aspect / 1.35).
+pub const VIEW_DISTANCE_HEIGHTS: f64 = 1.35;
+
 /// The companion's live host state.
 pub struct CompanionCore {
     shell: ShellState,
@@ -63,6 +80,34 @@ pub struct CompanionCore {
     /// The model path the scene was loaded from (the
     /// right-click menu's "open Torogao" reopens it).
     pub model_path: PathBuf,
+    /// The directory the cast's repertoire fixtures live
+    /// in (the loaded model's parent): character switches
+    /// resolve inside it.
+    cast_dir: PathBuf,
+    /// The cast member on stage, when the loaded model is
+    /// one of the governed roster.
+    cast_member: Option<&'static CastMember>,
+    /// The Addition G gaze driver (gaze-follow, idle
+    /// saccades, blink discipline, quiet salience).
+    gaze: GazeDriver,
+    /// The driver's parameter channels in the current
+    /// scene, resolved at every scene install.
+    gaze_channels: GazeChannels,
+    /// Channel names the current rig does not carry (the
+    /// load-time gap report; empty for the governed cast).
+    gaze_gaps: Vec<&'static str>,
+    /// The Stage 2.1 body-cycle performance, when one is
+    /// running (a governed driver like the gaze driver,
+    /// started explicitly — the companion's steady state
+    /// has no cycle running).
+    cycle: Option<CycleDriver>,
+    /// The cycle driver's channels in the current scene.
+    cycle_channels: CycleChannels,
+    /// The Stage 2.2 roll performance, when one is
+    /// running or holding its afterglow.
+    roll: Option<RollDriver>,
+    /// The roll driver's channels in the current scene.
+    roll_channels: RollChannels,
 }
 
 impl CompanionCore {
@@ -94,7 +139,22 @@ impl CompanionCore {
             quiet_hours: false,
             session_id: None,
             model_path: model_path.to_path_buf(),
+            cast_dir: model_path
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_default(),
+            cast_member: crate::cast::member_for_path(model_path),
+            gaze: GazeDriver::new(),
+            gaze_channels: GazeChannels::default(),
+            gaze_gaps: Vec::new(),
+            cycle: None,
+            cycle_channels: CycleChannels::default(),
+            roll: None,
+            roll_channels: RollChannels::default(),
         };
+        core.refresh_gaze_channels()?;
+        core.refresh_cycle_channels()?;
+        core.refresh_roll_channels()?;
         if let Some(dir) = session_dir {
             let port = session_port.unwrap_or(torogao_session::transport::DEFAULT_WS_PORT);
             let (rx, session_id) =
@@ -202,9 +262,14 @@ impl CompanionCore {
     /// Sets quiet hours (PROGRAM.md §3.3). The
     /// presentations call this at startup with the loaded
     /// placement state and again whenever the menu toggle
-    /// flips it.
+    /// flips it. This is the single entry for the toggle:
+    /// it drives both the core's reaction gate and the
+    /// gaze driver's quiet mode, so the two §3.3 halves
+    /// (suppressed reactions, reduced salience) can never
+    /// diverge.
     pub fn set_quiet_hours(&mut self, quiet_hours: bool) {
         self.quiet_hours = quiet_hours;
+        self.gaze.set_quiet(quiet_hours);
     }
 
     /// Whether quiet hours are on.
@@ -258,16 +323,49 @@ impl CompanionCore {
         self.drain_session_requests();
         self.ensure_ambient()?;
         if self.play.is_advancing() {
-            // Field-level borrows: the player and the shell
-            // are disjoint fields, so the step needs no
-            // take/replace dance.
+            // The governed drivers advance with the scene
+            // (a paused puppet's drivers are frozen with
+            // her) and write through the step hook,
+            // composing with the performance (see gaze.rs
+            // and cycle.rs).
+            self.gaze.step();
+            let cycle_live = matches!(&self.cycle, Some(cycle) if cycle.active());
+            if cycle_live {
+                if let Some(cycle) = &mut self.cycle {
+                    cycle.step();
+                }
+            }
+            if let Some(roll) = &mut self.roll {
+                roll.step();
+            }
+            // Field-level borrows: the player, the shell,
+            // and the drivers are disjoint fields, so the
+            // step needs no take/replace dance.
+            let gaze = &self.gaze;
+            let channels = &self.gaze_channels;
+            let cycle = if cycle_live {
+                self.cycle.as_ref()
+            } else {
+                None
+            };
+            let cycle_channels = &self.cycle_channels;
+            let roll = self.roll.as_ref();
+            let roll_channels = &self.roll_channels;
             let scene = self
                 .shell
                 .scene
                 .as_mut()
                 .ok_or_else(|| CompanionError::model("no scene is installed"))?;
             self.play
-                .step(scene, 1)
+                .step_hooked(scene, 1, &mut |scene: &mut Scene| {
+                    crate::gaze::apply(gaze, channels, scene);
+                    if let Some(cycle) = cycle {
+                        crate::cycle::apply(cycle, cycle_channels, scene);
+                    }
+                    if let Some(roll) = roll {
+                        crate::roll::apply(roll, roll_channels, scene);
+                    }
+                })
                 .map_err(|err| CompanionError::model(err.to_string()))?;
         }
         let scene = self.scene_mut()?;
@@ -283,6 +381,176 @@ impl CompanionCore {
     /// The repertoire model this companion presents.
     pub fn model_path(&self) -> &Path {
         &self.model_path
+    }
+
+    /// The cast member on stage, when the loaded model is
+    /// one of the governed roster.
+    pub fn cast_member(&self) -> Option<&'static CastMember> {
+        self.cast_member
+    }
+
+    /// Puts another cast member on stage: loads her
+    /// repertoire fixture from the cast directory,
+    /// installs it in the same shell, and restarts the
+    /// ambient performance — a scene install, exactly the
+    /// shared shell operation the panel performs on load.
+    /// The hosted session stays bound to its genesis
+    /// projection (the session host's documented binding,
+    /// unchanged by who is on stage). The gaze driver
+    /// carries over: attention is the companion's, not the
+    /// performer's.
+    pub fn switch_character(&mut self, member: &'static CastMember) -> CompanionResult<()> {
+        if self.cast_member == Some(member) {
+            return Ok(());
+        }
+        let path = crate::cast::model_path(&self.cast_dir, member)?;
+        let mut scene =
+            Scene::load_file(&path).map_err(|err| CompanionError::model(err.to_string()))?;
+        scene
+            .evaluate_fresh(&[])
+            .map_err(|err| CompanionError::model(err.to_string()))?;
+        self.shell.install_scene(scene);
+        self.play = PlayHost::new();
+        self.model_path = path;
+        self.cast_member = Some(member);
+        self.refresh_gaze_channels()?;
+        self.refresh_cycle_channels()?;
+        self.refresh_roll_channels()?;
+        self.ensure_ambient()
+    }
+
+    /// Starts the roll performance (Stage 2.2): the
+    /// authored ParamEyeRoll curve with its ganged
+    /// crossing, ending in the afterglow state the
+    /// driver then holds.
+    pub fn start_roll(&mut self) {
+        self.roll = Some(RollDriver::new());
+    }
+
+    /// Whether the roll performance is still playing
+    /// (false once it holds the afterglow, and when no
+    /// performance was started).
+    pub fn roll_performing(&self) -> bool {
+        matches!(&self.roll, Some(roll) if roll.performing())
+    }
+
+    /// The roll channels the current rig does not carry
+    /// (empty for the governed cast).
+    pub fn roll_gaps(&self) -> Vec<&'static str> {
+        self.roll_channels.missing()
+    }
+
+    /// Re-resolves the roll channels against the
+    /// installed scene.
+    fn refresh_roll_channels(&mut self) -> CompanionResult<()> {
+        let scene = self.scene()?;
+        self.roll_channels = RollChannels::resolve(scene);
+        Ok(())
+    }
+
+    /// Starts a body-cycle performance (Stage 2.1) of
+    /// `total_steps` fixed steps. The performance composes
+    /// under whatever the player is performing; when it
+    /// ends the driver goes quiet on its own.
+    pub fn start_cycle(&mut self, total_steps: u64) {
+        self.cycle = Some(CycleDriver::new(total_steps));
+    }
+
+    /// Whether a body-cycle performance is running.
+    pub fn cycle_active(&self) -> bool {
+        matches!(&self.cycle, Some(cycle) if cycle.active())
+    }
+
+    /// The running cycle performance's authored envelope
+    /// at `step` (the gate instrument's reference curve).
+    pub fn cycle_envelope_at(&self, step: u64) -> Option<f64> {
+        self.cycle.as_ref().map(|cycle| cycle.envelope_at(step))
+    }
+
+    /// The cycle channels the current rig does not carry
+    /// (empty for the governed cast).
+    pub fn cycle_gaps(&self) -> Vec<&'static str> {
+        self.cycle_channels.missing()
+    }
+
+    /// Re-resolves the cycle channels against the
+    /// installed scene.
+    fn refresh_cycle_channels(&mut self) -> CompanionResult<()> {
+        let scene = self.scene()?;
+        self.cycle_channels = CycleChannels::resolve(scene);
+        Ok(())
+    }
+
+    /// Feeds the pointer to the gaze driver: `pointer` is
+    /// the cursor's position in surface fractions (x right,
+    /// y down, origin top-left), `surface_aspect` the
+    /// surface's width/height. The conversion to a gaze
+    /// direction measures from `FACE_ANCHOR` at
+    /// `VIEW_DISTANCE_HEIGHTS`. `None` (the pointer left
+    /// her surface) returns her to the idle schedule.
+    pub fn set_pointer(&mut self, pointer: Option<(f64, f64)>, surface_aspect: f64) {
+        let target = pointer.map(|(fx, fy)| {
+            let dx = (fx - FACE_ANCHOR.0) * surface_aspect;
+            let dy = fy - FACE_ANCHOR.1;
+            (
+                dx.atan2(VIEW_DISTANCE_HEIGHTS).to_degrees(),
+                dy.atan2(VIEW_DISTANCE_HEIGHTS).to_degrees(),
+            )
+        });
+        self.gaze.set_pointer_target(target);
+    }
+
+    /// The pointer-click reaction: Greeting, once through,
+    /// through the shared play entry. In quiet mode the
+    /// reaction is suppressed (§3.3: quiet hours suppress
+    /// reactions) and this returns `false`; the ambient
+    /// performance is never interrupted either way beyond
+    /// the reaction itself.
+    pub fn click_reaction(&mut self) -> CompanionResult<bool> {
+        if self.gaze.quiet() {
+            return Ok(false);
+        }
+        self.play(CLICK_ANIMATION, false)?;
+        Ok(true)
+    }
+
+    /// Sets quiet mode (focus discipline, §3.3). The
+    /// placement state persists the choice; the core only
+    /// carries it live. Delegates to `set_quiet_hours` —
+    /// one toggle, two names kept for the two call sites
+    /// that grew up around it.
+    pub fn set_quiet(&mut self, quiet: bool) {
+        self.set_quiet_hours(quiet);
+    }
+
+    /// Whether quiet mode is on.
+    pub fn quiet(&self) -> bool {
+        self.gaze.quiet()
+    }
+
+    /// The gaze driver's current evaluated direction
+    /// (yaw, pitch) in degrees — the gate instrument's
+    /// read of where she is looking.
+    pub fn gaze_degrees(&self) -> (f64, f64) {
+        self.gaze.gaze_degrees()
+    }
+
+    /// The gaze channels the current rig does not carry
+    /// (empty for the governed cast).
+    pub fn gaze_gaps(&self) -> &[&'static str] {
+        &self.gaze_gaps
+    }
+
+    /// Re-resolves the gaze channels against the installed
+    /// scene and records any gap.
+    fn refresh_gaze_channels(&mut self) -> CompanionResult<()> {
+        let scene = self.scene()?;
+        self.gaze_channels = GazeChannels::resolve(scene);
+        self.gaze_gaps = self.gaze_channels.missing();
+        let eye_channels =
+            self.gaze_channels.gaze_x.is_some() && self.gaze_channels.gaze_y.is_some();
+        self.gaze.set_eye_channels(eye_channels);
+        Ok(())
     }
 }
 

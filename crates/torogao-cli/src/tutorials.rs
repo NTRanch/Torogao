@@ -151,17 +151,18 @@ fn expression_evidence(ext: &ExtView, pack: &Value) -> (Vec<String>, bool) {
 }
 
 fn export_evidence(puppet: &Puppet, walk: &mut Walk, slot_count: usize) -> (Vec<String>, bool) {
-    // RP1-D1: the port's exporter emits the "torogao-rig-model"
-    // token; the check tests for the port token and names it.
+    // Pax token ruling (TRUE 1.0 integration): the exporter
+    // writes lumen's format, so the check tests for the
+    // lumen token and names it.
     match RigExporter::run(puppet, walk, slot_count) {
         Ok(result) => {
             let fmt = jget(&result.model, "format");
-            let ok = fmt.as_str() == Some(torogao_format::MODEL_FORMAT_TOKEN);
+            let ok = fmt.as_str() == Some(torogao_format::LEGACY_MODEL_FORMAT_TOKEN);
             (
                 vec![format!(
                     "export built a {} model ({} conversion entries)",
                     if ok {
-                        torogao_format::MODEL_FORMAT_TOKEN
+                        torogao_format::LEGACY_MODEL_FORMAT_TOKEN
                     } else {
                         "unexpected"
                     },

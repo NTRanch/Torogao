@@ -80,6 +80,9 @@ const BTN_RIGHT: u32 = 0x111;
 /// Drag threshold, pixels: below this a press+release is
 /// a click (Greeting); above it, a drag (move).
 const DRAG_THRESHOLD_PX: f64 = 6.0;
+/// Two clicks on her closer than this are one
+/// double-click (the area invocation).
+const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(400);
 /// Presentation cadence: one fixed step (1/60 s) per tick.
 const TICK: Duration = Duration::from_micros(16_667);
 /// Silhouette re-measure cadence, in presented frames:
@@ -195,6 +198,7 @@ struct Presentation {
     seat_state: SeatState,
     output_state: OutputState,
     compositor_state: CompositorState,
+    layer_shell: LayerShell,
     layer: Option<LayerSurface>,
     core: CompanionCore,
     placement: CompanionState,
@@ -210,6 +214,15 @@ struct Presentation {
     keyboard: Option<wl_keyboard::WlKeyboard>,
     pointer: Option<wl_pointer::WlPointer>,
     pointer_pos: (f64, f64),
+    /// Whether the pointer is over her surface (Enter /
+    /// Leave): the gaze driver's attention signal.
+    pointer_inside: bool,
+    /// When the last click on her landed (double-click
+    /// detection for the area invocation).
+    last_click_at: Option<Instant>,
+    /// A send-to-display is waiting for the next tick to
+    /// rebuild the layer surface on the new output.
+    pending_rebuild: bool,
     drag: Option<DragState>,
     menu: Option<MenuUi>,
     region: Option<Region>,
@@ -316,12 +329,29 @@ impl Presentation {
         if self.exit {
             return;
         }
+        if self.pending_rebuild {
+            self.pending_rebuild = false;
+            self.rebuild_surface(qh);
+        }
         let Some((width, height)) = self.configured_size else {
             return; // No configure yet: nothing to present into.
         };
         if width == 0 || height == 0 {
             return;
         }
+        // Attention: the pointer's surface fractions feed
+        // the gaze driver before the step, so this frame's
+        // evaluation already answers it.
+        let pointer = if self.pointer_inside {
+            Some((
+                self.pointer_pos.0 / f64::from(width),
+                self.pointer_pos.1 / f64::from(height),
+            ))
+        } else {
+            None
+        };
+        self.core
+            .set_pointer(pointer, f64::from(width) / f64::from(height));
         let hash = match self.core.tick() {
             Ok(hash) => hash,
             Err(err) => {
@@ -455,13 +485,7 @@ impl Presentation {
         );
         let mut actions: Vec<MenuAction> = Vec::new();
         if let Some(menu) = &mut self.menu {
-            actions = menu.draw(
-                renderer.device(),
-                renderer.queue(),
-                &view,
-                (width, height),
-                &self.options.character_name,
-            );
+            actions = menu.draw(renderer.device(), renderer.queue(), &view, (width, height));
         }
         frame.present();
         self.layer()
@@ -645,12 +669,31 @@ impl Presentation {
                 }
                 self.placement_dirty = true;
                 self.persist_placement();
-            } else if let Err(err) = self.core.play_reaction() {
-                // A click on her: the Greeting reaction
-                // through the bridge — the same entry the
-                // session host's play_control tool lands
-                // in. Suppressed silently under quiet hours.
-                eprintln!("torogao-companion: greeting refused: {err}");
+            } else {
+                // A click on her. A second click inside the
+                // double-click window invokes her area (the
+                // panel, over the model on stage); a single
+                // click is the reaction — Greeting through
+                // the bridge, the same entry the session
+                // host's play_control tool lands in, and
+                // suppressed in quiet mode by the core.
+                let now = Instant::now();
+                let double = self
+                    .last_click_at
+                    .is_some_and(|last| now.duration_since(last) <= DOUBLE_CLICK_WINDOW);
+                if double {
+                    self.last_click_at = None;
+                    self.open_torogao();
+                } else {
+                    self.last_click_at = Some(now);
+                    match self.core.click_reaction() {
+                        Ok(true) => {}
+                        Ok(false) => {} // Quiet hours: she stays at rest.
+                        Err(err) => {
+                            eprintln!("torogao-companion: greeting refused: {err}");
+                        }
+                    }
+                }
             }
         }
     }
@@ -661,10 +704,96 @@ impl Presentation {
             return;
         };
         let mut menu = MenuUi::new(renderer.device(), format, self.pointer_pos);
-        menu.click_through_locked = self.placement.click_through_locked;
-        menu.quiet_hours = self.placement.quiet_hours;
+        menu.model = self.menu_model();
         self.menu = Some(menu);
         self.apply_input_region();
+    }
+
+    /// The menu's model, read from the core and the
+    /// placement at open time (and refreshed in place when
+    /// a toggle flips, so the open menu shows its new
+    /// state).
+    fn menu_model(&self) -> crate::menu::MenuModel {
+        let active = self.core.cast_member();
+        crate::menu::MenuModel {
+            character_name: active
+                .map(|member| member.name.to_string())
+                .unwrap_or_else(|| self.options.character_name.clone()),
+            cast: crate::cast::CAST
+                .iter()
+                .map(|member| {
+                    (
+                        member.name.to_string(),
+                        active.map(|on_stage| on_stage.id) == Some(member.id),
+                    )
+                })
+                .collect(),
+            click_through_locked: self.placement.click_through_locked,
+            outputs: self
+                .output_state
+                .outputs()
+                .filter_map(|output| {
+                    self.output_state
+                        .info(&output)
+                        .and_then(|info| info.name.clone())
+                })
+                .map(|name| {
+                    let current = self.placement.output_name.as_deref() == Some(name.as_str());
+                    (name, current)
+                })
+                .collect(),
+            quiet: self.placement.quiet_hours,
+        }
+    }
+
+    /// The advertised output with this connector name.
+    fn output_for_name(&self, name: &str) -> Option<wl_output::WlOutput> {
+        self.output_state.outputs().find_map(|output| {
+            self.output_state
+                .info(&output)
+                .filter(|info| info.name.as_deref() == Some(name))
+                .map(|_| output)
+        })
+    }
+
+    /// Rebuilds the layer surface on the output the
+    /// placement now names (send-to-display): the GPU
+    /// surface dies before the layer surface it was built
+    /// on, a fresh layer surface is created on the target
+    /// output with the standing placement, and the frame
+    /// loop re-creates the renderer when the new surface
+    /// configures.
+    fn rebuild_surface(&mut self, qh: &QueueHandle<Self>) {
+        let output = self
+            .placement
+            .output_name
+            .as_deref()
+            .and_then(|name| self.output_for_name(name));
+        self.menu = None;
+        self.gpu_surface = None;
+        self.renderer = None;
+        self.surface_format = None;
+        self.gpu_configured_size = None;
+        self.configured_size = None;
+        self.current_silhouette = None;
+        self.last_silhouette_bbox = None;
+        self.layer = None;
+        let wl_surface = self.compositor_state.create_surface(qh);
+        let layer = self.layer_shell.create_layer_surface(
+            qh,
+            wl_surface,
+            Layer::Overlay,
+            Some("torogao-companion"),
+            output.as_ref(),
+        );
+        layer.set_anchor(Presentation::layer_anchor(self.placement.anchor));
+        layer.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
+        layer.set_exclusive_zone(-1);
+        layer.set_size(self.desired_size.0, self.desired_size.1);
+        self.surface_ptr = layer.wl_surface().id().as_ptr() as usize;
+        self.layer = Some(layer);
+        self.apply_layer_placement();
+        self.layer().commit();
     }
 
     fn apply_menu_actions(&mut self, actions: Vec<MenuAction>) {
@@ -682,23 +811,38 @@ impl Presentation {
                     }
                     self.menu = None;
                 }
+                MenuAction::SwitchCharacter(index) => {
+                    if let Some(member) = crate::cast::CAST.get(index) {
+                        if let Err(err) = self.core.switch_character(member) {
+                            eprintln!("torogao-companion: character switch refused: {err}");
+                        }
+                    }
+                    self.menu = None;
+                }
+                MenuAction::SendToOutput(name) => {
+                    self.placement.output_name = Some(name);
+                    self.placement_dirty = true;
+                    self.persist_placement();
+                    self.pending_rebuild = true;
+                    self.menu = None;
+                }
                 MenuAction::OpenTorogao => {
                     self.open_torogao();
                     self.menu = None;
                 }
-                MenuAction::ToggleClickThrough => {
-                    self.placement.click_through_locked = !self.placement.click_through_locked;
+                MenuAction::ToggleQuiet => {
+                    self.placement.quiet_hours = !self.placement.quiet_hours;
+                    self.core.set_quiet(self.placement.quiet_hours);
                     if let Some(menu) = &mut self.menu {
-                        menu.click_through_locked = self.placement.click_through_locked;
+                        menu.model.quiet = self.placement.quiet_hours;
                     }
                     self.placement_dirty = true;
                     self.persist_placement();
                 }
-                MenuAction::ToggleQuietHours => {
-                    self.placement.quiet_hours = !self.placement.quiet_hours;
-                    self.core.set_quiet_hours(self.placement.quiet_hours);
+                MenuAction::ToggleClickThrough => {
+                    self.placement.click_through_locked = !self.placement.click_through_locked;
                     if let Some(menu) = &mut self.menu {
-                        menu.quiet_hours = self.placement.quiet_hours;
+                        menu.model.click_through_locked = self.placement.click_through_locked;
                     }
                     self.placement_dirty = true;
                     self.persist_placement();
@@ -981,8 +1125,8 @@ impl PointerHandler for Presentation {
             }
             self.pointer_pos = event.position;
             match event.kind {
-                PointerEventKind::Enter { .. } => {}
-                PointerEventKind::Leave { .. } => {}
+                PointerEventKind::Enter { .. } => self.pointer_inside = true,
+                PointerEventKind::Leave { .. } => self.pointer_inside = false,
                 PointerEventKind::Motion { .. } => self.on_motion(),
                 PointerEventKind::Press { button, .. } => self.on_press(button),
                 PointerEventKind::Release { button, .. } => self.on_release(button),
@@ -1060,6 +1204,7 @@ pub fn run(options: RunOptions) -> CompanionResult<RunSummary> {
         seat_state: SeatState::new(&globals, &qh),
         output_state: OutputState::new(&globals, &qh),
         compositor_state,
+        layer_shell,
         layer: None,
         core,
         placement: options.placement.clone(),
@@ -1074,6 +1219,9 @@ pub fn run(options: RunOptions) -> CompanionResult<RunSummary> {
         keyboard: None,
         pointer: None,
         pointer_pos: (0.0, 0.0),
+        pointer_inside: false,
+        last_click_at: None,
+        pending_rebuild: false,
         drag: None,
         menu: None,
         region: None,
@@ -1094,32 +1242,23 @@ pub fn run(options: RunOptions) -> CompanionResult<RunSummary> {
         .blocking_dispatch(&mut state)
         .map_err(|err| CompanionError::new("TG-COMP-NO-WAYLAND", format!("dispatch: {err}")))?;
     let output = match &state.placement.output_name {
-        Some(name) => {
-            let found = state.output_state.outputs().find_map(|output| {
-                state
-                    .output_state
-                    .info(&output)
-                    .filter(|info| info.name.as_deref() == Some(name.as_str()))
-                    .map(|_| output)
-            });
-            match found {
-                Some(output) => Some(output),
-                None => {
-                    return Err(CompanionError::new(
-                        "TG-COMP-OUTPUT-UNKNOWN",
-                        format!(
-                            "the persisted state pins output '{name}', which this \
-                             session does not advertise; refusing to place her \
-                             somewhere she was not put"
-                        ),
-                    ));
-                }
+        Some(name) => match state.output_for_name(name) {
+            Some(output) => Some(output),
+            None => {
+                return Err(CompanionError::new(
+                    "TG-COMP-OUTPUT-UNKNOWN",
+                    format!(
+                        "the persisted state pins output '{name}', which this \
+                         session does not advertise; refusing to place her \
+                         somewhere she was not put"
+                    ),
+                ));
             }
-        }
+        },
         None => None,
     };
     let wl_surface = state.compositor_state.create_surface(&qh);
-    let layer = layer_shell.create_layer_surface(
+    let layer = state.layer_shell.create_layer_surface(
         &qh,
         wl_surface,
         Layer::Overlay,

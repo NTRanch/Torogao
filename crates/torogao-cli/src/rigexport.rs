@@ -7,11 +7,15 @@
 //!
 //! Orientation: INP space is y-down, lumen model space is
 //! y-up. All baked positions flip y; rotation angles flip
-//! sign. Under ruling RP1-D1, writers emit the current
-//! format token only: the model document carries
-//! `torogao-rig-model` (the reference writes its
-//! predecessor token; that one field is the pre-authorized
-//! difference between the two exporters).
+//! sign. Token ruling (Pax, TRUE 1.0 integration): a
+//! converter emits the token of the format it is actually
+//! writing. This exporter writes lumen's format — the
+//! document below is a lumen-rig model — so it carries
+//! `lumen-rig-model`; lumen stays strict and accepts only
+//! its own token. Torogao's native writers keep emitting
+//! `torogao-rig-model` for torogao's own documents; the
+//! two tokens name two formats, and each writer stamps
+//! the one it writes.
 
 use crate::extdoc::ExtView;
 use crate::handlers::{ToolLoad, join_path, stamp_doc};
@@ -22,7 +26,12 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use torogao_engine::param::BindingValues;
 use torogao_engine::{Node, Puppet, Vec2};
-use torogao_format::MODEL_FORMAT_TOKEN;
+/// The token this converter stamps: lumen's, because the
+/// document it writes is lumen's format (Pax token
+/// ruling, TRUE 1.0 integration). In torogao-format's
+/// naming this is the legacy token — legacy to torogao's
+/// native format, current to lumen's loader.
+use torogao_format::LEGACY_MODEL_FORMAT_TOKEN as EXPORT_MODEL_FORMAT_TOKEN;
 
 /// How an export can fail: the conversion itself, or the
 /// file writes after it.
@@ -186,7 +195,7 @@ impl<'a> RigExporter<'a> {
         exporter.account_whole_constructs();
         let model = serde_json::json!({
             "deformers": deformers,
-            "format": MODEL_FORMAT_TOKEN,
+            "format": EXPORT_MODEL_FORMAT_TOKEN,
             "format_version": 1,
             "generator": "torogao-cli 0.1.0",
             "id": model_name,
