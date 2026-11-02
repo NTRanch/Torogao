@@ -20,8 +20,8 @@ use crate::game::op::{
 use crate::limits::{
     GAME_CHARACTERS_MAX, GAME_CONDITIONS_MAX, GAME_CONTENT_TEXT_BYTES_MAX, GAME_DIALOGUE_LINES_MAX,
     GAME_EFFECT_ATOMS_MAX, GAME_EFFECT_SETS_MAX, GAME_FLAGS_MAX, GAME_LIFETIME_DAYS_MAX,
-    GAME_SCENES_MAX, GAME_SLOTS_MAX, GAME_STATS_MAX, GAME_TIER_THRESHOLDS_MAX, GAME_TRIGGERS_MAX,
-    GAME_VALUES_MAX,
+    GAME_OFFER_DAYS_MAX, GAME_SCENES_MAX, GAME_SLOTS_MAX, GAME_STATS_MAX, GAME_TIER_THRESHOLDS_MAX,
+    GAME_TRIGGERS_MAX, GAME_VALUES_MAX,
 };
 use crate::model::Project;
 use crate::refusal::{Refusal, RefusalClass, refuse};
@@ -575,6 +575,18 @@ fn decide_trigger(game: &Game, inputs: &TriggerDefineInput) -> Result<Verdict, R
                 return refuse(RefusalClass::Range, format!("exact_day {day} is below 1"));
             }
         }
+    }
+    if let Some(offer) = &inputs.offer
+        && let Some(days) = offer.expires_days
+        && (days == 0 || days > GAME_OFFER_DAYS_MAX)
+    {
+        return refuse(
+            RefusalClass::Range,
+            format!(
+                "trigger '{}' offer expiry {days} days is outside 1..={GAME_OFFER_DAYS_MAX}",
+                inputs.id
+            ),
+        );
     }
     let record = trigger_record(inputs);
     upsert_verdict(

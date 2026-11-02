@@ -8,8 +8,9 @@
 
 use crate::game::model::{
     Atom, CharacterDef, Clock, ConditionDef, DialogueLine, Direction, EffectSetDef, FlagDef,
-    FlagEdge, FlagScope, GAME_FORMAT_VERSION, Game, Lifetime, Overflow, Repetition, SceneDef,
-    StatDef, StatInitial, StatKind, StatScope, TierDef, TriggerDef, TriggerKind, ValueDef,
+    FlagEdge, FlagScope, GAME_FORMAT_VERSION, Game, Lifetime, OfferDef, Overflow, Repetition,
+    SceneDef, StatDef, StatInitial, StatKind, StatScope, TierDef, TriggerDef, TriggerKind,
+    ValueDef,
 };
 use crate::game::op::{
     AtomInput, CharacterDefineInput, ClockDefineInput, ConditionDefineInput,
@@ -351,9 +352,7 @@ pub(crate) fn trigger_kind_input_of(kind: &TriggerKind) -> TriggerKindInput {
     }
 }
 
-/// The trigger record a `trigger_define` produces. (The `offer`
-/// field joins the input record in slice P2-3; until then a
-/// stored offer cannot be authored through ops.)
+/// The trigger record a `trigger_define` produces.
 pub(crate) fn trigger_record(inputs: &TriggerDefineInput) -> TriggerDef {
     TriggerDef {
         id: inputs.id.clone(),
@@ -366,7 +365,9 @@ pub(crate) fn trigger_record(inputs: &TriggerDefineInput) -> TriggerDef {
             RepetitionInput::Repeat => Repetition::Repeat,
         },
         cooldown_ticks: inputs.cooldown_ticks,
-        offer: None,
+        offer: inputs.offer.as_ref().map(|offer| OfferDef {
+            expires_days: offer.expires_days,
+        }),
     }
 }
 

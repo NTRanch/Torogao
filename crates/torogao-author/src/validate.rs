@@ -478,10 +478,11 @@ fn lattice_findings(project: &Project) -> Vec<Refusal> {
 }
 
 /// The game section's ops, in authoring (dependency) order:
-/// the section itself, then the clock, stats, tiers, flags,
-/// values, and conditions, then characters and scenes, then
-/// effect sets, then the dialogue chains in (scene, ordinal)
-/// order, then triggers. The prose each prose-authoring op carries is
+/// the section itself, then the clock, stats, tiers, and
+/// flags, then characters and scenes, then values and
+/// conditions (both may read character stats), then effect
+/// sets, then the dialogue chains in (scene, ordinal) order,
+/// then triggers. The prose each prose-authoring op carries is
 /// read back from the stored sidecar entries; a reference with
 /// no entry synthesizes an empty text, which the gate refuses —
 /// and `game_findings` names the dangling reference itself.
@@ -532,18 +533,6 @@ fn game_ops(project: &Project) -> Vec<Op> {
             default: flag.default,
         })));
     }
-    for value in &game.values {
-        ops.push(Op::Game(GameOp::ValueDefine(ValueDefineInput {
-            id: value.id.clone(),
-            expr: crate::game::expr::expr_to_input(&value.expr),
-        })));
-    }
-    for condition in &game.conditions {
-        ops.push(Op::Game(GameOp::ConditionDefine(ConditionDefineInput {
-            id: condition.id.clone(),
-            expr: crate::game::expr::expr_to_input(&condition.expr),
-        })));
-    }
     for character in &game.characters {
         ops.push(Op::Game(GameOp::CharacterDefine(CharacterDefineInput {
             id: character.id.clone(),
@@ -567,6 +556,18 @@ fn game_ops(project: &Project) -> Vec<Op> {
                 crate::game::model::Presentation::Room => PresentationInput::Room,
                 crate::game::model::Presentation::Vn => PresentationInput::Vn,
             },
+        })));
+    }
+    for value in &game.values {
+        ops.push(Op::Game(GameOp::ValueDefine(ValueDefineInput {
+            id: value.id.clone(),
+            expr: crate::game::expr::expr_to_input(&value.expr),
+        })));
+    }
+    for condition in &game.conditions {
+        ops.push(Op::Game(GameOp::ConditionDefine(ConditionDefineInput {
+            id: condition.id.clone(),
+            expr: crate::game::expr::expr_to_input(&condition.expr),
         })));
     }
     for set in &game.effect_sets {
@@ -607,6 +608,12 @@ fn game_ops(project: &Project) -> Vec<Op> {
                 crate::game::model::Repetition::Repeat => RepetitionInput::Repeat,
             },
             cooldown_ticks: trigger.cooldown_ticks,
+            offer: trigger
+                .offer
+                .as_ref()
+                .map(|offer| crate::game::op::OfferInput {
+                    expires_days: offer.expires_days,
+                }),
         })));
     }
     ops
