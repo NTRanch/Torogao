@@ -106,9 +106,10 @@ pub fn run_verb(
             };
             return run_requests(root, base, &[request]);
         }
-        // An implemented read-only game verb (game_simulate)
-        // goes straight to the query router; it is not in the
-        // rig manifest and must not fall into its refusal.
+        // An implemented read-only game verb (game_simulate,
+        // thread_read) goes straight to the query router; it
+        // is not in the rig manifest and must not fall into
+        // its refusal.
         return match query(root, verb, inputs, resolve) {
             Ok(answer) => answer,
             Err(Failure::Refused(refusal)) => refused(verb, &refusal),
@@ -182,6 +183,13 @@ fn query(
             let doc =
                 crate::game::simulate::run_simulation(&loaded.project, &loaded.sha256, &input)
                     .map_err(Failure::Refused)?;
+            Ok(ok(doc))
+        }
+        "thread_read" => {
+            let input: crate::game::op::ThreadReadInput = parsed(verb, inputs)?;
+            let loaded = open(root)?;
+            let doc = crate::game::simulate::thread_messages(&loaded.project, &input.thread)
+                .map_err(Failure::Refused)?;
             Ok(ok(doc))
         }
         "project_inspect" => {

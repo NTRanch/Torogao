@@ -31,6 +31,8 @@ pub enum GameSlice {
     /// Phase 2 slice 6: visual-state delta table
     /// (Modification App parity).
     P26,
+    /// Phase 2 slice 7: message-thread family (D-461).
+    P27,
     /// AUTH-G slice G1 remainder (core records not yet needed by
     /// a Phase 2 slice).
     G1,
@@ -48,6 +50,7 @@ impl GameSlice {
             GameSlice::P23 => "Phase 2 slice 3 (deferral)",
             GameSlice::P24 => "Phase 2 slice 4 (expression table weights)",
             GameSlice::P26 => "Phase 2 slice 6 (visual-state deltas)",
+            GameSlice::P27 => "Phase 2 slice 7 (message threads)",
             GameSlice::G1 => "AUTH-G G1",
             GameSlice::G2 => "AUTH-G G2",
         }
@@ -86,9 +89,9 @@ const fn verb(
 }
 
 /// The AUTH-G manifest: the Amendment's 22 verbs plus the
-/// visual-state pair P2-6 adds (24), alphabetical within
-/// group.
-pub const GAME_MANIFEST: [GameVerbSpec; 24] = [
+/// visual-state pair P2-6 adds and the message-thread family
+/// P2-7 adds (27), alphabetical within group.
+pub const GAME_MANIFEST: [GameVerbSpec; 27] = [
     verb("clock_define", "game core", GameSlice::P22, true, true),
     verb("game_define", "game core", GameSlice::P21, true, true),
     verb(
@@ -133,6 +136,8 @@ pub const GAME_MANIFEST: [GameVerbSpec; 24] = [
     verb("scene_define", "game flow", GameSlice::P21, true, true),
     verb("scene_exit_define", "game flow", GameSlice::G2, true, true),
     verb("schedule_define", "game flow", GameSlice::G2, true, true),
+    verb("thread_create", "game flow", GameSlice::P27, true, true),
+    verb("thread_post", "game flow", GameSlice::P27, true, true),
     verb("trigger_define", "game flow", GameSlice::P22, true, true),
     verb(
         "appearance_define",
@@ -149,6 +154,7 @@ pub const GAME_MANIFEST: [GameVerbSpec; 24] = [
         true,
     ),
     verb("game_simulate", "game runtime", GameSlice::P22, false, true),
+    verb("thread_read", "game runtime", GameSlice::P27, false, true),
 ];
 
 /// The game-manifest row for a verb name.
@@ -576,6 +582,59 @@ pub struct SceneDefineInput {
     /// An effect set applied when the scene is left.
     #[serde(default)]
     pub on_exit: Option<String>,
+    /// The thread interlude the scene opens with (P2-7/D-461).
+    #[serde(default)]
+    pub thread_interlude: Option<ThreadInterludeInput>,
+}
+
+/// A scene's thread interlude, as input (P2-7/D-461).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThreadInterludeInput {
+    /// The thread id delivered at scene entry.
+    pub thread: String,
+    /// The authored reply delay, in milliseconds (consumed on
+    /// the deterministic step clock, never wall time).
+    #[serde(default)]
+    pub reply_delay_ms: u64,
+}
+
+/// `thread_create` inputs (P2-7/D-461).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThreadCreateInput {
+    /// Thread id.
+    pub id: String,
+    /// The cast members in the thread (character ids).
+    pub participants: Vec<String>,
+}
+
+/// `thread_post` inputs (P2-7/D-461). The message's prose is
+/// named by content key only: there is deliberately no text
+/// field, so an input carrying inline prose refuses as
+/// malformed under `deny_unknown_fields` (the C-7 law).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThreadPostInput {
+    /// The thread the message joins.
+    pub thread: String,
+    /// Message id (unique within the thread).
+    pub id: String,
+    /// The speaking character id (a thread participant).
+    pub speaker: String,
+    /// The content id of the message's prose.
+    pub line: String,
+    /// The authored position: the thread's current message
+    /// count (0-based, gapless).
+    pub at: u32,
+}
+
+/// `thread_read` inputs (P2-7/D-461, read-only).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThreadReadInput {
+    /// The thread id to read.
+    pub thread: String,
 }
 
 /// `dialogue_line_define` inputs. The prose travels with the op
@@ -1172,6 +1231,10 @@ pub enum GameOp {
     SceneBindRig(SceneBindRigInput),
     /// `scene_exit_define`.
     SceneExitDefine(SceneExitDefineInput),
+    /// `thread_create`.
+    ThreadCreate(ThreadCreateInput),
+    /// `thread_post`.
+    ThreadPost(ThreadPostInput),
 }
 
 fn typed<T: for<'de> Deserialize<'de>>(verb: &str, inputs: &Value) -> Result<T, Refusal> {
@@ -1208,6 +1271,8 @@ pub fn parse_game_op(verb: &str, inputs: &Value) -> Result<crate::op::Op, Refusa
         "stat_define" => GameOp::StatDefine(typed(verb, inputs)?),
         "stat_tier_define" => GameOp::StatTierDefine(typed(verb, inputs)?),
         "table_define" => GameOp::TableDefine(typed(verb, inputs)?),
+        "thread_create" => GameOp::ThreadCreate(typed(verb, inputs)?),
+        "thread_post" => GameOp::ThreadPost(typed(verb, inputs)?),
         "trigger_define" => GameOp::TriggerDefine(typed(verb, inputs)?),
         "value_define" => GameOp::ValueDefine(typed(verb, inputs)?),
         "visual_state_define" => GameOp::VisualStateDefine(typed(verb, inputs)?),
@@ -1240,6 +1305,8 @@ impl GameOp {
             GameOp::StatDefine(_) => "stat_define",
             GameOp::StatTierDefine(_) => "stat_tier_define",
             GameOp::TableDefine(_) => "table_define",
+            GameOp::ThreadCreate(_) => "thread_create",
+            GameOp::ThreadPost(_) => "thread_post",
             GameOp::TriggerDefine(_) => "trigger_define",
             GameOp::ValueDefine(_) => "value_define",
             GameOp::VisualStateDefine(_) => "visual_state_define",
@@ -1269,6 +1336,8 @@ impl GameOp {
             GameOp::StatDefine(inputs) => serde_json::to_value(inputs),
             GameOp::StatTierDefine(inputs) => serde_json::to_value(inputs),
             GameOp::TableDefine(inputs) => serde_json::to_value(inputs),
+            GameOp::ThreadCreate(inputs) => serde_json::to_value(inputs),
+            GameOp::ThreadPost(inputs) => serde_json::to_value(inputs),
             GameOp::TriggerDefine(inputs) => serde_json::to_value(inputs),
             GameOp::ValueDefine(inputs) => serde_json::to_value(inputs),
             GameOp::VisualStateDefine(inputs) => serde_json::to_value(inputs),
@@ -1287,8 +1356,8 @@ mod tests {
     use super::{GAME_MANIFEST, GameSlice};
 
     #[test]
-    fn game_manifest_has_24_verbs_alphabetical_within_group() {
-        assert_eq!(GAME_MANIFEST.len(), 24);
+    fn game_manifest_has_27_verbs_alphabetical_within_group() {
+        assert_eq!(GAME_MANIFEST.len(), 27);
         let mut groups: Vec<&str> = Vec::new();
         for spec in GAME_MANIFEST {
             if groups.last() != Some(&spec.group) {
@@ -1313,6 +1382,6 @@ mod tests {
             .count();
         assert_eq!(p21, 4);
         let implemented = GAME_MANIFEST.iter().filter(|spec| spec.implemented).count();
-        assert_eq!(implemented, 24);
+        assert_eq!(implemented, 27);
     }
 }

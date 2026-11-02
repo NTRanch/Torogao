@@ -29,6 +29,13 @@ pub const GAME_FORMAT_VERSION_FIRST: i64 = 1;
 pub const CONTENT_LOCALE_CANONICAL: &str = "en";
 /// The hash algorithm name saves and state hashes carry.
 pub const GAME_HASH_ALGO: &str = "sha256/1";
+/// One interpreter step's worth of authored thread reply
+/// delay, in milliseconds (P2-7/D-461): a thread interlude's
+/// `reply_delay_ms` is consumed on the deterministic step
+/// clock at this rate — one step per tick — never by wall
+/// time, so a 3,000 ms authored delay elapses over exactly
+/// three ticks.
+pub const THREAD_STEP_MS: u64 = 1_000;
 
 /// One authored game: the whole `game` section of a project.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -104,6 +111,9 @@ pub struct Game {
     /// The authored save schema, once defined (C-4/D-544).
     /// (Serialized only when present.)
     pub save_schema: Option<SaveSchema>,
+    /// Message threads, sorted by id. (Serialized only when
+    /// non-empty, like `streams`.)
+    pub threads: Vec<ThreadDef>,
     /// Per-character appearance tables, sorted by character
     /// id. (Serialized only when non-empty, like `streams`.)
     pub appearances: Vec<AppearanceDef>,
@@ -205,6 +215,11 @@ impl Game {
     /// The weighted table with this id.
     pub fn table(&self, id: &str) -> Option<&TableDef> {
         find(&self.tables, id, |item| &item.id)
+    }
+
+    /// The thread with this id.
+    pub fn thread(&self, id: &str) -> Option<&ThreadDef> {
+        find(&self.threads, id, |item| &item.id)
     }
 
     /// The tier bands over this stat, if authored.
@@ -599,6 +614,60 @@ pub struct SceneDef {
     /// An effect set applied when the scene is left (applied
     /// at the transition step, before the entry effects).
     pub on_exit: Option<String>,
+    /// The thread interlude this scene opens with (P2-7/D-461),
+    /// when the scene names one: at entry the thread's messages
+    /// deliver as one instant batch, then the authored reply
+    /// delay elapses on the step clock before a choice in the
+    /// scene may fire. Absent-means-absent, like the other
+    /// growth fields.
+    pub thread_interlude: Option<ThreadInterludeDef>,
+}
+
+/// A scene's thread interlude (P2-7/D-461): the thread whose
+/// messages deliver at scene entry, and the authored delay —
+/// in milliseconds, consumed on the deterministic step clock
+/// (see [`THREAD_STEP_MS`]), never wall time — that elapses
+/// after the batch before the scene's pending branch/choice
+/// fires.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ThreadInterludeDef {
+    /// The thread id delivered at entry.
+    pub thread: String,
+    /// The authored reply delay, in milliseconds.
+    pub reply_delay_ms: u64,
+}
+
+/// One message thread (P2-7/D-461): a cast conversation whose
+/// messages deliver as one batch when a scene's interlude
+/// names the thread. Messages live inside the thread record,
+/// in authored order.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ThreadDef {
+    /// Stable id.
+    pub id: String,
+    /// The cast members in the thread (character ids, sorted).
+    /// Only a participant may speak in the thread.
+    pub participants: Vec<String>,
+    /// The messages, in authored order (`at` is the position:
+    /// gapless, 0-based, like a dialogue chain's ordinal).
+    pub messages: Vec<ThreadMessage>,
+}
+
+/// One message in a thread. The record carries a content
+/// *reference* only; the prose lives in `content.ron` under
+/// that reference (the C-7 law: player-facing strings are
+/// content keys, never inline).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ThreadMessage {
+    /// Stable id, unique within the thread.
+    pub id: String,
+    /// The speaking character id: a participant of the thread.
+    pub speaker: String,
+    /// The content id of the message's prose in `content.ron`.
+    pub line: String,
+    /// The authored position: the message's index in the
+    /// thread (0-based, gapless).
+    pub at: u32,
 }
 
 /// One dialogue line. The record carries a text *reference*

@@ -567,6 +567,10 @@ fn game_section_codec_round_trips_every_record_shape() {
             entry_condition: None,
             on_enter: None,
             on_exit: None,
+            thread_interlude: Some(ThreadInterludeDef {
+                thread: "night_thread".to_string(),
+                reply_delay_ms: 3000,
+            }),
         }],
         dialogue: vec![DialogueLine {
             id: "line_1".to_string(),
@@ -749,6 +753,24 @@ fn game_section_codec_round_trips_every_record_shape() {
             target: "intro".to_string(),
             condition: None,
             effect_set: Some("apply_control".to_string()),
+        }],
+        threads: vec![ThreadDef {
+            id: "night_thread".to_string(),
+            participants: vec!["amy".to_string()],
+            messages: vec![
+                ThreadMessage {
+                    id: "msg_1".to_string(),
+                    speaker: "amy".to_string(),
+                    line: "text_msg_1".to_string(),
+                    at: 0,
+                },
+                ThreadMessage {
+                    id: "msg_2".to_string(),
+                    speaker: "amy".to_string(),
+                    line: "text_msg_2".to_string(),
+                    at: 1,
+                },
+            ],
         }],
         save_schema: Some(SaveSchema {
             version: 2,

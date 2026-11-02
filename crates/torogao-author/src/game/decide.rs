@@ -9,8 +9,8 @@ use crate::game::apply::{
     appearance_record, character_record, choice_record, clock_record, condition_record,
     dialogue_record, effect_set_record, ending_record, flag_record, gallery_record,
     save_schema_record, save_schema_version_of, scene_binding_record, scene_exit_record,
-    scene_record, schedule_record, stat_record, stream_record, table_record, tier_record,
-    trigger_record, value_record, visual_state_record,
+    scene_record, schedule_record, stat_record, stream_record, table_record, thread_message_record,
+    thread_record, tier_record, trigger_record, value_record, visual_state_record,
 };
 use crate::game::model::{
     AppearanceKind, GAME_FORMAT_VERSION, GAME_FORMAT_VERSION_FIRST, GAME_HASH_ALGO, Game,
@@ -23,7 +23,8 @@ use crate::game::op::{
     GalleryEntryDefineInput, GalleryUnlockInput, GameDefineInput, GameOp, RngStreamDefineInput,
     SaveSchemaDefineInput, SceneBindRigInput, SceneDefineInput, SceneExitDefineInput,
     ScheduleDefineInput, StatDefineInput, StatKindInput, StatTierDefineInput, TableDefineInput,
-    TriggerDefineInput, TriggerKindInput, ValueDefineInput, VisualStateDefineInput, WeightInput,
+    ThreadCreateInput, ThreadPostInput, TriggerDefineInput, TriggerKindInput, ValueDefineInput,
+    VisualStateDefineInput, WeightInput,
 };
 use crate::limits::{
     GAME_APPEARANCE_SLOTS_MAX, GAME_CATEGORY_TEXT_BYTES_MAX, GAME_CHARACTERS_MAX,
@@ -33,7 +34,9 @@ use crate::limits::{
     GAME_OFFER_DAYS_MAX, GAME_RNG_STREAMS_MAX, GAME_SAVE_SLOTS_MAX, GAME_SCENE_BINDINGS_MAX,
     GAME_SCENE_EXITS_MAX, GAME_SCENES_MAX, GAME_SCHEDULE_OVERRIDES_MAX, GAME_SCHEDULES_MAX,
     GAME_SLOTS_MAX, GAME_STATS_MAX, GAME_TABLE_OUTCOMES_MAX, GAME_TABLES_MAX,
-    GAME_TIER_THRESHOLDS_MAX, GAME_TRIGGERS_MAX, GAME_VALUES_MAX, GAME_VISUAL_STATES_MAX,
+    GAME_THREAD_DELAY_MS_MAX, GAME_THREAD_MESSAGES_MAX, GAME_THREAD_PARTICIPANTS_MAX,
+    GAME_THREADS_MAX, GAME_TIER_THRESHOLDS_MAX, GAME_TRIGGERS_MAX, GAME_VALUES_MAX,
+    GAME_VISUAL_STATES_MAX,
 };
 use crate::model::Project;
 use crate::refusal::{Refusal, RefusalClass, refuse};
@@ -213,7 +216,123 @@ pub fn decide_game(project: &Project, op: &GameOp) -> Result<Verdict, Refusal> {
             let game = section(project)?;
             decide_visual_state(game, inputs)
         }
+        GameOp::ThreadCreate(inputs) => {
+            let game = section(project)?;
+            decide_thread_create(game, inputs)
+        }
+        GameOp::ThreadPost(inputs) => decide_thread_post(project, inputs),
     }
+}
+
+fn decide_thread_create(game: &Game, inputs: &ThreadCreateInput) -> Result<Verdict, Refusal> {
+    check_id(&inputs.id, "thread id")?;
+    if inputs.participants.is_empty() {
+        return refuse(
+            RefusalClass::Malformed,
+            format!("thread '{}' names no participants", inputs.id),
+        );
+    }
+    check_count(
+        inputs.participants.len(),
+        GAME_THREAD_PARTICIPANTS_MAX,
+        "thread participants",
+    )?;
+    let mut seen: Vec<&str> = Vec::with_capacity(inputs.participants.len());
+    for participant in &inputs.participants {
+        check_id(participant, "thread participant")?;
+        if seen.contains(&participant.as_str()) {
+            return refuse(
+                RefusalClass::Malformed,
+                format!(
+                    "participant '{participant}' is named twice in thread '{}'",
+                    inputs.id
+                ),
+            );
+        }
+        seen.push(participant);
+        if game.character(participant).is_none() {
+            return dangling("participant character", participant);
+        }
+    }
+    let record = thread_record(inputs);
+    match game.thread(&inputs.id) {
+        Some(existing) if existing.participants == record.participants => Ok(Verdict::NoOp),
+        Some(_) => conflict(format!(
+            "thread '{}' already exists with different participants",
+            inputs.id
+        )),
+        None => {
+            check_count(game.threads.len() + 1, GAME_THREADS_MAX, "threads")?;
+            Ok(Verdict::Apply)
+        }
+    }
+}
+
+fn decide_thread_post(project: &Project, inputs: &ThreadPostInput) -> Result<Verdict, Refusal> {
+    let game = section(project)?;
+    check_id(&inputs.thread, "thread id")?;
+    check_id(&inputs.id, "message id")?;
+    check_id(&inputs.speaker, "message speaker")?;
+    check_id(&inputs.line, "message line reference")?;
+    let Some(thread) = game.thread(&inputs.thread) else {
+        return dangling("thread", &inputs.thread);
+    };
+    let record = thread_message_record(inputs);
+    if let Some(existing) = thread.messages.iter().find(|row| row.id == inputs.id) {
+        if *existing == record {
+            return Ok(Verdict::NoOp);
+        }
+        return conflict(format!(
+            "message '{}' in thread '{}' already exists with different inputs",
+            inputs.id, inputs.thread
+        ));
+    }
+    if !thread.participants.iter().any(|row| row == &inputs.speaker) {
+        return refuse(
+            RefusalClass::GameGraph,
+            format!(
+                "speaker '{}' is not a participant of thread '{}'",
+                inputs.speaker, inputs.thread
+            ),
+        );
+    }
+    if !project.content.iter().any(|entry| entry.id == inputs.line) {
+        return refuse(
+            RefusalClass::Dangling,
+            format!(
+                "line content '{}' is not in the content sidecar",
+                inputs.line
+            ),
+        );
+    }
+    if usize::try_from(inputs.at).unwrap_or(usize::MAX) < thread.messages.len() {
+        return refuse(
+            RefusalClass::GameGraph,
+            format!(
+                "position {} in thread '{}' is already taken ({} messages authored)",
+                inputs.at,
+                inputs.thread,
+                thread.messages.len()
+            ),
+        );
+    }
+    if usize::try_from(inputs.at).unwrap_or(usize::MAX) > thread.messages.len() {
+        return refuse(
+            RefusalClass::GameGraph,
+            format!(
+                "position {} in thread '{}' would leave a gap ({} messages authored)",
+                inputs.at,
+                inputs.thread,
+                thread.messages.len()
+            ),
+        );
+    }
+    check_count(
+        thread.messages.len() + 1,
+        GAME_THREAD_MESSAGES_MAX,
+        "thread messages",
+    )?;
+    Ok(Verdict::Apply)
 }
 
 fn game_table<T>(message: impl Into<String>) -> Result<T, Refusal> {
@@ -1002,6 +1121,21 @@ fn decide_scene(game: &Game, inputs: &SceneDefineInput) -> Result<Verdict, Refus
             if game.effect_set(set).is_none() {
                 return dangling(what, set);
             }
+        }
+    }
+    if let Some(interlude) = &inputs.thread_interlude {
+        check_id(&interlude.thread, "thread interlude thread")?;
+        if game.thread(&interlude.thread).is_none() {
+            return dangling("thread interlude thread", &interlude.thread);
+        }
+        if interlude.reply_delay_ms > GAME_THREAD_DELAY_MS_MAX {
+            return refuse(
+                RefusalClass::Range,
+                format!(
+                    "thread interlude reply delay {} ms exceeds {GAME_THREAD_DELAY_MS_MAX} ms",
+                    interlude.reply_delay_ms
+                ),
+            );
         }
     }
     let record = scene_record(inputs);

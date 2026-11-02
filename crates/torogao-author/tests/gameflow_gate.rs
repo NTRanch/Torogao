@@ -695,9 +695,9 @@ fn game_manifest_counts_the_flow_verbs_live() {
     // The trunk census: GAME_MANIFEST directly (verbs_doc()
     // covers the rig manifest only — the documented
     // adaptation of the branch's census test).
-    assert_eq!(GAME_MANIFEST.len(), 24);
+    assert_eq!(GAME_MANIFEST.len(), 27);
     let implemented = GAME_MANIFEST.iter().filter(|spec| spec.implemented).count();
-    assert_eq!(implemented, 24);
+    assert_eq!(implemented, 27);
     for name in [
         "choice_define",
         "ending_define",
@@ -706,6 +706,9 @@ fn game_manifest_counts_the_flow_verbs_live() {
         "schedule_define",
         "scene_bind_rig",
         "scene_exit_define",
+        "thread_create",
+        "thread_post",
+        "thread_read",
     ] {
         let spec = GAME_MANIFEST
             .iter()
@@ -1151,8 +1154,11 @@ fn plain_vn_projects_gain_no_flow_sections() {
         "schedules",
         "scene_bindings",
         "scene_exits",
+        "thread_interlude",
+        "threads",
         "GameChoice",
         "SaveSchema",
+        "Thread",
     ] {
         assert!(!bytes.contains(absent), "plain VN bytes carry {absent}");
     }

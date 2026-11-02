@@ -23,7 +23,8 @@ use crate::game::model::{
     Overflow, Presentation, Repetition, RngStreamDef, SaveContextPolicy, SaveSchema,
     SceneBindingDef, SceneDef, SceneExitDef, ScheduleDef, ScheduleOverride, ScheduleSlot,
     SlotHolds, StatDef, StatInitial, StatKind, StatScope, TableDef, TableOutcome, TableWeight,
-    TierDef, TriggerDef, TriggerKind, ValueDef, VisualStateDef,
+    ThreadDef, ThreadInterludeDef, ThreadMessage, TierDef, TriggerDef, TriggerKind, ValueDef,
+    VisualStateDef,
 };
 use crate::refusal::{Refusal, RefusalClass, refuse};
 use crate::ron::Ron;
@@ -210,7 +211,56 @@ pub(crate) fn game_to_ron(game: &Game) -> Ron {
             ),
         );
     }
+    // The P2-7 thread surface is absent-means-absent the same
+    // way: a project with no threads keeps its exact bytes.
+    if !game.threads.is_empty() {
+        insert_field(
+            &mut fields,
+            "triggers",
+            "threads",
+            Ron::List(game.threads.iter().map(thread_to_ron).collect()),
+        );
+    }
     record("Game", fields)
+}
+
+fn thread_to_ron(thread: &ThreadDef) -> Ron {
+    record(
+        "Thread",
+        vec![
+            ("id", text(&thread.id)),
+            (
+                "messages",
+                Ron::List(thread.messages.iter().map(thread_message_to_ron).collect()),
+            ),
+            ("participants", texts(&thread.participants)),
+        ],
+    )
+}
+
+fn thread_message_to_ron(message: &ThreadMessage) -> Ron {
+    record(
+        "ThreadMessage",
+        vec![
+            ("id", text(&message.id)),
+            ("at", Ron::Int(i64::from(message.at))),
+            ("line", text(&message.line)),
+            ("speaker", text(&message.speaker)),
+        ],
+    )
+}
+
+fn thread_interlude_to_ron(interlude: &ThreadInterludeDef) -> Ron {
+    record(
+        "ThreadInterlude",
+        vec![
+            (
+                "reply_delay_ms",
+                Ron::Int(i64::try_from(interlude.reply_delay_ms).unwrap_or(i64::MAX)),
+            ),
+            ("thread", text(&interlude.thread)),
+        ],
+    )
 }
 
 /// Inserts one field just before the named anchor field (or
@@ -500,6 +550,12 @@ fn scene_to_ron(scene: &SceneDef) -> Ron {
             .to_string(),
         ),
     ));
+    if scene.thread_interlude.is_some() {
+        fields.push((
+            "thread_interlude",
+            opt(scene.thread_interlude.as_ref(), thread_interlude_to_ron),
+        ));
+    }
     record("Scene", fields)
 }
 
@@ -1083,6 +1139,11 @@ pub(crate) fn game_from_ron(value: Ron) -> Result<Game, Refusal> {
         None => None,
         Some(value) => Some(save_schema_from_ron(value)?),
     };
+    let threads = match fields.try_take("threads") {
+        None => Vec::new(),
+        Some(Ron::List(items)) => collect(items, thread_from_ron)?,
+        Some(_) => return wrong_type("threads", "a list"),
+    };
     let alter_ego_veto = opt_string_absent(&mut fields, "alter_ego_veto")?;
     let tiers = collect(fields.list("tiers")?, tier_from_ron)?;
     let triggers = collect(fields.list("triggers")?, trigger_from_ron)?;
@@ -1115,6 +1176,7 @@ pub(crate) fn game_from_ron(value: Ron) -> Result<Game, Refusal> {
         scene_bindings: sorted_scene_bindings(scene_bindings)?,
         scene_exits: sorted_scene_exits(scene_exits)?,
         save_schema,
+        threads: sorted_unique(threads, "threads", |item| &item.id)?,
     };
     fields.done()?;
     Ok(game)
@@ -1191,6 +1253,45 @@ fn sorted_scene_exits(mut items: Vec<SceneExitDef>) -> Result<Vec<SceneExitDef>,
         }
     }
     Ok(items)
+}
+
+fn thread_from_ron(value: Ron) -> Result<ThreadDef, Refusal> {
+    let mut fields = open(value, "Thread")?;
+    let thread = ThreadDef {
+        id: fields.string("id")?,
+        participants: as_strings(fields.list("participants")?, "participants")?,
+        messages: collect(fields.list("messages")?, thread_message_from_ron)?,
+    };
+    fields.done()?;
+    Ok(thread)
+}
+
+fn thread_message_from_ron(value: Ron) -> Result<ThreadMessage, Refusal> {
+    let mut fields = open(value, "ThreadMessage")?;
+    let message = ThreadMessage {
+        id: fields.string("id")?,
+        speaker: fields.string("speaker")?,
+        line: fields.string("line")?,
+        at: fields.uint("at")?,
+    };
+    fields.done()?;
+    Ok(message)
+}
+
+fn thread_interlude_from_ron(value: Ron) -> Result<ThreadInterludeDef, Refusal> {
+    let mut fields = open(value, "ThreadInterlude")?;
+    let raw = fields.int("reply_delay_ms")?;
+    let interlude = ThreadInterludeDef {
+        thread: fields.string("thread")?,
+        reply_delay_ms: u64::try_from(raw).map_err(|_| {
+            Refusal::new(
+                RefusalClass::Range,
+                format!("reply_delay_ms {raw} is below 0"),
+            )
+        })?,
+    };
+    fields.done()?;
+    Ok(interlude)
 }
 
 fn save_schema_from_ron(value: Ron) -> Result<SaveSchema, Refusal> {
@@ -1655,6 +1756,12 @@ fn scene_from_ron(value: Ron) -> Result<SceneDef, Refusal> {
             _ => return wrong_type("participants", "a list"),
         },
     };
+    let thread_interlude = match fields.try_take("thread_interlude") {
+        None => None,
+        Some(Ron::Opt(None)) => None,
+        Some(Ron::Opt(Some(inner))) => Some(thread_interlude_from_ron(*inner)?),
+        Some(value) => Some(thread_interlude_from_ron(value)?),
+    };
     let scene = SceneDef {
         id: fields.string("id")?,
         presentation,
@@ -1663,6 +1770,7 @@ fn scene_from_ron(value: Ron) -> Result<SceneDef, Refusal> {
         entry_condition: opt_string_absent(&mut fields, "entry_condition")?,
         on_enter: opt_string_absent(&mut fields, "on_enter")?,
         on_exit: opt_string_absent(&mut fields, "on_exit")?,
+        thread_interlude,
     };
     fields.done()?;
     Ok(scene)

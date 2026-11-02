@@ -125,6 +125,15 @@ pub const GAME_TABLE_OUTCOMES_MAX: usize = 256;
 /// Maximum table-draw nesting inside one effect transaction
 /// (a drawn outcome's set may itself roll, bounded).
 pub const GAME_TABLE_NESTING_MAX: u32 = 8;
+/// Maximum authored reply delay on a thread interlude, in
+/// milliseconds (24 hours of authored time).
+pub const GAME_THREAD_DELAY_MS_MAX: u64 = 86_400_000;
+/// Maximum messages in one thread.
+pub const GAME_THREAD_MESSAGES_MAX: usize = 1024;
+/// Maximum participants in one thread.
+pub const GAME_THREAD_PARTICIPANTS_MAX: usize = 256;
+/// Maximum threads in one game.
+pub const GAME_THREADS_MAX: usize = 1024;
 /// Maximum thresholds in one tier definition.
 pub const GAME_TIER_THRESHOLDS_MAX: usize = 64;
 /// Maximum triggers in one game.

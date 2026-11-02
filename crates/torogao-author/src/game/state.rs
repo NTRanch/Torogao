@@ -13,7 +13,7 @@ use crate::codec::{open, opt, record, text, wrong_type};
 use crate::intake::sha256_hex;
 use crate::refusal::{Refusal, RefusalClass, refuse};
 use crate::ron::{Ron, emit_document};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// One stat instance's key: the stat id, plus the character for
 /// character-scoped stats.
@@ -94,6 +94,19 @@ pub struct GameState {
     pub line: Option<String>,
     /// Trigger runtime states by trigger id.
     pub triggers: BTreeMap<String, TriggerState>,
+    /// Threads already delivered by a scene interlude in this
+    /// run (P2-7/D-461): delivery is fire-once, so re-entering
+    /// the scene does not re-deliver the batch. Emitted only
+    /// when non-empty (absent means absent), so a state
+    /// document from before threads existed keeps its bytes
+    /// and its hash.
+    pub threads_delivered: BTreeSet<String>,
+    /// The thread reply delay still to elapse, in milliseconds
+    /// (P2-7/D-461): set at interlude delivery, consumed on
+    /// the step clock at `THREAD_STEP_MS` per tick, and while
+    /// it is positive no choice in the interlude's scene may
+    /// fire. Emitted only when positive, like the ending.
+    pub thread_delay_ms: u64,
     /// Transient: a scene transition awaiting the tick's
     /// transition step. Never serialized.
     pub pending_scene: Option<String>,
@@ -224,6 +237,29 @@ pub fn state_to_ron(state: &GameState) -> Ron {
                         })
                         .collect(),
                 ),
+            ),
+        );
+    }
+    // The thread partition rides only once a thread has been
+    // delivered or a delay is pending, under the same
+    // absent-means-absent law as the rng partition.
+    if !state.threads_delivered.is_empty() || state.thread_delay_ms > 0 {
+        let pos = fields
+            .iter()
+            .position(|(name, _)| *name == "triggers")
+            .unwrap_or(fields.len());
+        fields.insert(
+            pos,
+            (
+                "threads_delivered",
+                Ron::List(state.threads_delivered.iter().map(|id| text(id)).collect()),
+            ),
+        );
+        fields.insert(
+            pos,
+            (
+                "thread_delay_ms",
+                Ron::Int(i64::try_from(state.thread_delay_ms).unwrap_or(i64::MAX)),
             ),
         );
     }
@@ -399,6 +435,30 @@ pub fn state_from_ron(value: Ron, format_version: i64) -> Result<GameState, Refu
         None => None,
         Some(value) => Some(crate::codec::as_string(value, "ending")?),
     };
+    // The thread partition is absent in state documents
+    // written before threads existed; it reads as empty.
+    let mut threads_delivered = BTreeSet::new();
+    match fields.try_take("threads_delivered") {
+        None => {}
+        Some(Ron::List(items)) => {
+            for item in items {
+                let id = crate::codec::as_string(item, "threads_delivered")?;
+                if !threads_delivered.insert(id.clone()) {
+                    return refuse(
+                        RefusalClass::Malformed,
+                        format!("state carries delivered thread '{id}' twice"),
+                    );
+                }
+            }
+        }
+        Some(_) => return wrong_type("threads_delivered", "a list"),
+    }
+    let thread_delay_ms = match fields.try_take("thread_delay_ms") {
+        None => 0,
+        Some(Ron::Int(value)) => u64::try_from(value)
+            .map_err(|_| Refusal::new(RefusalClass::Range, "thread_delay_ms is below 0"))?,
+        Some(_) => return wrong_type("thread_delay_ms", "an integer"),
+    };
     let state = GameState {
         tick: as_u64(fields.take("tick")?, "tick")?,
         day: fields.int("day")?,
@@ -412,6 +472,8 @@ pub fn state_from_ron(value: Ron, format_version: i64) -> Result<GameState, Refu
         ending,
         line: fields.opt_string("line")?,
         triggers,
+        threads_delivered,
+        thread_delay_ms,
         pending_scene: None,
         emitted: Vec::new(),
     };

@@ -134,6 +134,12 @@ pub fn sweep(project: &Project) -> Result<Project, Refusal> {
                             .iter()
                             .any(|option| option.label_ref == entry.id)
                 })
+                || game.threads.iter().any(|thread| {
+                    thread
+                        .messages
+                        .iter()
+                        .any(|message| message.line == entry.id)
+                })
         });
         if !referenced && rebuilt.content.iter().all(|e| e.id != entry.id) {
             let position = rebuilt
@@ -717,6 +723,9 @@ fn game_ops(project: &Project) -> Vec<Op> {
         if let Some(set) = &scene.on_exit {
             deps.push(format!("set:{set}"));
         }
+        if let Some(interlude) = &scene.thread_interlude {
+            deps.push(format!("thread:{}", interlude.thread));
+        }
         push(
             format!("scene:{}", scene.id),
             deps,
@@ -732,8 +741,51 @@ fn game_ops(project: &Project) -> Vec<Op> {
                 entry_condition: scene.entry_condition.clone(),
                 on_enter: scene.on_enter.clone(),
                 on_exit: scene.on_exit.clone(),
+                thread_interlude: scene.thread_interlude.as_ref().map(|interlude| {
+                    crate::game::op::ThreadInterludeInput {
+                        thread: interlude.thread.clone(),
+                        reply_delay_ms: interlude.reply_delay_ms,
+                    }
+                }),
             })),
         );
+    }
+    for thread in &game.threads {
+        let mut deps = vec!["game".to_string()];
+        for participant in &thread.participants {
+            deps.push(format!("character:{participant}"));
+        }
+        push(
+            format!("thread:{}", thread.id),
+            deps,
+            Op::Game(GameOp::ThreadCreate(
+                crate::game::apply::thread_create_input_of(thread),
+            )),
+        );
+        for message in &thread.messages {
+            let mut deps = vec![
+                "game".to_string(),
+                format!("thread:{}", thread.id),
+                format!("character:{}", message.speaker),
+            ];
+            // The message's prose lives in the sidecar, authored
+            // by whichever character or dialogue op carries that
+            // content id (C-7: decide() requires the entry to
+            // exist), so the post rebuilds after them.
+            if let Some(character) = game.characters.iter().find(|c| c.name_ref == message.line) {
+                deps.push(format!("character:{}", character.id));
+            }
+            if let Some(line) = game.dialogue.iter().find(|l| l.text_ref == message.line) {
+                deps.push(format!("line:{}", line.id));
+            }
+            push(
+                format!("threadmsg:{}:{}", thread.id, message.id),
+                deps,
+                Op::Game(GameOp::ThreadPost(
+                    crate::game::apply::thread_post_input_of(&thread.id, message),
+                )),
+            );
+        }
     }
     for value in &game.values {
         let mut deps = vec!["game".to_string()];
@@ -1255,6 +1307,63 @@ fn game_findings(project: &Project) -> Vec<Refusal> {
                             scene.id
                         ),
                     );
+                }
+            }
+            if let Some(interlude) = &scene.thread_interlude
+                && game.thread(&interlude.thread).is_none()
+            {
+                dangling(
+                    &mut findings,
+                    format!(
+                        "scene '{}' thread interlude thread '{}' does not exist",
+                        scene.id, interlude.thread
+                    ),
+                );
+            }
+        }
+        for thread in &game.threads {
+            for participant in &thread.participants {
+                if game.character(participant).is_none() {
+                    dangling(
+                        &mut findings,
+                        format!(
+                            "thread '{}' participant '{participant}' does not exist",
+                            thread.id
+                        ),
+                    );
+                }
+            }
+            for (index, message) in thread.messages.iter().enumerate() {
+                if !thread
+                    .participants
+                    .iter()
+                    .any(|row| row == &message.speaker)
+                {
+                    findings.push(Refusal::new(
+                        RefusalClass::GameGraph,
+                        format!(
+                            "thread '{}' message '{}' speaker '{}' is not a participant",
+                            thread.id, message.id, message.speaker
+                        ),
+                    ));
+                }
+                if !has_entry(&message.line) {
+                    dangling(
+                        &mut findings,
+                        format!(
+                            "thread '{}' message '{}' line reference '{}' has no content.ron entry",
+                            thread.id, message.id, message.line
+                        ),
+                    );
+                }
+                if usize::try_from(message.at).unwrap_or(usize::MAX) != index {
+                    findings.push(Refusal::new(
+                        RefusalClass::GameGraph,
+                        format!(
+                            "thread '{}' message '{}' sits at position {} but is authored at {}",
+                            thread.id, message.id, message.at, index
+                        ),
+                    ));
                 }
             }
         }

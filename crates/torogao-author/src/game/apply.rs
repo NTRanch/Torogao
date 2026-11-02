@@ -13,8 +13,8 @@ use crate::game::model::{
     GAME_FORMAT_VERSION, GalleryEntryDef, GalleryUnlock, Game, Lifetime, Migration, OfferDef,
     Overflow, Repetition, RngStreamDef, SaveContextPolicy, SaveSchema, SceneBindingDef, SceneDef,
     SceneExitDef, ScheduleDef, ScheduleOverride, ScheduleSlot, SlotHolds, StatDef, StatInitial,
-    StatKind, StatScope, TableDef, TableOutcome, TableWeight, TierDef, TriggerDef, TriggerKind,
-    ValueDef, VisualStateDef,
+    StatKind, StatScope, TableDef, TableOutcome, TableWeight, ThreadDef, ThreadInterludeDef,
+    ThreadMessage, TierDef, TriggerDef, TriggerKind, ValueDef, VisualStateDef,
 };
 use crate::game::op::{
     AppearanceDefineInput, AppearanceEntryInput, AppearanceKindInput, AppearanceSlotInput,
@@ -25,8 +25,8 @@ use crate::game::op::{
     OverflowInput, PresentationInput, RepetitionInput, RngStreamDefineInput, SavePolicyInput,
     SaveSchemaDefineInput, SceneBindRigInput, SceneDefineInput, SceneExitDefineInput,
     ScheduleDefineInput, StatDefineInput, StatKindInput, StatScopeInput, StatTierDefineInput,
-    TableDefineInput, TableOutcomeInput, TriggerDefineInput, TriggerKindInput, ValueDefineInput,
-    VisualStateDefineInput, WeightInput,
+    TableDefineInput, TableOutcomeInput, ThreadCreateInput, ThreadPostInput, TriggerDefineInput,
+    TriggerKindInput, ValueDefineInput, VisualStateDefineInput, WeightInput,
 };
 use crate::model::{Project, locate};
 use crate::refusal::Refusal;
@@ -81,6 +81,58 @@ pub(crate) fn scene_record(inputs: &SceneDefineInput) -> SceneDef {
         entry_condition: inputs.entry_condition.clone(),
         on_enter: inputs.on_enter.clone(),
         on_exit: inputs.on_exit.clone(),
+        thread_interlude: inputs
+            .thread_interlude
+            .as_ref()
+            .map(|interlude| ThreadInterludeDef {
+                thread: interlude.thread.clone(),
+                reply_delay_ms: interlude.reply_delay_ms,
+            }),
+    }
+}
+
+/// The thread record a `thread_create` produces (participants
+/// sorted, so the record is canonical however the author
+/// ordered the inputs; messages start empty and grow by
+/// `thread_post`).
+pub(crate) fn thread_record(inputs: &ThreadCreateInput) -> ThreadDef {
+    let mut participants = inputs.participants.clone();
+    participants.sort();
+    ThreadDef {
+        id: inputs.id.clone(),
+        participants,
+        messages: Vec::new(),
+    }
+}
+
+/// The inputs a stored thread's creation rebuilds from (for
+/// the validation sweep).
+pub(crate) fn thread_create_input_of(record: &ThreadDef) -> ThreadCreateInput {
+    ThreadCreateInput {
+        id: record.id.clone(),
+        participants: record.participants.clone(),
+    }
+}
+
+/// The message record a `thread_post` produces.
+pub(crate) fn thread_message_record(inputs: &ThreadPostInput) -> ThreadMessage {
+    ThreadMessage {
+        id: inputs.id.clone(),
+        speaker: inputs.speaker.clone(),
+        line: inputs.line.clone(),
+        at: inputs.at,
+    }
+}
+
+/// The inputs a stored message rebuilds from (for the
+/// validation sweep).
+pub(crate) fn thread_post_input_of(thread: &str, message: &ThreadMessage) -> ThreadPostInput {
+    ThreadPostInput {
+        thread: thread.to_string(),
+        id: message.id.clone(),
+        speaker: message.speaker.clone(),
+        line: message.line.clone(),
+        at: message.at,
     }
 }
 
@@ -712,6 +764,24 @@ pub fn apply_game(project: &mut Project, op: &GameOp) -> Result<(), Refusal> {
             let record = scene_exit_record(inputs);
             let game = game_mut(project);
             upsert_scene_exit(&mut game.scene_exits, record);
+        }
+        GameOp::ThreadCreate(inputs) => {
+            let record = thread_record(inputs);
+            let game = game_mut(project);
+            // Decide admits a create only for a fresh id (an
+            // identical re-create is a no-op, a differing one a
+            // conflict), so this upsert always inserts.
+            upsert(&mut game.threads, record, |t| &t.id);
+        }
+        GameOp::ThreadPost(inputs) => {
+            let record = thread_message_record(inputs);
+            let game = game_mut(project);
+            let thread = game
+                .threads
+                .iter_mut()
+                .find(|row| row.id == inputs.thread)
+                .expect("decide() admitted a post to a missing thread");
+            thread.messages.push(record);
         }
     }
     if let Some(game) = &mut project.game {

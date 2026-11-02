@@ -32,7 +32,14 @@
 //! 5. Apply the scene transition (the last `enter_scene` of the
 //!    tick wins): the old scene's `on_exit` effect set
 //!    transacts, then the new scene's `on_enter` effect set
-//!    transacts, then `on_enter_scene` triggers fire.
+//!    transacts, then `on_enter_scene` triggers fire. A scene
+//!    naming a thread interlude (P2-7/D-461) delivers its
+//!    thread's messages as one instant batch at entry — once
+//!    per run — and arms the authored reply delay; the delay
+//!    is consumed at step 1 of the following ticks on the step
+//!    clock (`THREAD_STEP_MS` per tick, never wall time), and
+//!    while it remains, a choice input in that scene refuses:
+//!    the pending branch/choice fires only after it elapses.
 //! 6. Ending rules evaluate in ascending priority order
 //!    (priorities are unique across endings, enforced at
 //!    define time); the first whose condition holds sets the
@@ -47,7 +54,8 @@
 use crate::game::codec::emit_content;
 use crate::game::expr::{Value as ExprValue, eval, eval_condition};
 use crate::game::model::{
-    Atom, ChoiceOrigin, ChoiceTarget, Game, OfferDef, Repetition, TriggerDef, TriggerKind,
+    Atom, ChoiceOrigin, ChoiceTarget, Game, OfferDef, Repetition, THREAD_STEP_MS, TriggerDef,
+    TriggerKind,
 };
 use crate::game::op::{LogEntryInput, SimulateInput};
 use crate::game::state::{GameState, StatKey, TriggerState, state_hash};
@@ -324,6 +332,9 @@ fn tick(
         age_offers(game, state, events);
         clear_deferrals(state);
     }
+    // Step 1d: the thread reply delay (P2-7/D-461) is consumed
+    // on the same step clock, every tick, rollover or not.
+    age_thread_delay(state, events);
     let mut fired: BTreeSet<String> = BTreeSet::new();
     // Step 2: due on_tick triggers.
     fire_tick_triggers(game, state, events, &mut fired)?;
@@ -348,6 +359,7 @@ fn tick(
             .first()
             .map(|line| line.id.clone());
         events.push(format!("tick {}: entered scene '{scene}'", state.tick));
+        deliver_thread_interlude(game, state, &scene, events);
         if let Some(set) = game.scene(&scene).and_then(|def| def.on_enter.clone()) {
             apply_named_set(game, state, &set, events, &format!("scene '{scene}' entry"));
         }
@@ -439,6 +451,90 @@ fn age_offers(game: &Game, state: &mut GameState, events: &mut Vec<String>) {
             settle_trigger(state, def);
         }
     }
+}
+
+/// Step 1d: consume one step of the pending thread reply
+/// delay (P2-7/D-461). The delay is authored data in
+/// milliseconds; the step clock consumes `THREAD_STEP_MS`
+/// per tick, so the wait is a pure function of the run —
+/// never of wall time.
+fn age_thread_delay(state: &mut GameState, events: &mut Vec<String>) {
+    if state.thread_delay_ms == 0 {
+        return;
+    }
+    state.thread_delay_ms = state.thread_delay_ms.saturating_sub(THREAD_STEP_MS);
+    if state.thread_delay_ms == 0 {
+        events.push(format!("tick {}: thread reply delay elapsed", state.tick));
+    }
+}
+
+/// Step 5 (thread interlude, P2-7/D-461): a scene naming an
+/// interlude delivers its thread's messages as ONE instant
+/// batch, in authored order, and arms the authored reply
+/// delay. Delivery is fire-once per run: re-entering the
+/// scene after the thread was delivered delivers nothing and
+/// re-arms nothing.
+fn deliver_thread_interlude(
+    game: &Game,
+    state: &mut GameState,
+    scene: &str,
+    events: &mut Vec<String>,
+) {
+    let Some(interlude) = game
+        .scene(scene)
+        .and_then(|def| def.thread_interlude.as_ref())
+    else {
+        return;
+    };
+    if state.threads_delivered.contains(&interlude.thread) {
+        return;
+    }
+    let Some(thread) = game.thread(&interlude.thread) else {
+        events.push(format!(
+            "tick {}: scene '{scene}' names missing thread '{}'",
+            state.tick, interlude.thread
+        ));
+        return;
+    };
+    state.threads_delivered.insert(thread.id.clone());
+    let ids: Vec<&str> = thread.messages.iter().map(|row| row.id.as_str()).collect();
+    events.push(format!(
+        "tick {}: thread '{}' delivered [{}]",
+        state.tick,
+        thread.id,
+        ids.join(", ")
+    ));
+    if interlude.reply_delay_ms > 0 {
+        state.thread_delay_ms = interlude.reply_delay_ms;
+        events.push(format!(
+            "tick {}: thread '{}' reply delay {} ms pending",
+            state.tick, thread.id, interlude.reply_delay_ms
+        ));
+    }
+}
+
+/// The `thread_read` verb body (P2-7/D-461, read-only): the
+/// thread's messages in authored order, each with its speaker
+/// and content key — the prose itself stays in `content.ron`.
+pub fn thread_messages(project: &Project, thread_id: &str) -> Result<Value, Refusal> {
+    let game = crate::game::decide::section(project)?;
+    let Some(thread) = game.thread(thread_id) else {
+        return refuse(
+            RefusalClass::UnknownTarget,
+            format!("thread '{thread_id}' does not exist"),
+        );
+    };
+    Ok(json!({
+        "messages": thread.messages.iter().map(|row| json!({
+            "at": row.at,
+            "id": row.id,
+            "line": row.line,
+            "speaker": row.speaker,
+        })).collect::<Vec<_>>(),
+        "participants": thread.participants,
+        "result": "ok",
+        "thread": thread.id,
+    }))
 }
 
 /// Step 1c: deferrals are per-day; a new day clears them.
@@ -964,6 +1060,25 @@ fn apply_choice_input(
                 entry.id,
                 choice.scene,
                 state.current_scene.as_deref().unwrap_or("<none>")
+            ),
+        );
+    }
+    // A thread interlude's reply delay gates the scene's
+    // choices (P2-7/D-461): the pending branch/choice fires
+    // only after the authored delay has elapsed on the step
+    // clock. A thread choice is otherwise an ordinary choice:
+    // it routes through this same machinery (conditions,
+    // presented order, effect transaction, veto).
+    if state.thread_delay_ms > 0
+        && game
+            .scene(&choice.scene)
+            .is_some_and(|def| def.thread_interlude.is_some())
+    {
+        return refuse(
+            RefusalClass::GameGraph,
+            format!(
+                "input picks choice '{}', but the thread reply delay has {} ms left on the step clock",
+                entry.id, state.thread_delay_ms
             ),
         );
     }

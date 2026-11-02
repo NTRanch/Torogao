@@ -14,7 +14,12 @@
 //! interpreter; P2-3 the deferral semantics on the same tick
 //! contract (one format bump for the pair, already stamped in
 //! [`model::GAME_FORMAT_VERSION`], with the v1 → v2 migration a
-//! named, tested step).
+//! named, tested step). Slice P2-7 adds the message-thread
+//! family (D-461): thread records and their verbs, plus the
+//! interpreter's interlude semantics — instant batch delivery
+//! at scene entry, an authored reply delay consumed on the
+//! step clock, and thread choices through the ordinary choice
+//! machinery.
 
 pub mod apply;
 pub mod codec;
