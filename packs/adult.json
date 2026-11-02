@@ -1,7 +1,7 @@
 {
   "format": "torogao-pack/1",
   "name": "adult",
-  "version": "1.0.0",
+  "version": "0.4.0",
   "lane": "adult",
   "title": "Adult lane pack",
   "ratingRules": {
