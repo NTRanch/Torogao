@@ -21,8 +21,8 @@ use crate::apply::step;
 use crate::codec::emit_project;
 use crate::decide::{Observed, check_id};
 use crate::intake::sha256_hex;
-use crate::limits::{ASSETS_MAX, IMAGE_SIDE_MAX, PROVENANCE_TEXT_BYTES_MAX};
-use crate::model::{Asset, DeformerKind, Keyforms, Project};
+use crate::limits::{ASSETS_MAX, AUDIO_BINDINGS_MAX, IMAGE_SIDE_MAX, PROVENANCE_TEXT_BYTES_MAX};
+use crate::model::{Asset, AudioBinding, AudioBindingKind, DeformerKind, Keyforms, Project};
 use crate::op::{
     ArtBindInput, BlendInput, ClipInput, Coordinate, DeformerParentInput, DrawInput,
     ExpressionDefineInput, FormInput, GlueInput, GridInput, IdInput, InitInput, KeyformSetInput,
@@ -110,7 +110,48 @@ pub fn sweep(project: &Project) -> Result<Project, Refusal> {
         }
     }
     rebuilt.variant_sets = project.variant_sets.clone();
+    // Audio bindings have no authoring ops yet (their verbs
+    // are slice A3), so the sweep checks each stored row and
+    // carries the section across, as it does for assets and
+    // variant sets. Lock-state admission is NOT checked here:
+    // unadmitted bindings are legal while authoring; the
+    // shippable rule is `crate::voice::validate_shippable`.
+    for binding in &project.audio_bindings {
+        check_audio_binding(binding)?;
+    }
+    if project.audio_bindings.len() > AUDIO_BINDINGS_MAX {
+        return Err(Refusal::new(RefusalClass::Range, "too many audio bindings"));
+    }
+    rebuilt.audio_bindings = project.audio_bindings.clone();
     Ok(rebuilt)
+}
+
+/// The facts a stored audio-binding row must carry: the row id
+/// and its character in id syntax; the torori delivery
+/// references present and within the provenance text bound
+/// (they are torori-namespace strings, never id-checked here).
+fn check_audio_binding(binding: &AudioBinding) -> Result<(), Refusal> {
+    check_id(&binding.id, "audio binding id")?;
+    match &binding.kind {
+        AudioBindingKind::Voice(voice) => {
+            check_id(&voice.character, "character id")?;
+            for (what, value) in [
+                ("identity", &voice.delivery.identity),
+                ("record", &voice.delivery.record),
+            ] {
+                if value.is_empty() || value.len() > PROVENANCE_TEXT_BYTES_MAX {
+                    return Err(Refusal::new(
+                        RefusalClass::Malformed,
+                        format!(
+                            "audio binding '{}' delivery {what} reference is empty or over the bound",
+                            binding.id
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn check_text(text: &str, what: &str) -> Result<(), Refusal> {

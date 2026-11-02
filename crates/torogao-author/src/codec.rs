@@ -10,10 +10,11 @@
 //! are `TG-AUTH-MALFORMED`.
 
 use crate::model::{
-    ArtBind, Asset, AssetKind, Blend, Clip, Completion, Consent, Deformer, DeformerKind, Draw,
-    Expression, ExpressionValue, ExpressionVisibility, Glue, Header, Keyform, Keyforms, Mesh,
-    MeshForm, PROJECT_FORMAT, PROJECT_FORMAT_VERSION, Parameter, Part, Point, PoseEntry, Project,
-    Provenance, Rect, Rotation, RotationForm, Stamp, VariantSet, Warp, WarpForm,
+    ArtBind, Asset, AssetKind, AudioBinding, AudioBindingKind, Blend, Clip, Completion, Consent,
+    Deformer, DeformerKind, DeliveryRef, Draw, Expression, ExpressionValue, ExpressionVisibility,
+    Glue, Header, Keyform, Keyforms, Mesh, MeshForm, PROJECT_FORMAT, PROJECT_FORMAT_VERSION,
+    Parameter, Part, Point, PoseEntry, Project, Provenance, Rect, Rotation, RotationForm, Stamp,
+    VariantSet, VoiceBinding, Warp, WarpForm,
 };
 use crate::refusal::{Refusal, RefusalClass, refuse};
 use crate::ron::{Ron, emit_document, parse_document};
@@ -78,50 +79,67 @@ fn rect_to_ron(rect: &Rect) -> Ron {
 }
 
 fn project_to_ron(project: &Project) -> Ron {
-    record(
-        "Project",
-        vec![
-            ("header", header_to_ron(&project.header)),
-            (
-                "assets",
-                Ron::List(project.assets.iter().map(asset_to_ron).collect()),
+    let mut sections = vec![
+        ("header", header_to_ron(&project.header)),
+        (
+            "assets",
+            Ron::List(project.assets.iter().map(asset_to_ron).collect()),
+        ),
+    ];
+    // The audio-bindings section is emitted only when the
+    // project carries rows: absent sections are absent, never
+    // empty scaffolding (Amendment 2 §Item G4), so a project
+    // without bindings re-emits byte-identically to before the
+    // section existed.
+    if !project.audio_bindings.is_empty() {
+        sections.push((
+            "audio_bindings",
+            Ron::List(
+                project
+                    .audio_bindings
+                    .iter()
+                    .map(audio_binding_to_ron)
+                    .collect(),
             ),
-            (
-                "deformers",
-                Ron::List(project.deformers.iter().map(deformer_to_ron).collect()),
+        ));
+    }
+    sections.extend([
+        (
+            "deformers",
+            Ron::List(project.deformers.iter().map(deformer_to_ron).collect()),
+        ),
+        (
+            "expressions",
+            Ron::List(project.expressions.iter().map(expression_to_ron).collect()),
+        ),
+        (
+            "glues",
+            Ron::List(project.glues.iter().map(glue_to_ron).collect()),
+        ),
+        (
+            "parameters",
+            Ron::List(project.parameters.iter().map(parameter_to_ron).collect()),
+        ),
+        (
+            "parts",
+            Ron::List(project.parts.iter().map(part_to_ron).collect()),
+        ),
+        (
+            "pose",
+            Ron::List(project.pose.iter().map(pose_to_ron).collect()),
+        ),
+        (
+            "variant_sets",
+            Ron::List(
+                project
+                    .variant_sets
+                    .iter()
+                    .map(variant_set_to_ron)
+                    .collect(),
             ),
-            (
-                "expressions",
-                Ron::List(project.expressions.iter().map(expression_to_ron).collect()),
-            ),
-            (
-                "glues",
-                Ron::List(project.glues.iter().map(glue_to_ron).collect()),
-            ),
-            (
-                "parameters",
-                Ron::List(project.parameters.iter().map(parameter_to_ron).collect()),
-            ),
-            (
-                "parts",
-                Ron::List(project.parts.iter().map(part_to_ron).collect()),
-            ),
-            (
-                "pose",
-                Ron::List(project.pose.iter().map(pose_to_ron).collect()),
-            ),
-            (
-                "variant_sets",
-                Ron::List(
-                    project
-                        .variant_sets
-                        .iter()
-                        .map(variant_set_to_ron)
-                        .collect(),
-                ),
-            ),
-        ],
-    )
+        ),
+    ]);
+    record("Project", sections)
 }
 
 fn header_to_ron(header: &Header) -> Ron {
@@ -497,6 +515,29 @@ fn variant_set_to_ron(set: &VariantSet) -> Ron {
     )
 }
 
+fn audio_binding_to_ron(binding: &AudioBinding) -> Ron {
+    match &binding.kind {
+        AudioBindingKind::Voice(voice) => record(
+            "AudioBinding",
+            vec![
+                ("id", text(&binding.id)),
+                ("character", text(&voice.character)),
+                (
+                    "delivery",
+                    record(
+                        "DeliveryRef",
+                        vec![
+                            ("identity", text(&voice.delivery.identity)),
+                            ("record", text(&voice.delivery.record)),
+                        ],
+                    ),
+                ),
+                ("kind", Ron::Ident("Voice".to_string())),
+            ],
+        ),
+    }
+}
+
 // ---- parsing helpers --------------------------------------------
 
 /// A struct record being consumed field by field.
@@ -570,6 +611,20 @@ impl Fields {
         match self.take(key)? {
             Ron::List(items) => Ok(items),
             _ => wrong_type(key, "a list"),
+        }
+    }
+
+    /// A section that may be absent from the record (absent
+    /// sections are absent, never empty scaffolding): the
+    /// field's items when present, an empty vec when the field
+    /// is not there at all.
+    fn list_if_present(&mut self, key: &str) -> Result<Vec<Ron>, Refusal> {
+        match self.items.iter().position(|(name, _)| name == key) {
+            Some(index) => match self.items.remove(index).1 {
+                Ron::List(items) => Ok(items),
+                _ => wrong_type(key, "a list"),
+            },
+            None => Ok(Vec::new()),
         }
     }
 
@@ -677,6 +732,10 @@ fn project_from_ron(value: Ron) -> Result<Project, Refusal> {
     let mut fields = open(value, "Project")?;
     let header = header_from_ron(fields.take("header")?)?;
     let assets = collect(fields.list("assets")?, asset_from_ron)?;
+    let audio_bindings = collect(
+        fields.list_if_present("audio_bindings")?,
+        audio_binding_from_ron,
+    )?;
     let deformers = collect(fields.list("deformers")?, deformer_from_ron)?;
     let expressions = collect(fields.list("expressions")?, expression_from_ron)?;
     let glues = collect(fields.list("glues")?, glue_from_ron)?;
@@ -688,6 +747,7 @@ fn project_from_ron(value: Ron) -> Result<Project, Refusal> {
     Ok(Project {
         header,
         assets: sorted_unique(assets, "assets", |item| &item.id)?,
+        audio_bindings: sorted_unique(audio_bindings, "audio bindings", |item| &item.id)?,
         deformers: sorted_unique(deformers, "deformers", |item| &item.id)?,
         expressions: sorted_unique(expressions, "expressions", |item| &item.id)?,
         glues: sorted_unique(glues, "glues", |item| &item.id)?,
@@ -1075,4 +1135,27 @@ fn variant_set_from_ron(value: Ron) -> Result<VariantSet, Refusal> {
     };
     fields.done()?;
     Ok(set)
+}
+
+fn audio_binding_from_ron(value: Ron) -> Result<AudioBinding, Refusal> {
+    let mut fields = open(value, "AudioBinding")?;
+    let id = fields.string("id")?;
+    let kind = match fields.ident("kind")?.as_str() {
+        "Voice" => {
+            let character = fields.string("character")?;
+            let mut delivery_fields = open(fields.take("delivery")?, "DeliveryRef")?;
+            let delivery = DeliveryRef {
+                identity: delivery_fields.string("identity")?,
+                record: delivery_fields.string("record")?,
+            };
+            delivery_fields.done()?;
+            AudioBindingKind::Voice(VoiceBinding {
+                character,
+                delivery,
+            })
+        }
+        other => return unknown_variant("kind", other),
+    };
+    fields.done()?;
+    Ok(AudioBinding { id, kind })
 }
