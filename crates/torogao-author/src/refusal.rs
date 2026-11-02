@@ -47,6 +47,12 @@ pub enum RefusalClass {
     UnknownKind,
     /// An op names a target id that does not exist.
     UnknownTarget,
+    /// A shippable-build check cannot show a voice binding's
+    /// torori identity as ear-admitted: its lock state in the
+    /// supplied registry snapshot is below `EarAdmitted`, the
+    /// identity is absent from the snapshot, or no snapshot was
+    /// supplied at all (the check refuses closed).
+    VoiceUnadmitted,
 }
 
 impl RefusalClass {
@@ -66,6 +72,7 @@ impl RefusalClass {
             RefusalClass::Stamp => "TG-AUTH-STAMP",
             RefusalClass::UnknownKind => "TG-AUTH-UNKNOWN-KIND",
             RefusalClass::UnknownTarget => "TG-AUTH-UNKNOWN-TARGET",
+            RefusalClass::VoiceUnadmitted => "TG-AUTH-VOICE-UNADMITTED",
         }
     }
 }
