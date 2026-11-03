@@ -91,6 +91,11 @@ impl Theme {
 /// Draws the whole frame: header, the screen's body, status bar.
 pub fn draw(frame: &mut Frame, app: &App) {
     let theme = theme(app.accent);
+    let size = frame.area();
+    // The companion pane redraws its viewport record each
+    // frame; screens without the pane leave it cleared, so a
+    // stale rect can never place a blast (D-639).
+    app.companion_viewport.set(None);
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -98,17 +103,17 @@ pub fn draw(frame: &mut Frame, app: &App) {
             Constraint::Min(5),
             Constraint::Length(2),
         ])
-        .split(frame.area());
+        .split(size);
     draw_header(frame, rows[0], app, theme);
     match app.screen {
-        Screen::Projects => draw_projects(frame, rows[1], app, theme),
+        Screen::Projects => draw_projects(frame, rows[1], app, theme, size),
         Screen::Browse => draw_browse(frame, rows[1], app, theme),
         Screen::Detail => draw_detail(frame, rows[1], app, theme),
         Screen::Console => draw_console(frame, rows[1], app, theme),
         Screen::Validate => draw_validate(frame, rows[1], app, theme),
         Screen::Replay => draw_replay(frame, rows[1], app, theme),
         Screen::Preview => draw_preview(frame, rows[1], app, theme),
-        Screen::Media => draw_media(frame, rows[1], app, theme),
+        Screen::Media => draw_media(frame, rows[1], app, theme, size),
         Screen::Files => draw_files(frame, rows[1], app, theme),
         Screen::Editor => draw_editor(frame, rows[1], app, theme),
         Screen::Settings => draw_settings(frame, rows[1], app, theme),
@@ -117,12 +122,63 @@ pub fn draw(frame: &mut Frame, app: &App) {
     draw_status(frame, rows[2], app, theme);
 }
 
+/// DEC-2's sparkle cycle (D-639): the glyph at position
+/// `pos` advances every 3 ticks; positions are phase-offset
+/// so they never blink in unison.
+const SPARKLE_CYCLE: [char; 4] = ['✦', '·', '✧', '·'];
+
+fn sparkle(tick: u64, pos: usize) -> char {
+    SPARKLE_CYCLE[((tick / 3) as usize + pos) % SPARKLE_CYCLE.len()]
+}
+
+/// DEC-1's breath factor (D-639): the selection background
+/// steps toward the black ground over a 20-tick (2.0 s)
+/// cycle — accent, 75%, 55%, 75%.
+fn breath_factor(tick: u64) -> u8 {
+    [100, 75, 55, 75][((tick % 20) / 5) as usize]
+}
+
+/// Scales an RGB colour toward black by `factor` percent;
+/// non-RGB colours pass through (the breath reads on the
+/// register's accent either way).
+fn breath(color: Color, factor: u8) -> Color {
+    match color {
+        Color::Rgb(r, g, b) => Color::Rgb(
+            (u16::from(r) * u16::from(factor) / 100) as u8,
+            (u16::from(g) * u16::from(factor) / 100) as u8,
+            (u16::from(b) * u16::from(factor) / 100) as u8,
+        ),
+        other => other,
+    }
+}
+
+/// The list selection style: DEC-1's breathing background
+/// on the two list screens (Projects, Browse) while
+/// decorations are on; the theme's flat selection anywhere
+/// else.
+fn selected_style(theme: Theme, app: &App) -> Style {
+    if app.decorations_on && matches!(app.screen, Screen::Projects | Screen::Browse) {
+        Style::default()
+            .fg(Color::Black)
+            .bg(breath(theme.accent, breath_factor(app.tick_count)))
+            .add_modifier(Modifier::BOLD)
+    } else {
+        theme.selected()
+    }
+}
+
+/// DEC-3's pulse phase (D-639): the status bar's mode
+/// segment is dim for 5 ticks out of every 10.
+fn status_dimmed(tick: u64) -> bool {
+    (tick / 5) % 2 == 1
+}
+
 fn draw_header(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
     let project = match &app.open {
         Some(open) => format!("{} · sha {}", open.project.header.name, short(&open.sha256)),
         None => "no project open".to_string(),
     };
-    let line = Line::from(vec![
+    let mut spans = vec![
         Span::styled(
             " TOROGAO TUI ",
             Style::default()
@@ -135,7 +191,20 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
             "1 Browse  2 Verbs  3 Validate  4 Replay  5 Preview  6 Files  7 Settings  8 Media  ? Help",
             theme.text(),
         ),
-    ]);
+    ];
+    // DEC-2 (D-639): three sparkles on the title rule,
+    // Projects and Media headers only.
+    if app.decorations_on && matches!(app.screen, Screen::Projects | Screen::Media) {
+        spans.push(Span::raw("  "));
+        for pos in 0..3 {
+            spans.push(Span::styled(
+                sparkle(app.tick_count, pos).to_string(),
+                Style::default().fg(theme.heading),
+            ));
+            spans.push(Span::raw(" "));
+        }
+    }
+    let line = Line::from(spans);
     frame.render_widget(
         Paragraph::new(line).block(theme.block("torogao — terminal front-end", false)),
         area,
@@ -164,19 +233,54 @@ fn draw_status(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
     } else {
         "NORMAL"
     };
+    // DEC-3 (D-639): the mode segment pulses bold/dim on
+    // the work screens — the only animation there. Projects
+    // and Media carry the companion and sparkles instead,
+    // and Browse is DEC-1's screen.
+    let dimmed = app.decorations_on
+        && !matches!(
+            app.screen,
+            Screen::Projects | Screen::Media | Screen::Browse
+        )
+        && status_dimmed(app.tick_count);
     let line = Line::from(vec![
         Span::styled(
             format!(" {mode} "),
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(theme.accent).add_modifier(if dimmed {
+                Modifier::DIM
+            } else {
+                Modifier::BOLD
+            }),
         ),
         Span::styled(app.status.clone(), theme.text()),
     ]);
     frame.render_widget(Paragraph::new(line), area);
 }
 
-fn draw_projects(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
+fn draw_projects(frame: &mut Frame, area: Rect, app: &App, theme: Theme, size: Rect) {
+    // D-639: with the companion pane, the front door splits
+    // [30% list | Min detail | 28 cols companion]. Below the
+    // threshold (or with the toggle off) the list takes the
+    // whole body, exactly the pre-slice rendering.
+    if app.companion_on && crate::companion::pane_visible(Screen::Projects, size.width, size.height)
+    {
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(30),
+                Constraint::Min(0),
+                Constraint::Length(crate::companion::PANE_COLS),
+            ])
+            .split(area);
+        draw_project_list(frame, cols[0], app, theme);
+        draw_project_detail(frame, cols[1], app, theme);
+        draw_companion_pane(frame, cols[2], app, theme);
+    } else {
+        draw_project_list(frame, area, app, theme);
+    }
+}
+
+fn draw_project_list(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
     let items: Vec<ListItem> = app
         .projects
         .iter()
@@ -200,7 +304,7 @@ fn draw_projects(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
     );
     let list = List::new(items)
         .block(theme.block(&title, true))
-        .highlight_style(theme.selected())
+        .highlight_style(selected_style(theme, app))
         .highlight_symbol("> ");
     let mut state = ListState::default();
     state.select(if app.projects.is_empty() {
@@ -209,6 +313,127 @@ fn draw_projects(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
         Some(app.project_sel)
     });
     frame.render_stateful_widget(list, area, &mut state);
+}
+
+/// The middle column of the pane layout: the selected
+/// project's detail — the name and the full path the list
+/// row truncates.
+fn draw_project_detail(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
+    let lines = match app.projects.get(app.project_sel) {
+        Some(path) => {
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            vec![
+                Line::from(Span::styled(
+                    name,
+                    Style::default()
+                        .fg(theme.heading)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Line::from(Span::styled(path.display().to_string(), theme.text())),
+                Line::from(Span::styled(
+                    "project.ron present — Enter opens it".to_string(),
+                    Style::default().fg(theme.dim),
+                )),
+            ]
+        }
+        None => vec![Line::from(Span::styled(
+            "(no projects under the root — n creates one)".to_string(),
+            Style::default().fg(theme.dim),
+        ))],
+    };
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(theme.block("PROJECT", false))
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+/// The companion pane (D-639): Prima's current frame in a
+/// bordered pane with the graphics mode named at its foot —
+/// the same honesty line the Media screen shows. In
+/// direct-graphics modes the pixels arrive as a post-draw
+/// blast over the recorded rect; in half-block mode the
+/// frame is sampled into the buffer here.
+fn draw_companion_pane(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
+    let block = theme.block("PRIMA — companion", false);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(inner);
+    let image_area = rows[0];
+    match app.media.mode {
+        crate::media::GraphicsMode::HalfBlock => {
+            if let Some(raster) = &app.companion.raster {
+                let lines = halfblock_grid_lines(raster, image_area.width, image_area.height);
+                frame.render_widget(Paragraph::new(lines), image_area);
+            } else {
+                frame.render_widget(
+                    Paragraph::new(Line::from(Span::styled(
+                        "(companion frame unavailable)".to_string(),
+                        Style::default().fg(theme.dim),
+                    ))),
+                    image_area,
+                );
+            }
+        }
+        _ => {
+            app.companion_viewport.set(Some((
+                image_area.x,
+                image_area.y,
+                image_area.width,
+                image_area.height,
+            )));
+        }
+    }
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            format!(
+                "graphics: {} — {}",
+                app.media.mode.label(),
+                app.media.mode_reason
+            ),
+            Style::default().fg(theme.dim),
+        ))),
+        rows[1],
+    );
+}
+
+/// Samples `raster` into half-block lines centred in a
+/// `width` × `height` cell budget (the companion pane's
+/// in-buffer rendering; the Media viewport keeps its own
+/// zoom-aware path).
+fn halfblock_grid_lines(
+    raster: &image::RgbaImage,
+    width: u16,
+    height: u16,
+) -> Vec<Line<'static>> {
+    let grid = crate::media::halfblock_cells(raster, width, height);
+    let grid_width = grid.first().map_or(0, |row| row.len());
+    let pad_left = usize::from(width).saturating_sub(grid_width) / 2;
+    let pad_top = usize::from(height).saturating_sub(grid.len()) / 2;
+    let mut lines: Vec<Line> = Vec::new();
+    for _ in 0..pad_top {
+        lines.push(Line::from(""));
+    }
+    for row in &grid {
+        let mut spans = vec![Span::raw(" ".repeat(pad_left))];
+        for (top, bottom) in row {
+            spans.push(Span::styled(
+                "▀",
+                Style::default()
+                    .fg(Color::Rgb(top.0, top.1, top.2))
+                    .bg(Color::Rgb(bottom.0, bottom.1, bottom.2)),
+            ));
+        }
+        lines.push(Line::from(spans));
+    }
+    lines
 }
 
 fn two_panes(area: Rect) -> (Rect, Rect) {
@@ -240,7 +465,7 @@ fn draw_browse(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
             "FAMILIES — Tab/h/l switches pane",
             !app.browse_records_focus,
         ))
-        .highlight_style(theme.selected())
+        .highlight_style(selected_style(theme, app))
         .highlight_symbol("> ");
     let mut state = ListState::default();
     state.select(Some(app.family_sel));
@@ -267,7 +492,7 @@ fn draw_browse(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
     );
     let list = List::new(records)
         .block(theme.block(&title, app.browse_records_focus))
-        .highlight_style(theme.selected())
+        .highlight_style(selected_style(theme, app))
         .highlight_symbol("> ");
     let mut state = ListState::default();
     state.select(if records_len(app) == 0 {
@@ -596,7 +821,7 @@ fn draw_preview(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
     );
 }
 
-fn draw_media(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
+fn draw_media(frame: &mut Frame, area: Rect, app: &App, theme: Theme, size: Rect) {
     let (left, right) = two_panes(area);
     let tag = |kind: crate::media::MediaKind| match kind {
         crate::media::MediaKind::Image => "IMG",
@@ -645,7 +870,26 @@ fn draw_media(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(6)])
         .split(right);
-    let viewport = halves[0].inner(ratatui::layout::Margin {
+    // D-639: the companion pane docks right of the preview
+    // area, splitting the viewport region [Min preview |
+    // 28 cols companion]; the list and the INFO pane below
+    // are untouched. Below the width threshold the preview
+    // takes the whole region, exactly the pre-slice layout.
+    let (preview_area, companion_area) =
+        if app.companion_on && crate::companion::pane_visible(Screen::Media, size.width, size.height)
+        {
+            let split = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Min(0),
+                    Constraint::Length(crate::companion::PANE_COLS),
+                ])
+                .split(halves[0]);
+            (split[0], Some(split[1]))
+        } else {
+            (halves[0], None)
+        };
+    let viewport = preview_area.inner(ratatui::layout::Margin {
         horizontal: 1,
         vertical: 1,
     });
@@ -662,7 +906,7 @@ fn draw_media(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
             )));
             frame.render_widget(
                 Paragraph::new("").block(theme.block(&title, true)),
-                halves[0],
+                preview_area,
             );
             let _ = raster;
         }
@@ -692,7 +936,7 @@ fn draw_media(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
             }
             frame.render_widget(
                 Paragraph::new(lines).block(theme.block(&title, true)),
-                halves[0],
+                preview_area,
             );
         }
         (None, Some(error)) => {
@@ -704,7 +948,7 @@ fn draw_media(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
                 )))
                 .block(theme.block(&title, true))
                 .wrap(Wrap { trim: false }),
-                halves[0],
+                preview_area,
             );
         }
         (None, None) => {
@@ -715,9 +959,12 @@ fn draw_media(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
                     Style::default().fg(theme.dim),
                 )))
                 .block(theme.block(&title, true)),
-                halves[0],
+                preview_area,
             );
         }
+    }
+    if let Some(pane) = companion_area {
+        draw_companion_pane(frame, pane, app, theme);
     }
     let mut info_lines = vec![Line::from(Span::styled(
         format!(
@@ -859,6 +1106,20 @@ fn draw_settings(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
             theme.text(),
         )),
         Line::from(Span::styled(
+            format!(
+                "companion pane: {}  (c toggles) — Prima on the front door and Media",
+                if app.companion_on { "on" } else { "off" }
+            ),
+            theme.text(),
+        )),
+        Line::from(Span::styled(
+            format!(
+                "decorations: {}  (d toggles) — selection breath, title sparkle, status pulse",
+                if app.decorations_on { "on" } else { "off" }
+            ),
+            theme.text(),
+        )),
+        Line::from(Span::styled(
             "settings persist to ~/.config/torogao/tui-settings.txt".to_string(),
             Style::default().fg(theme.dim),
         )),
@@ -901,4 +1162,63 @@ fn draw_help(frame: &mut Frame, area: Rect, theme: Theme) {
 /// The first 12 chars of a hash, for display.
 fn short(hash: &str) -> String {
     hash.chars().take(12).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn breath_factor_steps_the_twenty_tick_cycle() {
+        assert_eq!(breath_factor(0), 100);
+        assert_eq!(breath_factor(4), 100);
+        assert_eq!(breath_factor(5), 75);
+        assert_eq!(breath_factor(9), 75);
+        assert_eq!(breath_factor(10), 55);
+        assert_eq!(breath_factor(14), 55);
+        assert_eq!(breath_factor(15), 75);
+        assert_eq!(breath_factor(19), 75);
+        assert_eq!(breath_factor(20), 100);
+    }
+
+    #[test]
+    fn breath_scales_rgb_toward_black() {
+        assert_eq!(breath(Color::Rgb(255, 46, 136), 100), Color::Rgb(255, 46, 136));
+        assert_eq!(breath(Color::Rgb(255, 46, 136), 55), Color::Rgb(140, 25, 74));
+        assert_eq!(breath(Color::White, 55), Color::White);
+    }
+
+    #[test]
+    fn sparkle_advances_every_three_ticks_with_phase_offsets() {
+        // Same position, one full glyph cycle per 12 ticks.
+        assert_eq!(sparkle(0, 0), '✦');
+        assert_eq!(sparkle(2, 0), '✦');
+        assert_eq!(sparkle(3, 0), '·');
+        assert_eq!(sparkle(6, 0), '✧');
+        assert_eq!(sparkle(9, 0), '·');
+        assert_eq!(sparkle(12, 0), '✦');
+        // Positions never blink in unison: at any tick the
+        // three positions are not all the same glyph phase.
+        for tick in 0..24 {
+            let phases: Vec<usize> = (0..3)
+                .map(|pos| ((tick / 3) as usize + pos) % SPARKLE_CYCLE.len())
+                .collect();
+            assert!(
+                phases[0] != phases[1] && phases[1] != phases[2],
+                "tick {tick}: {phases:?}"
+            );
+        }
+        // The glyph at a position is its cycle entry.
+        assert_eq!(sparkle(0, 1), SPARKLE_CYCLE[1]);
+        assert_eq!(sparkle(0, 2), SPARKLE_CYCLE[2]);
+    }
+
+    #[test]
+    fn status_pulse_alternates_every_five_ticks() {
+        assert!(!status_dimmed(0));
+        assert!(!status_dimmed(4));
+        assert!(status_dimmed(5));
+        assert!(status_dimmed(9));
+        assert!(!status_dimmed(10));
+    }
 }

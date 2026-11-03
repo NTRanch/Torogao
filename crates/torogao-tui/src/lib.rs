@@ -7,7 +7,9 @@
 //! deterministic replay inspection, a companion/persona
 //! structured readout, a media preview (artwork, model
 //! renders and video frames over terminal graphics with a
-//! half-block fallback), the project's text files (Addition V:
+//! half-block fallback), a companion pane on the front door
+//! and the media screen (Prima's baked Daydream loop, with
+//! three bounded decorations, D-639), the project's text files (Addition V:
 //! files are the project), settings, and this keymap — every
 //! action reachable by keyboard, mouse input used nowhere.
 //!
@@ -22,6 +24,7 @@
 #![deny(missing_docs)]
 
 pub mod app;
+pub mod companion;
 pub mod media;
 pub mod records;
 pub mod textbuf;
@@ -75,6 +78,14 @@ pub const KEYMAP: &[(&str, &str)] = &[
     ("Ctrl+U (editing)", "clear the editor / inputs buffer"),
     ("Ctrl+S (file editor)", "save through the parse gate"),
     ("a (Settings)", "toggle the accent register (Pink / Mono)"),
+    (
+        "c (Settings)",
+        "toggle the companion pane (Prima on Projects / Media)",
+    ),
+    (
+        "d (Settings)",
+        "toggle decorations (selection breath, title sparkle, status pulse)",
+    ),
     ("p (Settings)", "change the projects root (prompt)"),
     ("y / n (discard prompt)", "confirm / keep editing"),
 ];

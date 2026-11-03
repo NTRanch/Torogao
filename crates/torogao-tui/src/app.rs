@@ -11,6 +11,7 @@
 //! a project's files are edited as text, Addition V — with the
 //! replay screen surfacing any divergence a text edit causes).
 
+use crate::companion::CompanionState;
 use crate::media::{GraphicsMode, MediaItem, MediaKind, ModelRender, VideoInfo};
 use crate::records::{self, Family};
 use crate::textbuf::TextBuf;
@@ -303,6 +304,31 @@ pub struct App {
     /// Set by the view through interior mutability (draw takes
     /// `&App`), read by the app when building a blast.
     pub media_viewport: Cell<Option<(u16, u16, u16, u16)>>,
+    /// The companion pane's animation state (D-639).
+    pub companion: CompanionState,
+    /// Whether the companion pane is enabled (Settings,
+    /// default on; persisted).
+    pub companion_on: bool,
+    /// Whether the decorations (DEC-1/2/3) are enabled
+    /// (Settings, default on; persisted).
+    pub decorations_on: bool,
+    /// Event-loop turns since start; the decorations' clock
+    /// and the companion's cadence both read it.
+    pub tick_count: u64,
+    /// The companion pane's image rect `(x, y, width, height)`
+    /// as last drawn; the companion blast places itself
+    /// there. Set by the view through interior mutability,
+    /// like `media_viewport`.
+    pub companion_viewport: Cell<Option<(u16, u16, u16, u16)>>,
+    /// Blast signatures the composed [`App::graphics_blast`]
+    /// last handed the shell, `(media, companion)`; 0 = none.
+    /// Lets an unchanged component stay out of the composed
+    /// text when the other component changes.
+    pub blast_stage: Cell<(u64, u64)>,
+    /// Whether the terminal currently holds focus. Focus
+    /// loss freezes the companion (advance + blast refresh);
+    /// terminals that never report focus never clear this.
+    pub focused: bool,
     /// File rows for the open project.
     pub files: Vec<FileRow>,
     /// Selected file row.
@@ -341,6 +367,13 @@ impl App {
             preview: PreviewState::default(),
             media: MediaState::default(),
             media_viewport: Cell::new(None),
+            companion: CompanionState::default(),
+            companion_on: true,
+            decorations_on: true,
+            tick_count: 0,
+            companion_viewport: Cell::new(None),
+            blast_stage: Cell::new((0, 0)),
+            focused: true,
             files: Vec::new(),
             file_sel: 0,
             editor: None,
@@ -1096,7 +1129,21 @@ impl App {
     /// is re-extracted when the displayed frame changes —
     /// playback stays time-true, skipping frames the
     /// extractor cannot keep up with rather than slowing.
+    ///
+    /// The same turn advances the companion (D-639): one
+    /// frame per turn — the shell's 100 ms poll is the 10 fps
+    /// cadence — while the front door or the Media screen is
+    /// showing, the toggle is on, and the terminal holds
+    /// focus. Any other screen stops the advance; the blast
+    /// is withdrawn by [`App::refresh_companion_blast`].
     pub fn tick(&mut self) {
+        self.tick_count = self.tick_count.wrapping_add(1);
+        if self.companion_on && matches!(self.screen, Screen::Projects | Screen::Media) {
+            if self.focused {
+                self.companion.advance();
+            }
+            self.companion.ensure_raster();
+        }
         if self.screen != Screen::Media {
             return;
         }
@@ -1223,16 +1270,97 @@ impl App {
         self.media.blast = Some((signature, text));
     }
 
+    /// Records the terminal's focus state. Focus loss
+    /// freezes the companion: no advance (in [`App::tick`])
+    /// and no blast refresh (in
+    /// [`App::refresh_companion_blast`]); the last frame
+    /// stands. Focus gain resumes both.
+    pub fn set_focused(&mut self, focused: bool) {
+        self.focused = focused;
+    }
+
+    /// (Re)builds the companion's graphics blast for the
+    /// current frame + pane rect when the mode is a
+    /// direct-graphics protocol. The companion lives only on
+    /// Projects and Media; anywhere else, or with the toggle
+    /// off, the blast is withdrawn so no image lingers over
+    /// another screen. Focus loss freezes the blast as it
+    /// stands rather than withdrawing it.
+    pub fn refresh_companion_blast(&mut self) {
+        if !self.companion_on
+            || !matches!(self.screen, Screen::Projects | Screen::Media)
+            || self.media.mode == GraphicsMode::HalfBlock
+        {
+            self.companion.blast = None;
+            return;
+        }
+        if !self.focused {
+            return;
+        }
+        let Some(rect) = self.companion_viewport.get() else {
+            self.companion.blast = None;
+            return;
+        };
+        let mode = self.media.mode;
+        self.companion.build_blast(mode, rect);
+    }
+
     /// The blast the shell should write after this frame's
-    /// draw, when its signature is new.
+    /// draw, when its signature is new. Composes the Media
+    /// blast and the companion blast (D-639): the text
+    /// carries only the components whose signatures changed
+    /// since the last composed blast, except that a changed
+    /// Media blast always re-places the companion after
+    /// itself — the Media kitty blast opens by deleting
+    /// every placed image, the companion's included. The
+    /// composed signature covers both components, so the
+    /// shell's change check stays exact.
     pub fn graphics_blast(&self) -> Option<GraphicsBlast> {
-        self.media
-            .blast
-            .as_ref()
-            .map(|(signature, text)| GraphicsBlast {
-                signature: *signature,
-                text: text.clone(),
-            })
+        let media_sig = self.media.blast.as_ref().map_or(0, |(sig, _)| *sig);
+        let comp_sig = self.companion.blast.as_ref().map_or(0, |(sig, _)| *sig);
+        if media_sig == 0 && comp_sig == 0 {
+            self.blast_stage.set((0, 0));
+            return None;
+        }
+        let (staged_media, staged_comp) = self.blast_stage.get();
+        let media_text = self.media.blast.as_ref().map(|(_, text)| text.as_str());
+        let comp_text = self.companion.blast.as_ref().map(|(_, text)| text.as_str());
+        let dropped =
+            (staged_media != 0 && media_sig == 0) || (staged_comp != 0 && comp_sig == 0);
+        let mut text = String::new();
+        if dropped && self.media.mode == GraphicsMode::Kitty {
+            // A component vanished while the other survives:
+            // delete every placed image, then re-place the
+            // survivor — nothing lingers, nothing is lost.
+            text.push_str(crate::media::kitty_delete());
+            if let Some(media_text) = media_text {
+                // The Media text opens with its own delete;
+                // a second delete is a no-op, and the full
+                // text re-places the image exactly.
+                text.push_str(media_text);
+            }
+            if let Some(comp_text) = comp_text {
+                text.push_str(comp_text);
+            }
+        } else if media_sig != staged_media {
+            if let Some(media_text) = media_text {
+                text.push_str(media_text);
+            }
+            if let Some(comp_text) = comp_text {
+                text.push_str(comp_text);
+            }
+        } else if comp_sig != staged_comp {
+            if let Some(comp_text) = comp_text {
+                text.push_str(comp_text);
+            }
+        }
+        self.blast_stage.set((media_sig, comp_sig));
+        let mut signature: u64 = 0xcbf2_9ce4_8422_2325;
+        for value in [media_sig, comp_sig] {
+            signature ^= value;
+            signature = signature.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        Some(GraphicsBlast { signature, text })
     }
 
     fn media_key(&mut self, key: KeyEvent) {
@@ -1477,6 +1605,25 @@ impl App {
                 self.save_settings();
                 self.status = "accent register toggled (saved)".to_string();
             }
+            KeyCode::Char('c') => {
+                self.companion_on = !self.companion_on;
+                if !self.companion_on {
+                    self.companion.blast = None;
+                }
+                self.save_settings();
+                self.status = format!(
+                    "companion pane {} (saved)",
+                    if self.companion_on { "on" } else { "off" }
+                );
+            }
+            KeyCode::Char('d') => {
+                self.decorations_on = !self.decorations_on;
+                self.save_settings();
+                self.status = format!(
+                    "decorations {} (saved)",
+                    if self.decorations_on { "on" } else { "off" }
+                );
+            }
             KeyCode::Char('p') => {
                 let mut buf = TextBuf::new();
                 for ch in self.projects_root.display().to_string().chars() {
@@ -1489,40 +1636,62 @@ impl App {
         }
     }
 
-    /// Persists accent + projects root to the settings file
+    /// Persists accent + projects root + the companion and
+    /// decorations toggles to the settings file
     /// (`$XDG_CONFIG_HOME/torogao/tui-settings.txt`, else
     /// `~/.config/torogao/tui-settings.txt`). Best-effort: a
     /// failed write is reported on the status line, never hidden.
     pub fn save_settings(&self) {
         let Some(path) = settings_path() else { return };
-        let text = format!(
-            "accent = {}\nprojects_root = {}\n",
-            match self.accent {
-                Accent::Pink => "pink",
-                Accent::Mono => "mono",
-            },
-            self.projects_root.display()
-        );
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        if std::fs::write(&path, text).is_err() {
+        if std::fs::write(&path, self.settings_text()).is_err() {
             // The caller surfaces state; the shell reports at exit.
         }
     }
 
-    /// Loads the persisted accent, when a settings file exists.
+    /// The settings file's full text for the current state:
+    /// the pure half of the round-trip the settings tests
+    /// exercise.
+    fn settings_text(&self) -> String {
+        format!(
+            "accent = {}\nprojects_root = {}\ncompanion = {}\ndecorations = {}\n",
+            match self.accent {
+                Accent::Pink => "pink",
+                Accent::Mono => "mono",
+            },
+            self.projects_root.display(),
+            if self.companion_on { "on" } else { "off" },
+            if self.decorations_on { "on" } else { "off" },
+        )
+    }
+
+    /// Loads the persisted settings, when a settings file
+    /// exists. Absent or unknown keys keep their defaults —
+    /// the toggles default on, matching the file's
+    /// absence-tolerant loading.
     pub fn load_settings(&mut self) {
         let Some(path) = settings_path() else { return };
         let Ok(text) = std::fs::read_to_string(&path) else {
             return;
         };
+        self.apply_settings_text(&text);
+    }
+
+    /// Applies parsed settings text: the pure half of the
+    /// load path.
+    fn apply_settings_text(&mut self, text: &str) {
         for line in text.lines() {
             if let Some(value) = line.strip_prefix("accent = ") {
                 self.accent = match value.trim() {
                     "mono" => Accent::Mono,
                     _ => Accent::Pink,
                 };
+            } else if let Some(value) = line.strip_prefix("companion = ") {
+                self.companion_on = value.trim() != "off";
+            } else if let Some(value) = line.strip_prefix("decorations = ") {
+                self.decorations_on = value.trim() != "off";
             }
         }
     }
@@ -1711,4 +1880,82 @@ fn settings_path() -> Option<PathBuf> {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
     Some(base.join("torogao").join("tui-settings.txt"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An app over an empty temp projects root.
+    fn temp_app() -> App {
+        let root =
+            std::env::temp_dir().join(format!("torogao-tui-app-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&root);
+        App::new(root)
+    }
+
+    #[test]
+    fn settings_round_trip_both_toggles() {
+        let mut app = temp_app();
+        app.accent = Accent::Mono;
+        app.companion_on = false;
+        app.decorations_on = false;
+        let text = app.settings_text();
+        let mut back = temp_app();
+        assert!(back.companion_on && back.decorations_on);
+        back.apply_settings_text(&text);
+        assert_eq!(back.accent, Accent::Mono);
+        assert!(!back.companion_on);
+        assert!(!back.decorations_on);
+        // And back on again.
+        app.companion_on = true;
+        app.decorations_on = true;
+        back.apply_settings_text(&app.settings_text());
+        assert!(back.companion_on && back.decorations_on);
+    }
+
+    #[test]
+    fn settings_absent_toggle_keys_default_on() {
+        // A fresh app defaults both toggles on; a pre-slice
+        // settings file carrying neither key leaves them on.
+        let mut app = temp_app();
+        assert!(app.companion_on && app.decorations_on);
+        app.apply_settings_text("accent = pink\nprojects_root = /tmp/x\n");
+        assert!(app.companion_on);
+        assert!(app.decorations_on);
+    }
+
+    #[test]
+    fn tick_advances_companion_only_where_it_lives() {
+        let mut app = temp_app();
+        app.screen = Screen::Projects;
+        let start = app.companion.frame;
+        app.tick();
+        assert_eq!(
+            app.companion.frame,
+            (start + 1) % crate::companion::FRAME_COUNT
+        );
+        // A work screen: no advance.
+        app.screen = Screen::Console;
+        let still = app.companion.frame;
+        app.tick();
+        assert_eq!(app.companion.frame, still);
+        // Focus loss freezes the advance on a companion screen.
+        app.screen = Screen::Media;
+        app.set_focused(false);
+        app.tick();
+        assert_eq!(app.companion.frame, still);
+        // The toggle stops it too.
+        app.set_focused(true);
+        app.companion_on = false;
+        app.tick();
+        assert_eq!(app.companion.frame, still);
+        // And it resumes when everything is back.
+        app.companion_on = true;
+        app.tick();
+        assert_eq!(
+            app.companion.frame,
+            (still + 1) % crate::companion::FRAME_COUNT
+        );
+    }
 }

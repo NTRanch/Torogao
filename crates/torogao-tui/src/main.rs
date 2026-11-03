@@ -8,7 +8,7 @@
 
 #![forbid(unsafe_code)]
 
-use crossterm::event::{self, Event, KeyEventKind};
+use crossterm::event::{self, DisableFocusChange, EnableFocusChange, Event, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -26,7 +26,7 @@ struct TerminalGuard;
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let mut stdout = io::stdout();
-        let _ = execute!(stdout, LeaveAlternateScreen);
+        let _ = execute!(stdout, DisableFocusChange, LeaveAlternateScreen);
         let _ = disable_raw_mode();
     }
 }
@@ -38,7 +38,10 @@ fn run() -> io::Result<()> {
     enable_raw_mode()?;
     let _guard = TerminalGuard;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    // Focus-change reporting drives the companion's
+    // focus-loss pause (D-639); terminals that never report
+    // focus simply never pause that way.
+    execute!(stdout, EnterAlternateScreen, EnableFocusChange)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -52,6 +55,7 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) 
     loop {
         app.tick();
         app.refresh_blast();
+        app.refresh_companion_blast();
         terminal.draw(|frame| torogao_tui::view::draw(frame, app))?;
         // Direct-graphics protocols (kitty/sixel) draw outside
         // ratatui's cell buffer: the app reserves the viewport
@@ -88,6 +92,8 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) 
                 {
                     app.handle_key(key);
                 }
+                Event::FocusLost => app.set_focused(false),
+                Event::FocusGained => app.set_focused(true),
                 // Resize redraws on the next loop turn; mouse and
                 // paste events are deliberately unused.
                 _ => {}
