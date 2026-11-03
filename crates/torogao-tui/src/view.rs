@@ -108,6 +108,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Screen::Validate => draw_validate(frame, rows[1], app, theme),
         Screen::Replay => draw_replay(frame, rows[1], app, theme),
         Screen::Preview => draw_preview(frame, rows[1], app, theme),
+        Screen::Media => draw_media(frame, rows[1], app, theme),
         Screen::Files => draw_files(frame, rows[1], app, theme),
         Screen::Editor => draw_editor(frame, rows[1], app, theme),
         Screen::Settings => draw_settings(frame, rows[1], app, theme),
@@ -131,7 +132,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
         Span::styled(project, Style::default().fg(theme.data)),
         Span::raw("   "),
         Span::styled(
-            "1 Browse  2 Verbs  3 Validate  4 Replay  5 Preview  6 Files  7 Settings  ? Help",
+            "1 Browse  2 Verbs  3 Validate  4 Replay  5 Preview  6 Files  7 Settings  8 Media  ? Help",
             theme.text(),
         ),
     ]);
@@ -592,6 +593,148 @@ fn draw_preview(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
             ))
             .wrap(Wrap { trim: false }),
         area,
+    );
+}
+
+fn draw_media(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
+    let (left, right) = two_panes(area);
+    let tag = |kind: crate::media::MediaKind| match kind {
+        crate::media::MediaKind::Image => "IMG",
+        crate::media::MediaKind::Model => "MDL",
+        crate::media::MediaKind::Video => "VID",
+    };
+    let items: Vec<ListItem> = app
+        .media
+        .items
+        .iter()
+        .map(|item| {
+            ListItem::new(Line::from(vec![
+                Span::styled(
+                    format!("[{}] ", tag(item.kind)),
+                    Style::default().fg(theme.data),
+                ),
+                Span::styled(item.label.clone(), theme.text()),
+            ]))
+        })
+        .collect();
+    let list = List::new(items)
+        .block(theme.block(
+            "MEDIA — j/k pick · Enter reload · o open path · Esc back",
+            true,
+        ))
+        .highlight_style(theme.selected())
+        .highlight_symbol("> ");
+    let mut state = ListState::default();
+    state.select(if app.media.items.is_empty() {
+        None
+    } else {
+        Some(app.media.sel)
+    });
+    frame.render_stateful_widget(list, left, &mut state);
+
+    let label = app
+        .media
+        .items
+        .get(app.media.sel)
+        .map_or("MEDIA PREVIEW", |item| item.label.as_str());
+    let title = format!(
+        "PREVIEW {label} — {} · space play · ←/→ step · +/− zoom",
+        app.media.mode.label()
+    );
+    let halves = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Length(6)])
+        .split(right);
+    let viewport = halves[0].inner(ratatui::layout::Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+    let graphics = app.media.mode != crate::media::GraphicsMode::HalfBlock;
+    match (&app.media.raster, &app.media.error) {
+        (Some(raster), _) if graphics => {
+            // The pixels arrive as a post-draw blast over this
+            // reserved rect; the buffer holds only the frame.
+            app.media_viewport.set(Some((
+                viewport.x,
+                viewport.y,
+                viewport.width,
+                viewport.height,
+            )));
+            frame.render_widget(
+                Paragraph::new("").block(theme.block(&title, true)),
+                halves[0],
+            );
+            let _ = raster;
+        }
+        (Some(raster), _) => {
+            app.media_viewport.set(None);
+            let cols = ((f32::from(viewport.width) * app.media.zoom) as u16).max(1);
+            let rows = ((f32::from(viewport.height) * app.media.zoom) as u16).max(1);
+            let grid = crate::media::halfblock_cells(raster, cols, rows);
+            let grid_width = grid.first().map_or(0, |row| row.len());
+            let pad_left = usize::from(viewport.width).saturating_sub(grid_width) / 2;
+            let pad_top = usize::from(viewport.height).saturating_sub(grid.len()) / 2;
+            let mut lines: Vec<Line> = Vec::new();
+            for _ in 0..pad_top {
+                lines.push(Line::from(""));
+            }
+            for row in &grid {
+                let mut spans = vec![Span::raw(" ".repeat(pad_left))];
+                for (top, bottom) in row {
+                    spans.push(Span::styled(
+                        "▀",
+                        Style::default()
+                            .fg(Color::Rgb(top.0, top.1, top.2))
+                            .bg(Color::Rgb(bottom.0, bottom.1, bottom.2)),
+                    ));
+                }
+                lines.push(Line::from(spans));
+            }
+            frame.render_widget(
+                Paragraph::new(lines).block(theme.block(&title, true)),
+                halves[0],
+            );
+        }
+        (None, Some(error)) => {
+            app.media_viewport.set(None);
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    error.clone(),
+                    Style::default().fg(theme.bad),
+                )))
+                .block(theme.block(&title, true))
+                .wrap(Wrap { trim: false }),
+                halves[0],
+            );
+        }
+        (None, None) => {
+            app.media_viewport.set(None);
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    "no media selected — j/k pick an item, or o opens a file by path",
+                    Style::default().fg(theme.dim),
+                )))
+                .block(theme.block(&title, true)),
+                halves[0],
+            );
+        }
+    }
+    let mut info_lines = vec![Line::from(Span::styled(
+        format!(
+            "graphics: {} — {}",
+            app.media.mode.label(),
+            app.media.mode_reason
+        ),
+        Style::default().fg(theme.dim),
+    ))];
+    for line in &app.media.info {
+        info_lines.push(Line::from(Span::styled(line.clone(), theme.text())));
+    }
+    frame.render_widget(
+        Paragraph::new(info_lines)
+            .block(theme.block("INFO / TRANSPORT", false))
+            .wrap(Wrap { trim: false }),
+        halves[1],
     );
 }
 

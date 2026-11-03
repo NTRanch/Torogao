@@ -3197,6 +3197,7 @@ name = "torogao-tui"
 version = "1.0.0"
 dependencies = [
  "crossterm",
+ "image",
  "ratatui",
  "serde",
  "serde_json",

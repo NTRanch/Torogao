@@ -82,6 +82,65 @@ fn file_sha(path: &Path) -> String {
     torogao_author::intake::sha256_hex(&std::fs::read(path).expect("read file"))
 }
 
+/// Writes a solid-colour RGBA PNG using only std (stored
+/// deflate blocks), so media fixtures need no encoder crate.
+fn write_test_png(path: &Path, width: u32, height: u32, rgba: [u8; 4]) {
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc: u32 = 0xFFFF_FFFF;
+        for &byte in bytes {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                crc = (crc >> 1) ^ (0xEDB8_8320 & (0u32.wrapping_sub(crc & 1)));
+            }
+        }
+        !crc
+    }
+    fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        out.extend_from_slice(kind);
+        out.extend_from_slice(data);
+        let mut crc_input = kind.to_vec();
+        crc_input.extend_from_slice(data);
+        out.extend_from_slice(&crc32(&crc_input).to_be_bytes());
+    }
+    // Raw scanlines: filter byte 0 + RGBA per pixel.
+    let mut raw = Vec::new();
+    for _ in 0..height {
+        raw.extend_from_slice(&[0]);
+        for _ in 0..width {
+            raw.extend_from_slice(&rgba);
+        }
+    }
+    // zlib: header + stored blocks + adler32.
+    let mut zlib = vec![0x78u8, 0x01];
+    let mut offset = 0;
+    while offset < raw.len() {
+        let take = (raw.len() - offset).min(65_535);
+        let last = offset + take == raw.len();
+        zlib.push(u8::from(last));
+        zlib.extend_from_slice(&(take as u16).to_le_bytes());
+        zlib.extend_from_slice(&(!(take as u16)).to_le_bytes());
+        zlib.extend_from_slice(&raw[offset..offset + take]);
+        offset += take;
+    }
+    let (mut a, mut b) = (1u32, 0u32);
+    for &byte in &raw {
+        a = (a + u32::from(byte)) % 65_521;
+        b = (b + a) % 65_521;
+    }
+    zlib.extend_from_slice(&((b << 16) | a).to_be_bytes());
+
+    let mut png = vec![137u8, 80, 78, 71, 13, 10, 26, 10];
+    let mut ihdr = Vec::new();
+    ihdr.extend_from_slice(&width.to_be_bytes());
+    ihdr.extend_from_slice(&height.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+    chunk(&mut png, b"IHDR", &ihdr);
+    chunk(&mut png, b"IDAT", &zlib);
+    chunk(&mut png, b"IEND", &[]);
+    std::fs::write(path, png).expect("write test png");
+}
+
 #[test]
 fn core_flow_open_browse_edit_validate_replay() {
     let root = fresh_root("core");
@@ -350,5 +409,135 @@ fn create_project_from_the_home_screen() {
             .as_ref()
             .map(|open| open.project.header.name.as_str()),
         Some("fresh")
+    );
+}
+
+#[test]
+fn media_screen_previews_still_steps_video_and_refuses_model_by_name() {
+    let root = fresh_root("media");
+    let project_dir = build_fixture(&root);
+    write_test_png(&project_dir.join("a-still.png"), 8, 8, [255, 46, 136, 255]);
+    std::fs::write(project_dir.join("c-model.inx"), b"not a real puppet").expect("write model");
+
+    // A short clip, when ffmpeg is at hand; the video leg of
+    // this test skips silently where it is not.
+    let have_ffmpeg = std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    if have_ffmpeg {
+        let made = std::process::Command::new("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=0xFF2E88:size=64x64:rate=10:duration=0.5",
+                "-y",
+            ])
+            .arg(project_dir.join("b-video.mp4"))
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        assert!(made, "ffmpeg made the fixture clip");
+    }
+
+    let mut app = App::new(root);
+    key(&mut app, KeyCode::Enter);
+    assert_eq!(app.screen, Screen::Browse);
+    ch(&mut app, '8');
+    assert_eq!(app.screen, Screen::Media);
+    // The still is first in sorted order and is already loaded.
+    assert_eq!(app.media.items.len(), if have_ffmpeg { 3 } else { 2 });
+    assert!(
+        app.media.raster.is_some(),
+        "the still decoded: {:?}",
+        app.media.error
+    );
+    let screen = render(&app);
+    assert!(
+        screen.contains("PREVIEW"),
+        "media screen renders:\n{screen}"
+    );
+    assert!(
+        screen.contains("graphics:"),
+        "the graphics mode + reason are stated:\n{screen}"
+    );
+    if app.media.mode == torogao_tui::media::GraphicsMode::HalfBlock {
+        assert!(
+            screen.contains('▀'),
+            "half-block pixels render in the buffer:\n{screen}"
+        );
+    }
+
+    if have_ffmpeg {
+        // Step onto the video: probed, framed, and steppable.
+        ch(&mut app, 'j');
+        let video = app.media.video.as_ref().expect("video loaded");
+        assert!(video.info.frames >= 4, "probe counted frames");
+        assert_eq!(video.frame, 0);
+        key(&mut app, KeyCode::Right);
+        let video = app.media.video.as_ref().expect("video still loaded");
+        assert_eq!(video.frame, 1, "Right steps exactly one frame");
+        key(&mut app, KeyCode::Left);
+        let video = app.media.video.as_ref().expect("video still loaded");
+        assert_eq!(video.frame, 0, "Left steps back");
+        ch(&mut app, ' ');
+        let video = app.media.video.as_ref().expect("video still loaded");
+        assert!(video.playing, "space plays");
+        ch(&mut app, ' ');
+        let video = app.media.video.as_ref().expect("video still loaded");
+        assert!(!video.playing, "space pauses");
+        let screen = render(&app);
+        assert!(
+            screen.contains("visual only"),
+            "the silence rule is stated on the transport:\n{screen}"
+        );
+        assert!(
+            app.media.info[1].contains("no audio is decoded or played"),
+            "the transport's second line carries the full silence statement: {:?}",
+            app.media.info
+        );
+    }
+
+    // The model: either a renderer produced a raster, or the
+    // preview refused with a named TG-TUI-MEDIA code — never a
+    // silent blank.
+    let target = if have_ffmpeg { 2 } else { 1 };
+    while app.media.sel < target {
+        ch(&mut app, 'j');
+    }
+    match &app.media.error {
+        Some(line) => assert!(
+            line.starts_with("TG-TUI-MEDIA-"),
+            "model refusal is named: {line}"
+        ),
+        None => assert!(app.media.raster.is_some(), "model rendered a raster"),
+    }
+    key(&mut app, KeyCode::Esc);
+    assert_eq!(app.screen, Screen::Browse);
+}
+
+#[test]
+fn media_screen_opens_a_path_without_a_project() {
+    let root = fresh_root("mediapath");
+    let stray = root.join("stray.png");
+    write_test_png(&stray, 4, 4, [80, 200, 120, 255]);
+    let mut app = App::new(root);
+    ch(&mut app, '8');
+    assert_eq!(app.screen, Screen::Media);
+    ch(&mut app, 'o');
+    assert!(app.prompt.is_some(), "path prompt opens");
+    type_text(&mut app, &stray.display().to_string());
+    key(&mut app, KeyCode::Enter);
+    assert_eq!(app.media.items.len(), 1);
+    assert!(
+        app.media.raster.is_some(),
+        "the prompted still previews: {:?}",
+        app.media.error
     );
 }

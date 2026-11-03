@@ -11,11 +11,15 @@
 //! a project's files are edited as text, Addition V — with the
 //! replay screen surfacing any divergence a text edit causes).
 
+use crate::media::{GraphicsMode, MediaItem, MediaKind, ModelRender, VideoInfo};
 use crate::records::{self, Family};
 use crate::textbuf::TextBuf;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use image::RgbaImage;
 use serde_json::{Value, json};
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 use torogao_author::model::Project;
 use torogao_author::{Refusal, RefusalClass, Status};
 
@@ -41,6 +45,8 @@ pub enum Screen {
     Replay,
     /// Companion/persona structured readout.
     Preview,
+    /// Media preview: artwork, model renders, video frames.
+    Media,
     /// The project directory's text files.
     Files,
     /// The text editor (over Files).
@@ -69,6 +75,8 @@ pub enum PromptAction {
     OpenPath,
     /// Move the projects root to the prompted path.
     ProjectsRoot,
+    /// Preview the media file at the prompted path.
+    MediaPath,
 }
 
 /// The open project and everything the screens hold about it.
@@ -152,6 +160,81 @@ pub struct PreviewState {
     pub tested: Vec<String>,
 }
 
+/// Video transport state, while a video item is loaded.
+pub struct VideoState {
+    /// The probe result.
+    pub info: VideoInfo,
+    /// The frame the raster currently shows.
+    pub frame: u64,
+    /// Playback position in seconds (the transport's clock).
+    pub position_s: f64,
+    /// Whether the transport is playing.
+    pub playing: bool,
+    /// When the transport last advanced.
+    pub last_tick: Option<Instant>,
+}
+
+/// Media screen state.
+pub struct MediaState {
+    /// Listed media items (project scan or a prompted path).
+    pub items: Vec<MediaItem>,
+    /// Selected item.
+    pub sel: usize,
+    /// Detected graphics mode for this terminal.
+    pub mode: GraphicsMode,
+    /// Why that mode was picked (shown in the pane).
+    pub mode_reason: String,
+    /// The raster on display: a still, a video frame, or a
+    /// model render, fitted by the media layer.
+    pub raster: Option<RgbaImage>,
+    /// Info lines under the viewport (dims, model metadata,
+    /// the transport readout).
+    pub info: Vec<String>,
+    /// The last named refusal, when the selected item would
+    /// not preview.
+    pub error: Option<String>,
+    /// Video transport, when the item is a video.
+    pub video: Option<VideoState>,
+    /// The model render report, when the item is a model.
+    pub model: Option<ModelRender>,
+    /// Display zoom, 0.25..=3.0.
+    pub zoom: f32,
+    /// The graphics blast cache: (signature, escape text) the
+    /// shell writes after the frame draw.
+    pub blast: Option<(u64, String)>,
+    /// Serial for kitty image ids.
+    pub blast_serial: u32,
+}
+
+impl Default for MediaState {
+    fn default() -> MediaState {
+        let (mode, mode_reason) = crate::media::detect_graphics_env();
+        MediaState {
+            items: Vec::new(),
+            sel: 0,
+            mode,
+            mode_reason,
+            raster: None,
+            info: Vec::new(),
+            error: None,
+            video: None,
+            model: None,
+            zoom: 1.0,
+            blast: None,
+            blast_serial: 0,
+        }
+    }
+}
+
+/// One graphics blast for the shell: write `text` to the
+/// terminal after the draw when `signature` changes.
+pub struct GraphicsBlast {
+    /// Content signature; the shell skips repeats.
+    pub signature: u64,
+    /// The escape text to write.
+    pub text: String,
+}
+
 /// One file row on the Files screen.
 #[derive(Clone, Debug)]
 pub struct FileRow {
@@ -213,6 +296,13 @@ pub struct App {
     pub replay: ReplayState,
     /// Preview state.
     pub preview: PreviewState,
+    /// Media screen state.
+    pub media: MediaState,
+    /// The media viewport's screen rect `(x, y, width, height)`
+    /// as last drawn; the graphics blast places itself there.
+    /// Set by the view through interior mutability (draw takes
+    /// `&App`), read by the app when building a blast.
+    pub media_viewport: Cell<Option<(u16, u16, u16, u16)>>,
     /// File rows for the open project.
     pub files: Vec<FileRow>,
     /// Selected file row.
@@ -249,6 +339,8 @@ impl App {
             validate: ValidateState::default(),
             replay: ReplayState::default(),
             preview: PreviewState::default(),
+            media: MediaState::default(),
+            media_viewport: Cell::new(None),
             files: Vec::new(),
             file_sel: 0,
             editor: None,
@@ -445,6 +537,7 @@ impl App {
                 self.run_replay();
             }
             KeyCode::Char('5') if self.open.is_some() => self.screen = Screen::Preview,
+            KeyCode::Char('8') => self.goto_media(),
             KeyCode::Char('6') if self.open.is_some() => {
                 self.refresh_files();
                 self.screen = Screen::Files;
@@ -460,6 +553,7 @@ impl App {
             Screen::Validate => self.validate_key(key),
             Screen::Replay => self.replay_key(key),
             Screen::Preview => self.preview_key(key),
+            Screen::Media => self.media_key(key),
             Screen::Files => self.files_key(key),
             Screen::Settings => self.settings_key(key),
             Screen::Help => {
@@ -830,6 +924,388 @@ impl App {
         }
     }
 
+    // -- Media ------------------------------------------------------
+
+    /// Enters the Media screen: rescans the open project's
+    /// media (assets are ordinary files under the project
+    /// directory) and loads the selected item. With no project
+    /// open the list keeps whatever a path prompt loaded.
+    pub fn goto_media(&mut self) {
+        if let Some(open) = &self.open {
+            let root = open.root.clone();
+            self.media.items = crate::media::collect_media(&root);
+            if self.media.sel >= self.media.items.len() {
+                self.media.sel = self.media.items.len().saturating_sub(1);
+            }
+            self.media_load();
+        } else if self.media.items.is_empty() {
+            self.media.info = vec!["no project open — o opens a media file by path".to_string()];
+        }
+        self.screen = Screen::Media;
+    }
+
+    /// Loads the selected media item into the viewport: a
+    /// still decode, a model render through `torogao-app`, or
+    /// a video probe + first frame. Every failure lands in
+    /// `media.error` as its named refusal; the pane is never
+    /// silently blank.
+    pub fn media_load(&mut self) {
+        self.media.raster = None;
+        self.media.error = None;
+        self.media.info = Vec::new();
+        self.media.video = None;
+        self.media.model = None;
+        self.media.blast = None;
+        let Some(item) = self.media.items.get(self.media.sel).cloned() else {
+            return;
+        };
+        match item.kind {
+            MediaKind::Image => match crate::media::decode_still(&item.path) {
+                Ok(raster) => {
+                    self.media.info = vec![
+                        format!("{} × {} px", raster.width(), raster.height()),
+                        item.path.display().to_string(),
+                    ];
+                    self.media.raster = Some(raster);
+                    self.status = format!("previewing {}", item.label);
+                }
+                Err(err) => self.media_refuse(&item, &err.line()),
+            },
+            MediaKind::Model => match crate::media::render_model(&item.path) {
+                Ok(render) => {
+                    let mut info = Vec::new();
+                    if !render.summary.is_empty() {
+                        info.push(render.summary.clone());
+                    }
+                    if !render.state_hash.is_empty() {
+                        info.push(format!("state-hash {}", render.state_hash));
+                    }
+                    match (&render.png, &render.unavailable) {
+                        (Some(png), _) => match crate::media::decode_still(png) {
+                            Ok(raster) => {
+                                info.push(render.render_line.clone());
+                                self.media.raster = Some(raster);
+                                self.status = format!("rendered {}", item.label);
+                            }
+                            Err(err) => self.media.error = Some(err.line()),
+                        },
+                        (None, Some(why)) => {
+                            self.media.error =
+                                Some(format!("TG-TUI-MEDIA-RENDER-UNAVAILABLE: {why}"));
+                            self.status =
+                                format!("{}: render unavailable on this machine", item.label);
+                        }
+                        (None, None) => {
+                            self.media.error = Some(
+                                "TG-TUI-MEDIA-RENDER-UNAVAILABLE: the renderer wrote no PNG and gave no reason"
+                                    .to_string(),
+                            );
+                        }
+                    }
+                    self.media.info = info;
+                    self.media.model = Some(render);
+                }
+                Err(err) => self.media_refuse(&item, &err.line()),
+            },
+            MediaKind::Video => match crate::media::probe_video(&item.path) {
+                Ok(info) => {
+                    let frame =
+                        crate::media::extract_frame(&item.path, 0.0, crate::media::FRAME_EDGE_MAX);
+                    match frame {
+                        Ok(raster) => {
+                            self.media.raster = Some(raster);
+                            self.media.video = Some(VideoState {
+                                info,
+                                frame: 0,
+                                position_s: 0.0,
+                                playing: false,
+                                last_tick: None,
+                            });
+                            self.media_refresh_info();
+                            self.status = format!("previewing {}", item.label);
+                        }
+                        Err(err) => self.media_refuse(&item, &err.line()),
+                    }
+                }
+                Err(err) => self.media_refuse(&item, &err.line()),
+            },
+        }
+        self.refresh_blast();
+    }
+
+    fn media_refuse(&mut self, item: &MediaItem, line: &str) {
+        self.media.error = Some(line.to_string());
+        self.status = format!("{}: preview refused", item.label);
+    }
+
+    /// Rebuilds the transport/info line for the loaded video.
+    fn media_refresh_info(&mut self) {
+        let Some(video) = &self.media.video else {
+            return;
+        };
+        let info = &video.info;
+        let position = format_clock(video.position_s);
+        let duration = format_clock(info.duration_s);
+        self.media.info =
+            vec![
+            format!(
+                "{} frame {}/{} · {position}/{duration} · {:.2} fps · {}×{}",
+                if video.playing { "▶ playing" } else { "❚❚ paused" },
+                video.frame + 1,
+                info.frames.max(1),
+                info.fps,
+                info.width,
+                info.height,
+            ),
+            "space play/pause · ←/→ step one frame · visual only — no audio is decoded or played"
+                .to_string(),
+        ];
+    }
+
+    /// Steps the loaded video by `delta` frames (clamped),
+    /// extracting the landing frame. A failed extraction is a
+    /// named refusal in the pane.
+    pub fn media_step(&mut self, delta: i64) {
+        let Some(item) = self.media.items.get(self.media.sel).cloned() else {
+            return;
+        };
+        let Some(video) = &mut self.media.video else {
+            return;
+        };
+        video.playing = false;
+        video.last_tick = None;
+        let last = video.info.frames.saturating_sub(1);
+        let frame = (video.frame as i64 + delta).clamp(0, last as i64) as u64;
+        video.frame = frame;
+        video.position_s = video.info.frame_time(frame);
+        let at = video.position_s;
+        match crate::media::extract_frame(&item.path, at, crate::media::FRAME_EDGE_MAX) {
+            Ok(raster) => {
+                self.media.raster = Some(raster);
+                self.media.error = None;
+            }
+            Err(err) => self.media.error = Some(err.line()),
+        }
+        self.media_refresh_info();
+        self.refresh_blast();
+    }
+
+    /// Advances the transport: called once per event-loop
+    /// turn by the shell. While a video plays, position moves
+    /// by real elapsed time (capped per turn) and the raster
+    /// is re-extracted when the displayed frame changes —
+    /// playback stays time-true, skipping frames the
+    /// extractor cannot keep up with rather than slowing.
+    pub fn tick(&mut self) {
+        if self.screen != Screen::Media {
+            return;
+        }
+        let now = Instant::now();
+        let Some(video) = &mut self.media.video else {
+            return;
+        };
+        if !video.playing {
+            video.last_tick = None;
+            return;
+        }
+        let elapsed = video
+            .last_tick
+            .map(|then| now.duration_since(then).as_secs_f64().min(0.25))
+            .unwrap_or(0.0);
+        video.last_tick = Some(now);
+        video.position_s += elapsed;
+        if video.info.duration_s > 0.0 && video.position_s >= video.info.duration_s {
+            video.position_s = video.info.duration_s;
+            video.playing = false;
+            video.frame = video.info.frames.saturating_sub(1);
+            self.media_refresh_info();
+            return;
+        }
+        let frame = video.info.frame_at(video.position_s);
+        if frame != video.frame {
+            video.frame = frame;
+            let Some(item) = self.media.items.get(self.media.sel).cloned() else {
+                return;
+            };
+            match crate::media::extract_frame(
+                &item.path,
+                video.info.frame_time(frame),
+                crate::media::FRAME_EDGE_MAX,
+            ) {
+                Ok(raster) => {
+                    self.media.raster = Some(raster);
+                    self.media.error = None;
+                }
+                Err(err) => {
+                    self.media.error = Some(err.line());
+                    if let Some(video) = &mut self.media.video {
+                        video.playing = false;
+                    }
+                }
+            }
+            self.media_refresh_info();
+            self.refresh_blast();
+        }
+    }
+
+    /// (Re)builds the graphics blast for the current raster +
+    /// viewport when the mode is a direct-graphics protocol.
+    /// Half-block renders inside the buffer and never blasts.
+    pub fn refresh_blast(&mut self) {
+        if self.screen != Screen::Media || self.media.mode == GraphicsMode::HalfBlock {
+            self.media.blast = None;
+            return;
+        }
+        let (Some(raster), Some((x, y, w, h))) =
+            (self.media.raster.as_ref(), self.media_viewport.get())
+        else {
+            return;
+        };
+        if w == 0 || h == 0 {
+            return;
+        }
+        let cols = ((f32::from(w) * self.media.zoom) as u16).clamp(1, w);
+        let rows = ((f32::from(h) * self.media.zoom) as u16).clamp(1, h);
+        let col = x + (w - cols) / 2 + 1;
+        let row = y + (h - rows) / 2 + 1;
+        let item_key = self
+            .media
+            .items
+            .get(self.media.sel)
+            .map_or(0, |item| hash_of(&item.path.to_string_lossy()));
+        let frame_key = match &self.media.video {
+            Some(video) => video.frame,
+            None => 0,
+        };
+        let signature = item_key
+            ^ (frame_key << 8)
+            ^ u64::from(self.media.zoom.to_bits())
+            ^ (u64::from(col) << 40)
+            ^ (u64::from(row) << 48)
+            ^ (u64::from(cols) << 52)
+            ^ (u64::from(rows) << 58);
+        if self.media.blast.as_ref().map(|(sig, _)| *sig) == Some(signature) {
+            return;
+        }
+        let text = match self.media.mode {
+            GraphicsMode::Kitty => {
+                let fitted = crate::media::fit_edge(raster, crate::media::KITTY_EDGE_MAX);
+                match crate::media::encode_png(&fitted) {
+                    Ok(png) => {
+                        self.media.blast_serial += 1;
+                        format!(
+                            "{}{}",
+                            crate::media::kitty_delete(),
+                            crate::media::kitty_blast(
+                                &png,
+                                self.media.blast_serial,
+                                col,
+                                row,
+                                cols,
+                                rows,
+                            )
+                        )
+                    }
+                    Err(_) => return,
+                }
+            }
+            GraphicsMode::Sixel => {
+                let fitted = crate::media::fit_edge(raster, crate::media::SIXEL_EDGE_MAX);
+                format!(
+                    "\x1b[{};{}H{}",
+                    row,
+                    col,
+                    crate::media::sixel_blast(&fitted)
+                )
+            }
+            GraphicsMode::HalfBlock => unreachable!("half-block returned above"),
+        };
+        self.media.blast = Some((signature, text));
+    }
+
+    /// The blast the shell should write after this frame's
+    /// draw, when its signature is new.
+    pub fn graphics_blast(&self) -> Option<GraphicsBlast> {
+        self.media
+            .blast
+            .as_ref()
+            .map(|(signature, text)| GraphicsBlast {
+                signature: *signature,
+                text: text.clone(),
+            })
+    }
+
+    fn media_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.media.blast = None;
+                if let Some(video) = &mut self.media.video {
+                    video.playing = false;
+                }
+                self.screen = if self.open.is_some() {
+                    Screen::Browse
+                } else {
+                    Screen::Projects
+                };
+            }
+            KeyCode::Char('o') => {
+                self.prompt = Some((PromptAction::MediaPath, TextBuf::new()));
+            }
+            KeyCode::Enter => self.media_load(),
+            KeyCode::Char(' ') => {
+                if let Some(video) = &mut self.media.video {
+                    video.playing = !video.playing;
+                    video.last_tick = None;
+                    self.media_refresh_info();
+                }
+            }
+            KeyCode::Left => self.media_step(-1),
+            KeyCode::Right => self.media_step(1),
+            KeyCode::Char('+') | KeyCode::Char('=') => {
+                self.media.zoom = (self.media.zoom + 0.25).min(3.0);
+                self.refresh_blast();
+            }
+            KeyCode::Char('-') => {
+                self.media.zoom = (self.media.zoom - 0.25).max(0.25);
+                self.refresh_blast();
+            }
+            _ => {
+                let count = self.media.items.len();
+                if nav(&mut self.media.sel, count, key) {
+                    self.media_load();
+                }
+            }
+        }
+    }
+
+    /// Loads one prompted media path as the media list's sole
+    /// item (any previewable file, project or not).
+    pub fn media_open_path(&mut self, path: &Path) {
+        match crate::media::classify(path) {
+            Some(kind) if path.is_file() => {
+                self.media.items = vec![MediaItem {
+                    label: path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                    kind,
+                    path: path.to_path_buf(),
+                }];
+                self.media.sel = 0;
+                self.media_load();
+            }
+            Some(_) => {
+                self.status = format!("no file at {}", path.display());
+            }
+            None => {
+                self.status = format!(
+                    "{} is not previewable media (image, .inx/.inp model, video)",
+                    path.display()
+                );
+            }
+        }
+    }
+
     // -- Files / Editor ----------------------------------------------
 
     fn files_key(&mut self, key: KeyEvent) {
@@ -1072,6 +1548,11 @@ impl App {
                             self.open_project(Path::new(&value));
                         }
                     }
+                    PromptAction::MediaPath => {
+                        if !value.is_empty() {
+                            self.media_open_path(Path::new(&value));
+                        }
+                    }
                     PromptAction::ProjectsRoot => {
                         if !value.is_empty() {
                             self.projects_root = PathBuf::from(value);
@@ -1186,6 +1667,24 @@ fn nav_keys_only(buf: &mut TextBuf, key: KeyEvent) {
 /// Pretty-prints a JSON document for the answer/detail panes.
 pub fn pretty(value: &Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
+}
+
+/// Formats a seconds count as `m:ss.s` for the transport.
+fn format_clock(seconds: f64) -> String {
+    let total = seconds.max(0.0);
+    let minutes = (total / 60.0).floor() as u64;
+    let rest = total - minutes as f64 * 60.0;
+    format!("{minutes}:{rest:04.1}")
+}
+
+/// A small stable hash (FNV-1a) for blast signatures.
+fn hash_of(text: &str) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in text.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }
 
 /// The status line's label for a verb outcome.

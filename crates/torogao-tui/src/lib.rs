@@ -5,7 +5,9 @@
 //! create/open, record browsing and editing across the format's
 //! families, the verb console, `project_validate` findings,
 //! deterministic replay inspection, a companion/persona
-//! structured readout, the project's text files (Addition V:
+//! structured readout, a media preview (artwork, model
+//! renders and video frames over terminal graphics with a
+//! half-block fallback), the project's text files (Addition V:
 //! files are the project), settings, and this keymap — every
 //! action reachable by keyboard, mouse input used nowhere.
 //!
@@ -20,6 +22,7 @@
 #![deny(missing_docs)]
 
 pub mod app;
+pub mod media;
 pub mod records;
 pub mod textbuf;
 pub mod view;
@@ -31,11 +34,24 @@ pub use app::{Accent, App, Screen};
 /// mouse is never required.
 pub const KEYMAP: &[(&str, &str)] = &[
     (
-        "1..7",
-        "jump to Browse / Verbs / Validate / Replay / Preview / Files / Settings",
+        "1..8",
+        "jump to Browse / Verbs / Validate / Replay / Preview / Files / Settings / Media",
     ),
     ("?", "this keymap, from anywhere"),
     ("q", "quit (Projects screen)"),
+    (
+        "o (Media)",
+        "preview a media file by path (artwork, .inx model, video)",
+    ),
+    (
+        "Space (Media, video)",
+        "play / pause — visual only, no audio is ever played",
+    ),
+    (
+        "Left / Right (Media, video)",
+        "step one frame back / forward",
+    ),
+    ("+ / - (Media)", "zoom the preview in / out"),
     ("j k / Up Down", "move selection"),
     ("g / G", "first / last row"),
     ("PgUp / PgDn", "move by ten rows"),

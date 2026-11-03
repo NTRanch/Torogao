@@ -15,7 +15,7 @@ use crossterm::terminal::{
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use std::io::{self, Stdout};
+use std::io::{self, Stdout, Write};
 use std::process::ExitCode;
 use std::time::Duration;
 use torogao_tui::App;
@@ -48,9 +48,37 @@ fn run() -> io::Result<()> {
 }
 
 fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io::Result<()> {
+    let mut blasted: Option<u64> = None;
     loop {
+        app.tick();
+        app.refresh_blast();
         terminal.draw(|frame| torogao_tui::view::draw(frame, app))?;
+        // Direct-graphics protocols (kitty/sixel) draw outside
+        // ratatui's cell buffer: the app reserves the viewport
+        // rect in the buffer and hands the shell a blast to
+        // write after the draw, keyed by a signature so an
+        // unchanged image is never re-sent. When the blast goes
+        // away (screen change), kitty images are deleted so
+        // none linger over other screens.
+        match app.graphics_blast() {
+            Some(blast) if blasted != Some(blast.signature) => {
+                let mut stdout = io::stdout();
+                stdout.write_all(blast.text.as_bytes())?;
+                stdout.flush()?;
+                blasted = Some(blast.signature);
+            }
+            None if blasted.is_some() => {
+                let mut stdout = io::stdout();
+                if app.media.mode == torogao_tui::media::GraphicsMode::Kitty {
+                    stdout.write_all(torogao_tui::media::kitty_delete().as_bytes())?;
+                    stdout.flush()?;
+                }
+                blasted = None;
+            }
+            _ => {}
+        }
         if app.quit {
+            torogao_tui::media::cleanup_preview_tmp();
             return Ok(());
         }
         if event::poll(Duration::from_millis(100))? {
