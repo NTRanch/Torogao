@@ -1,3 +1,5 @@
+![Torogao](docs/images/torogao-header-v20-black-trio.png)
+
 # Torogao
 
 A character-animation editor from **Nice Thoughts Ranch**:
