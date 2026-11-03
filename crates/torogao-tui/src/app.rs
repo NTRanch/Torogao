@@ -1325,8 +1325,7 @@ impl App {
         let (staged_media, staged_comp) = self.blast_stage.get();
         let media_text = self.media.blast.as_ref().map(|(_, text)| text.as_str());
         let comp_text = self.companion.blast.as_ref().map(|(_, text)| text.as_str());
-        let dropped =
-            (staged_media != 0 && media_sig == 0) || (staged_comp != 0 && comp_sig == 0);
+        let dropped = (staged_media != 0 && media_sig == 0) || (staged_comp != 0 && comp_sig == 0);
         let mut text = String::new();
         if dropped && self.media.mode == GraphicsMode::Kitty {
             // A component vanished while the other survives:

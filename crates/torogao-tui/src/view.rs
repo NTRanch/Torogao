@@ -408,11 +408,7 @@ fn draw_companion_pane(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
 /// `width` × `height` cell budget (the companion pane's
 /// in-buffer rendering; the Media viewport keeps its own
 /// zoom-aware path).
-fn halfblock_grid_lines(
-    raster: &image::RgbaImage,
-    width: u16,
-    height: u16,
-) -> Vec<Line<'static>> {
+fn halfblock_grid_lines(raster: &image::RgbaImage, width: u16, height: u16) -> Vec<Line<'static>> {
     let grid = crate::media::halfblock_cells(raster, width, height);
     let grid_width = grid.first().map_or(0, |row| row.len());
     let pad_left = usize::from(width).saturating_sub(grid_width) / 2;
@@ -875,20 +871,20 @@ fn draw_media(frame: &mut Frame, area: Rect, app: &App, theme: Theme, size: Rect
     // 28 cols companion]; the list and the INFO pane below
     // are untouched. Below the width threshold the preview
     // takes the whole region, exactly the pre-slice layout.
-    let (preview_area, companion_area) =
-        if app.companion_on && crate::companion::pane_visible(Screen::Media, size.width, size.height)
-        {
-            let split = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Min(0),
-                    Constraint::Length(crate::companion::PANE_COLS),
-                ])
-                .split(halves[0]);
-            (split[0], Some(split[1]))
-        } else {
-            (halves[0], None)
-        };
+    let (preview_area, companion_area) = if app.companion_on
+        && crate::companion::pane_visible(Screen::Media, size.width, size.height)
+    {
+        let split = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Min(0),
+                Constraint::Length(crate::companion::PANE_COLS),
+            ])
+            .split(halves[0]);
+        (split[0], Some(split[1]))
+    } else {
+        (halves[0], None)
+    };
     let viewport = preview_area.inner(ratatui::layout::Margin {
         horizontal: 1,
         vertical: 1,
@@ -1183,8 +1179,14 @@ mod tests {
 
     #[test]
     fn breath_scales_rgb_toward_black() {
-        assert_eq!(breath(Color::Rgb(255, 46, 136), 100), Color::Rgb(255, 46, 136));
-        assert_eq!(breath(Color::Rgb(255, 46, 136), 55), Color::Rgb(140, 25, 74));
+        assert_eq!(
+            breath(Color::Rgb(255, 46, 136), 100),
+            Color::Rgb(255, 46, 136)
+        );
+        assert_eq!(
+            breath(Color::Rgb(255, 46, 136), 55),
+            Color::Rgb(140, 25, 74)
+        );
         assert_eq!(breath(Color::White, 55), Color::White);
     }
 

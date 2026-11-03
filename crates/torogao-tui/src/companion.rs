@@ -128,12 +128,7 @@ pub fn fit_rect(pane: (u16, u16, u16, u16)) -> (u16, u16, u16, u16) {
     };
     let cols = cols.max(1);
     let rows = rows.max(1);
-    (
-        x + (w - cols) / 2,
-        y + (h - rows) / 2,
-        cols,
-        rows,
-    )
+    (x + (w - cols) / 2, y + (h - rows) / 2, cols, rows)
 }
 
 /// The companion's animation state: the current frame, its
@@ -308,7 +303,10 @@ mod tests {
         let mut state = CompanionState::default();
         state.ensure_raster();
         let raster = state.raster.expect("embedded frame decodes");
-        assert_eq!((raster.width(), raster.height()), (FRAME_WIDTH, FRAME_HEIGHT));
+        assert_eq!(
+            (raster.width(), raster.height()),
+            (FRAME_WIDTH, FRAME_HEIGHT)
+        );
     }
 
     #[test]
