@@ -5,10 +5,9 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 description = "The Torogao authoring core: project model, canonical RON serializer, op log, and the decide() gate."
-publish = false
 
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"
-torogao-format = { path = "../torogao-format" }
+torogao-format = { path = "../torogao-format", version = "0.4.0" }

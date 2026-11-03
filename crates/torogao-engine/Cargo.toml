@@ -8,4 +8,4 @@ description = "The Torogao puppet engine: model, parameter and deformer evaluati
 
 [dependencies]
 serde_json = { workspace = true }
-torogao-format = { path = "../torogao-format" }
+torogao-format = { path = "../torogao-format", version = "0.4.0" }

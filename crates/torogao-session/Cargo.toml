@@ -5,7 +5,6 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 description = "The Torogao editor-state interop core: session state, the torogao-author decide() gate, the tool registry, and the canonical session record."
-publish = false
 
 [dependencies]
 # Fleet pin (MCP standardization program, D-113): rmcp is pinned
@@ -19,5 +18,5 @@ sha2 = "0.10"
 # io-std: the stdio transport endpoints; io-util: buffered line
 # framing for the era guard; rt/macros/time: the pipeline runtime.
 tokio = { version = "1", features = ["io-std", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
-torogao-author = { path = "../torogao-author" }
+torogao-author = { path = "../torogao-author", version = "0.4.0" }
 tungstenite = "0.28"

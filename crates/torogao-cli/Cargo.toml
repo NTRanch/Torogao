@@ -9,8 +9,8 @@ description = "The Torogao command-line tools: the registry, MCP and A2A servers
 [dependencies]
 serde_json = { workspace = true }
 sha2 = "0.10"
-torogao-engine = { path = "../torogao-engine" }
-torogao-format = { path = "../torogao-format" }
+torogao-engine = { path = "../torogao-engine", version = "0.4.0" }
+torogao-format = { path = "../torogao-format", version = "0.4.0" }
 # WS2-W5 (D-113): the `mcp` mode's framing moves to the official
 # Rust MCP SDK, modern era only (2026-07-28). The version pin is
 # the fleet pin — one rmcp version across every estate server;

@@ -16,11 +16,11 @@ pollster = "0.4"
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"
-torogao = { path = "../torogao-cli" }
-torogao-engine = { path = "../torogao-engine" }
-torogao-format = { path = "../torogao-format" }
-torogao-session = { path = "../torogao-session" }
-torogao-vmc = { path = "../torogao-vmc" }
+torogao = { path = "../torogao-cli", version = "0.4.0" }
+torogao-engine = { path = "../torogao-engine", version = "0.4.0" }
+torogao-format = { path = "../torogao-format", version = "0.4.0" }
+torogao-session = { path = "../torogao-session", version = "0.4.0" }
+torogao-vmc = { path = "../torogao-vmc", version = "0.4.0" }
 wgpu = "29"
 winit = "0.30"
 

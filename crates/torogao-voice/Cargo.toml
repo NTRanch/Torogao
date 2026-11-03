@@ -9,7 +9,7 @@ description = "Voice control for Torogao: a deterministic command grammar over t
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
-torogao = { path = "../torogao-cli" }
+torogao = { path = "../torogao-cli", version = "0.4.0" }
 
 [lib]
 name = "torogao_voice"
