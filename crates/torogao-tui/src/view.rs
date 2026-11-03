@@ -208,10 +208,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
     } else {
         "torogao — terminal front-end".to_string()
     };
-    frame.render_widget(
-        Paragraph::new(line).block(theme.block(&title, false)),
-        area,
-    );
+    frame.render_widget(Paragraph::new(line).block(theme.block(&title, false)), area);
 }
 
 fn draw_status(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
