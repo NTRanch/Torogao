@@ -1,0 +1,28 @@
+// vrm-profile/1 — DELIBERATE TEST PROFILE for the D-654
+// Vivienne pilot proving case. This is not a publication
+// profile: the name says TEST PROFILE so no consumer can
+// mistake it for a release. A real per-character profile is
+// authored deliberately before any public export.
+//
+// Field notes: authors carries the studio name only (Owner
+// name rule, D-489). The sexual-usage allowance is true
+// because Vivienne is an adult-lane cast member and a false
+// value would misdescribe the character; every other
+// permission stays at its most restrictive explicit value.
+(
+    id: "vrm-profile/1",
+    name: "Vivienne (D-654 pilot) — TEST PROFILE",
+    version: "0.1.0-test",
+    authors: ["Nice Thoughts Ranch"],
+    copyright_information: Some("TEST PROFILE for pipeline proving (D-748/D-749); not a publication release."),
+    license_url: "https://vrm.dev/licenses/1.0/",
+    avatar_permission: OnlyAuthor,
+    allow_excessively_violent_usage: false,
+    allow_excessively_sexual_usage: true,
+    commercial_usage: PersonalNonProfit,
+    allow_political_or_religious_usage: false,
+    allow_antisocial_or_hate_usage: false,
+    credit_notation: Required,
+    allow_redistribution: false,
+    modification: Prohibited,
+)

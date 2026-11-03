@@ -11,6 +11,7 @@ members = [
     "crates/torogao-tui",
     "crates/torogao-vmc",
     "crates/torogao-voice",
+    "crates/torogao-vrm",
 ]
 # torogao-accel is a standalone-gated crate: it keeps its own
 # [workspace] and its own gate runs, and is excluded here explicitly

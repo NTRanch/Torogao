@@ -1,0 +1,18 @@
+[package]
+name = "torogao-vrm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "VRM 1.0 export for Torogao: vrm-profile/1 permission records, GLB to VRM export with byte-preserved geometry, and read-back validation."
+
+[dependencies]
+ron = "0.8"
+serde = { workspace = true }
+# float_roundtrip is load-bearing, not a preference: without
+# it serde_json parses floats on a fast path that can land
+# 1 ulp off, so a parse/write/parse round-trip silently
+# changes geometry values (proven on the D-654 pilot model,
+# nodes[15].translation[2]). Byte preservation is this crate's
+# core claim, so parsing must be exact.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
