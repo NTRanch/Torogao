@@ -457,6 +457,10 @@ pub enum NativeCommand {
     /// Toggle Nerd mode (Settings meta register + hotkey;
     /// persisted as Addition S state).
     ToggleNerdMode,
+    /// Toggle 120 fps presentation interpolation
+    /// (fps arm D; Settings register; persisted as
+    /// Addition S state).
+    TogglePresentationInterpolation,
     /// Save the session state (Nerd mode: Save state).
     SaveSessionState,
     /// Load a session state (Nerd mode: Load state).
@@ -674,6 +678,16 @@ pub fn native_commands(area: Area) -> Vec<Command> {
                 register: Register::Resting,
             },
             Command {
+                id: "native:toggle-presentation-interpolation".to_string(),
+                label: "120 fps presentation".to_string(),
+                summary: "120 fps presentation interpolation (arm D) — toggle".to_string(),
+                detail: "Interpolates between the evaluated 60 Hz frames to present at 120 fps. Presentation only: interpolated frames are never evaluated state and never enter a hash, a save, or a take. The evaluation rate does not change. The choice persists as Addition S state.".to_string(),
+                affordance: "Enter or click — toggle".to_string(),
+                kind: CommandKind::Native(NativeCommand::TogglePresentationInterpolation),
+                layout: Layout::ListRow,
+                register: Register::Resting,
+            },
+            Command {
                 id: "native:save-session-state".to_string(),
                 label: "Save state".to_string(),
                 summary: "Save state — write the session to a file".to_string(),
@@ -885,6 +899,10 @@ pub struct PersonaState {
     /// Whether Nerd mode is on (the persisted preference;
     /// false = the Persona stage, the default).
     pub nerd_mode: bool,
+    /// Whether 120 fps presentation interpolation
+    /// (fps arm D) is on (the persisted preference;
+    /// true = interpolated presentation, the default).
+    pub presentation_interpolation: bool,
 }
 
 impl Default for PersonaState {
@@ -907,6 +925,7 @@ impl PersonaState {
             transition: None,
             pull_step: HOST_PULL_STEPS,
             nerd_mode: false,
+            presentation_interpolation: true,
         }
     }
 
@@ -1107,11 +1126,33 @@ pub fn result_register(is_error: bool) -> ResultRegister {
 // exactly this one write class to the app's C2 audit list.
 
 /// The persisted presentation preference.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PreferenceState {
     /// Whether Nerd mode is on. Default false: the
     /// Persona stage is the default UI.
     pub nerd_mode: bool,
+    /// Whether 120 fps presentation interpolation
+    /// (fps arm D) is on. Default true: the frame-rate
+    /// trial's recommendation is to ship arm D for smooth
+    /// playback. Files written before this field existed
+    /// load with it on via the serde default.
+    #[serde(default = "default_presentation_interpolation")]
+    pub presentation_interpolation: bool,
+}
+
+/// The serde default for `presentation_interpolation`
+/// (see the field): on.
+fn default_presentation_interpolation() -> bool {
+    true
+}
+
+impl Default for PreferenceState {
+    fn default() -> PreferenceState {
+        PreferenceState {
+            nerd_mode: false,
+            presentation_interpolation: true,
+        }
+    }
 }
 
 /// The preference file's path under the Addition S
@@ -1849,9 +1890,49 @@ mod tests {
     fn preference_round_trips_and_defaults_to_persona() {
         let dir = std::env::temp_dir().join(format!("torogao-persona-test-{}", std::process::id()));
         let path = dir.join("persona-preference.json");
-        assert_eq!(load_preference(&path), PreferenceState { nerd_mode: false });
-        save_preference(&path, &PreferenceState { nerd_mode: true }).expect("save");
-        assert_eq!(load_preference(&path), PreferenceState { nerd_mode: true });
+        assert_eq!(
+            load_preference(&path),
+            PreferenceState {
+                nerd_mode: false,
+                presentation_interpolation: true
+            }
+        );
+        save_preference(
+            &path,
+            &PreferenceState {
+                nerd_mode: true,
+                presentation_interpolation: false,
+            },
+        )
+        .expect("save");
+        assert_eq!(
+            load_preference(&path),
+            PreferenceState {
+                nerd_mode: true,
+                presentation_interpolation: false
+            }
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn preference_legacy_file_defaults_interpolation_on() {
+        // A preference file written before the arm D
+        // field existed carries only `nerd_mode`; the
+        // missing field must load as on (the trial's
+        // recommendation), not as serde's bool default.
+        let dir =
+            std::env::temp_dir().join(format!("torogao-persona-legacy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("persona-preference.json");
+        std::fs::write(&path, "{\"nerd_mode\":true}").expect("write legacy preference");
+        assert_eq!(
+            load_preference(&path),
+            PreferenceState {
+                nerd_mode: true,
+                presentation_interpolation: true
+            }
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

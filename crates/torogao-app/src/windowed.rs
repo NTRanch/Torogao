@@ -20,7 +20,7 @@ use winit::window::{Window, WindowId};
 use crate::error::{AppError, AppResult};
 use crate::persona::{CommandKind, NativeCommand};
 use crate::player::PlayHost;
-use crate::render::{Renderer, VIEWPORT_SIDE_MAX, cap_canvas, prepare_frame};
+use crate::render::{PreparedFrame, Renderer, VIEWPORT_SIDE_MAX, cap_canvas, prepare_frame};
 use crate::scene::{STEP_SECONDS, Scene};
 use crate::session_host::{AppBridge, BridgeRequest};
 use crate::state::{Selection, ShellState};
@@ -80,6 +80,22 @@ struct Shell {
     session_rx: Option<std::sync::mpsc::Receiver<BridgeRequest>>,
     session_note: String,
     last_step: std::time::Instant,
+    /// The earlier bracket of the presented frame pair
+    /// (arm D presentation interpolation): the evaluated
+    /// frame before `present_curr`. `None` whenever no
+    /// continuous pair exists — not advancing, an edit or
+    /// a session op landed, or interpolation is off — in
+    /// which case the presented frame is `present_curr`
+    /// itself.
+    present_prev: Option<PreparedFrame>,
+    /// The latest evaluated frame, prepared for the
+    /// viewport. Derived data only: it is never written
+    /// back into the scene.
+    present_curr: Option<PreparedFrame>,
+    /// The play step count `present_curr` was prepared
+    /// at; a change means playback stepped and the pair
+    /// may roll.
+    present_step_count: u64,
     /// Whether the physics debug overlay (anchor-to-bob
     /// segments) draws over the viewport.
     debug_physics: bool,
@@ -115,6 +131,7 @@ impl Shell {
             .unwrap_or_default();
         let mut persona = crate::persona::PersonaState::new();
         persona.nerd_mode = preference.nerd_mode;
+        persona.presentation_interpolation = preference.presentation_interpolation;
         Shell {
             state: ShellState::new(),
             play: PlayHost::new(),
@@ -136,6 +153,9 @@ impl Shell {
             session_rx: None,
             session_note: String::new(),
             last_step: std::time::Instant::now(),
+            present_prev: None,
+            present_curr: None,
+            present_step_count: 0,
             debug_physics: false,
             save_path_input: String::new(),
             pending_save: None,
@@ -158,6 +178,9 @@ impl Shell {
             Ok(scene) => {
                 self.state.install_scene(scene);
                 self.play = PlayHost::new();
+                self.present_prev = None;
+                self.present_curr = None;
+                self.present_step_count = 0;
                 self.last_step = std::time::Instant::now();
                 self.expanded.clear();
                 if let Some(scene) = &self.state.scene {
@@ -245,6 +268,14 @@ impl Shell {
         let (shell, play) = bridge.into_parts();
         self.state = shell;
         self.play = play;
+        // A session op may have stepped or edited the
+        // scene discontinuously: the presentation pair
+        // must not blend across it, and the step counter
+        // re-syncs to the returned play host so the op's
+        // own steps are not mistaken for a playback roll.
+        self.present_prev = None;
+        self.present_curr = None;
+        self.present_step_count = self.play.step_count();
         self.viewport_dirty = true;
     }
 
@@ -306,9 +337,30 @@ impl Shell {
     /// when the toggle changes).
     fn toggle_nerd_mode(&mut self) {
         self.persona.nerd_mode = !self.persona.nerd_mode;
+        self.save_preference_state();
+    }
+
+    /// Flips 120 fps presentation interpolation (arm D),
+    /// persisting the choice as Addition S state (the
+    /// same write class as the Nerd-mode toggle). Turning
+    /// it off drops the frame pair: presentation returns
+    /// to the evaluated frames themselves.
+    fn toggle_presentation_interpolation(&mut self) {
+        self.persona.presentation_interpolation = !self.persona.presentation_interpolation;
+        if !self.persona.presentation_interpolation {
+            self.present_prev = None;
+        }
+        self.save_preference_state();
+    }
+
+    /// Persists the presentation preference (both
+    /// toggles) when a state path resolves; a failure is
+    /// a status line, never a shell failure.
+    fn save_preference_state(&mut self) {
         if let Some(path) = crate::persona::preference_path() {
             let pref = crate::persona::PreferenceState {
                 nerd_mode: self.persona.nerd_mode,
+                presentation_interpolation: self.persona.presentation_interpolation,
             };
             if let Err(err) = crate::persona::save_preference(&path, &pref) {
                 self.state.status = format!("preference save failed: {err}");
@@ -464,6 +516,13 @@ impl Shell {
                     .changed()
                 {
                     self.viewport_dirty = true;
+                }
+                let mut interpolation = self.persona.presentation_interpolation;
+                if ui
+                    .checkbox(&mut interpolation, "120 fps presentation")
+                    .changed()
+                {
+                    self.toggle_presentation_interpolation();
                 }
                 ui.horizontal(|ui| {
                     ui.text_edit_singleline(&mut self.save_path_input);
@@ -798,20 +857,73 @@ impl Shell {
         self.drain_session_requests();
         self.advance_playback();
         self.advance_persona();
-        if self.viewport_dirty {
+        // Arm D presentation: the viewport shows the
+        // evaluated frame itself, or — while playback
+        // advances with interpolation on and a continuous
+        // frame pair exists — the blend between the two
+        // bracketing evaluated frames at the fixed-step
+        // clock's phase. The pair rolls only across a
+        // playback step; any other scene change (an edit,
+        // a session op, a pause) drops the earlier bracket
+        // so presentation never blends across a
+        // discontinuity. Interpolated frames are derived
+        // data: nothing here writes back into the scene.
+        let step_count = self.play.step_count();
+        let stepped = step_count != self.present_step_count;
+        if !self.play.is_advancing() {
+            self.present_prev = None;
+        }
+        let interpolating = self.persona.presentation_interpolation
+            && self.play.is_advancing()
+            && self.present_prev.is_some();
+        if self.viewport_dirty || stepped || interpolating {
             if let (Some(renderer), Some(egui_renderer), Some(scene)) = (
                 self.renderer.as_mut(),
                 self.egui_renderer.as_mut(),
                 self.state.scene.as_mut(),
             ) {
-                refresh_viewport(
-                    renderer,
-                    egui_renderer,
-                    &mut self.viewport,
-                    scene,
-                    &mut self.state.status,
-                    self.debug_physics,
-                );
+                if self.viewport_dirty || stepped {
+                    match prepare_frame(scene) {
+                        Ok(frame) => {
+                            // The pair rolls only across a
+                            // playback step with interpolation
+                            // on; any other fresh frame (an
+                            // edit, a load, interpolation off)
+                            // starts unpaired.
+                            if stepped
+                                && self.play.is_advancing()
+                                && self.persona.presentation_interpolation
+                            {
+                                self.present_prev = self.present_curr.take();
+                            } else {
+                                self.present_prev = None;
+                            }
+                            self.present_curr = Some(frame);
+                            self.present_step_count = step_count;
+                        }
+                        Err(err) => {
+                            self.state.status = format!("frame preparation failed: {err}");
+                        }
+                    }
+                }
+                if let Some(curr) = &self.present_curr {
+                    let phase =
+                        crate::present::presentation_phase(self.last_step.elapsed().as_secs_f64());
+                    let presented = crate::present::presented_frame(
+                        self.present_prev.as_ref(),
+                        curr,
+                        phase,
+                        self.persona.presentation_interpolation && self.play.is_advancing(),
+                    );
+                    refresh_viewport(
+                        renderer,
+                        egui_renderer,
+                        &mut self.viewport,
+                        scene,
+                        &presented,
+                        self.debug_physics,
+                    );
+                }
             }
             self.viewport_dirty = false;
         }
@@ -1353,6 +1465,18 @@ impl Shell {
                                     }
                                 }
                                 CommandKind::Native(
+                                    NativeCommand::TogglePresentationInterpolation,
+                                ) => {
+                                    let label = if self.persona.presentation_interpolation {
+                                        "120 fps presentation: ON — Enter turns it off"
+                                    } else {
+                                        "120 fps presentation: OFF — Enter turns it on"
+                                    };
+                                    if ui.button(label).clicked() {
+                                        self.toggle_presentation_interpolation();
+                                    }
+                                }
+                                CommandKind::Native(
                                     NativeCommand::SaveSessionState
                                     | NativeCommand::LoadSessionState,
                                 ) => {
@@ -1542,6 +1666,9 @@ impl Shell {
             CommandKind::Native(NativeCommand::ToggleNerdMode) => {
                 self.toggle_nerd_mode();
             }
+            CommandKind::Native(NativeCommand::TogglePresentationInterpolation) => {
+                self.toggle_presentation_interpolation();
+            }
             CommandKind::Native(NativeCommand::SaveSessionState) => {
                 let path = std::path::PathBuf::from(self.save_path_input.trim());
                 if !path.as_os_str().is_empty() {
@@ -1598,24 +1725,18 @@ impl ApplicationHandler for Shell {
     }
 }
 
-/// Re-renders the viewport texture from the scene's current
-/// evaluated state, recreating the texture when the canvas
-/// size changed.
+/// Re-renders the viewport texture from one prepared
+/// frame (the evaluated frame, or the arm D blend the
+/// shell selected), recreating the texture when the
+/// canvas size changed.
 fn refresh_viewport(
     renderer: &mut Renderer,
     egui_renderer: &mut egui_wgpu::Renderer,
     viewport: &mut Option<ViewportTexture>,
     scene: &mut Scene,
-    status: &mut String,
+    frame: &PreparedFrame,
     debug_physics: bool,
 ) {
-    let frame = match prepare_frame(scene) {
-        Ok(frame) => frame,
-        Err(err) => {
-            *status = format!("frame preparation failed: {err}");
-            return;
-        }
-    };
     let canvas = cap_canvas(frame.canvas, VIEWPORT_SIDE_MAX);
     let size = [canvas.width, canvas.height];
     let needs_new = viewport
@@ -1660,7 +1781,7 @@ fn refresh_viewport(
     };
     renderer.draw_into(
         scene,
-        &frame,
+        frame,
         &view,
         (size[0], size[1]),
         wgpu::Color::TRANSPARENT,
