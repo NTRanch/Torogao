@@ -25,6 +25,7 @@ pub mod player;
 pub mod render;
 pub mod save;
 pub mod scene;
+pub mod sdf_face;
 pub mod session_host;
 pub mod state;
 pub mod state_hash;
