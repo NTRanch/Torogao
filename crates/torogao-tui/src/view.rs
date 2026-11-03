@@ -178,7 +178,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
         Some(open) => format!("{} · sha {}", open.project.header.name, short(&open.sha256)),
         None => "no project open".to_string(),
     };
-    let mut spans = vec![
+    let spans = vec![
         Span::styled(
             " TOROGAO TUI ",
             Style::default()
@@ -192,21 +192,24 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App, theme: Theme) {
             theme.text(),
         ),
     ];
-    // DEC-2 (D-639): three sparkles on the title rule,
-    // Projects and Media headers only.
-    if app.decorations_on && matches!(app.screen, Screen::Projects | Screen::Media) {
-        spans.push(Span::raw("  "));
-        for pos in 0..3 {
-            spans.push(Span::styled(
-                sparkle(app.tick_count, pos).to_string(),
-                Style::default().fg(theme.heading),
-            ));
-            spans.push(Span::raw(" "));
-        }
-    }
     let line = Line::from(spans);
+    // DEC-2 (D-639): three sparkles ride the header block's
+    // title — Projects and Media only. The title rule always
+    // has room; appending them to the content line clipped
+    // them off-screen at the 120-column reference width
+    // (found by the slice's capture set).
+    let title = if app.decorations_on && matches!(app.screen, Screen::Projects | Screen::Media) {
+        format!(
+            "torogao — terminal front-end  {} {} {} ",
+            sparkle(app.tick_count, 0),
+            sparkle(app.tick_count, 1),
+            sparkle(app.tick_count, 2)
+        )
+    } else {
+        "torogao — terminal front-end".to_string()
+    };
     frame.render_widget(
-        Paragraph::new(line).block(theme.block("torogao — terminal front-end", false)),
+        Paragraph::new(line).block(theme.block(&title, false)),
         area,
     );
 }
