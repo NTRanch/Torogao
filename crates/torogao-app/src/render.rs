@@ -111,7 +111,7 @@ pub struct PreparedMask {
 }
 
 /// A fully prepared frame: canvas plus parts in draw order.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PreparedFrame {
     /// The frame's canvas.
     pub canvas: Canvas,

@@ -22,6 +22,7 @@ pub mod font;
 pub mod headless;
 pub mod persona;
 pub mod player;
+pub mod present;
 pub mod render;
 pub mod save;
 pub mod scene;
