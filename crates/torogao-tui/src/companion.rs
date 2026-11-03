@@ -134,6 +134,7 @@ pub fn fit_rect(pane: (u16, u16, u16, u16)) -> (u16, u16, u16, u16) {
 /// The companion's animation state: the current frame, its
 /// decoded raster (decoded once per frame, on advance), and
 /// the direct-graphics blast cache.
+#[derive(Default)]
 pub struct CompanionState {
     /// Current frame index, `0..FRAME_COUNT`.
     pub frame: usize,
@@ -144,17 +145,6 @@ pub struct CompanionState {
     /// The graphics blast cache: (signature, escape text)
     /// the shell writes after the frame draw.
     pub blast: Option<(u64, String)>,
-}
-
-impl Default for CompanionState {
-    fn default() -> CompanionState {
-        CompanionState {
-            frame: 0,
-            raster: None,
-            raster_frame: None,
-            blast: None,
-        }
-    }
 }
 
 impl CompanionState {
