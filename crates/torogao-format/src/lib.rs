@@ -21,6 +21,7 @@ pub mod container;
 pub mod error;
 pub mod jsonfmt;
 pub mod limits;
+pub mod mmd_ingest;
 pub mod model;
 pub mod parse_error;
 pub mod payload;
