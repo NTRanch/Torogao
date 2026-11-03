@@ -20,6 +20,7 @@ pub const TG_AUDIO_FREQ: &str = "TG-AUDIO-FREQ";
 pub const TG_AUDIO_GAIN: &str = "TG-AUDIO-GAIN";
 pub const TG_AUDIO_SEED: &str = "TG-AUDIO-SEED";
 pub const TG_AUDIO_STEM_TYPE: &str = "TG-AUDIO-STEM-TYPE";
+pub const TG_AUDIO_SUBLIMINAL_SOURCE: &str = "TG-AUDIO-SUBLIMINAL-SOURCE";
 pub const TG_AUDIO_TARGET: &str = "TG-AUDIO-TARGET";
 
 fn get_d(v: &Value, key: &str, fallback: f64) -> f64 {
@@ -159,7 +160,7 @@ pub fn validate_recipe(recipe: &Value) -> Vec<Finding> {
     for (i, stem) in stems.iter().enumerate() {
         let prefix = format!("stem {i}: ");
         let ty = jstr(stem, "type");
-        if !["sine", "binaural", "noise", "tone"].contains(&ty) {
+        if !["sine", "binaural", "noise", "tone", "subliminal"].contains(&ty) {
             add(
                 TG_AUDIO_STEM_TYPE,
                 format!("{prefix}unknown stem type \"{ty}\""),
@@ -213,6 +214,31 @@ pub fn validate_recipe(recipe: &Value) -> Vec<Finding> {
                     );
                 }
             }
+            "subliminal" => {
+                let params = subliminal_params(stem, get_i(recipe, "seed", 0));
+                if let Err(message) = params.check(AUDIO_SAMPLE_RATE) {
+                    let code: &'static str =
+                        if message.starts_with(crate::subliminal::TG_SUBLIMINAL_NYQUIST) {
+                            crate::subliminal::TG_SUBLIMINAL_NYQUIST
+                        } else {
+                            crate::subliminal::TG_SUBLIMINAL_PARAM
+                        };
+                    let text = message.split_once(": ").map_or(message.as_str(), |(_, t)| t);
+                    findings.push(Finding::new(
+                        code,
+                        "error",
+                        String::new(),
+                        format!("{prefix}{text}"),
+                    ));
+                }
+                if jstr(stem, "sourceStem").is_empty() {
+                    add(
+                        TG_AUDIO_SUBLIMINAL_SOURCE,
+                        format!("{prefix}subliminal stem needs a sourceStem naming the stem it encodes"),
+                        &mut findings,
+                    );
+                }
+            }
             _ => {}
         }
         let env = jget(stem, "envelope");
@@ -236,7 +262,65 @@ pub fn validate_recipe(recipe: &Value) -> Vec<Finding> {
             );
         }
     }
+    // A subliminal stem encodes a named sibling stem: names
+    // are unique, and the source must exist and not itself be
+    // a subliminal stem.
+    let mut named: Vec<String> = Vec::new();
+    for stem in stems {
+        let name = jstr(stem, "name");
+        if !name.is_empty() {
+            if named.iter().any(|n| n.as_str() == name) {
+                add(
+                    TG_AUDIO_STEM_TYPE,
+                    format!("stem name \"{name}\" is used twice"),
+                    &mut findings,
+                );
+            }
+            named.push(name.to_string());
+        }
+    }
+    for (i, stem) in stems.iter().enumerate() {
+        if jstr(stem, "type") == "subliminal" {
+            let source = jstr(stem, "sourceStem");
+            let found = stems
+                .iter()
+                .find(|s| jstr(s, "name") == source && jstr(s, "type") != "subliminal");
+            if !source.is_empty() && found.is_none() {
+                add(
+                    TG_AUDIO_SUBLIMINAL_SOURCE,
+                    format!(
+                        "stem {i}: sourceStem \"{source}\" names no non-subliminal stem in this recipe"
+                    ),
+                    &mut findings,
+                );
+            }
+        }
+    }
     findings
+}
+
+/// The encoding parameters a `subliminal` stem declares,
+/// with the recipe seed as the carrier-phase seed.
+pub fn subliminal_params(stem: &Value, seed: i64) -> crate::subliminal::SubliminalParams {
+    crate::subliminal::SubliminalParams {
+        carrier_hz: get_d(stem, "carrierHz", 16_000.0),
+        band_low_hz: get_d(
+            stem,
+            "bandLowHz",
+            crate::subliminal::BAND_LOW_DEFAULT_HZ,
+        ),
+        band_high_hz: get_d(
+            stem,
+            "bandHighHz",
+            crate::subliminal::BAND_HIGH_DEFAULT_HZ,
+        ),
+        encoder_gain: get_d(
+            stem,
+            "encoderGain",
+            crate::subliminal::ENCODER_GAIN_DEFAULT,
+        ),
+        seed: seed as u64,
+    }
 }
 
 // -- Loudness ---------------------------------------------------
@@ -435,66 +519,199 @@ fn envelope_at(stem: &Value, t: f64, stem_dur: f64) -> f64 {
     g
 }
 
-pub fn synthesize(recipe: &Value, frames: usize) -> Vec<Vec<f64>> {
-    let mut channels = vec![vec![0.0f64; frames], vec![0.0f64; frames]];
-    let duration = get_d(recipe, "durationSeconds", 0.0);
-    let seed = get_i(recipe, "seed", 0) as u64;
-    let stems_v = jget(recipe, "stems");
-    let Some(stems) = stems_v.as_array() else {
-        return channels;
-    };
+/// The render census of one `subliminal` stem: its declared
+/// encoding parameters and the measured fraction of its
+/// energy inside the transplanted band. The render refuses
+/// a stem whose measured spectrum escapes the band law.
+#[derive(Clone, Debug)]
+pub struct SubliminalCensus {
+    /// Index of the stem in the recipe.
+    pub stem: usize,
+    /// The stem's name, when it carries one.
+    pub name: String,
+    /// Carrier frequency in Hz.
+    pub carrier_hz: f64,
+    /// Speech-band low edge in Hz.
+    pub band_low_hz: f64,
+    /// Speech-band high edge in Hz.
+    pub band_high_hz: f64,
+    /// Encoder gain.
+    pub encoder_gain: f64,
+    /// Measured in-band energy fraction of the encoded stem.
+    pub band_fraction: f64,
+}
+
+/// Renders one non-subliminal stem into its own stereo
+/// buffer. The per-type math is the renderer's standing
+/// math; rendering per stem (instead of straight into the
+/// mix) is what lets a `subliminal` stem encode a named
+/// sibling's samples.
+fn synthesize_stem(stem: &Value, seed: u64, duration: f64, frames: usize) -> [Vec<f64>; 2] {
+    let mut channels = [vec![0.0f64; frames], vec![0.0f64; frames]];
+    let ty = jstr(stem, "type");
+    let gain = get_d(stem, "gain", 0.0);
+    let start = get_d(stem, "startSeconds", 0.0);
+    let stem_dur = get_d(stem, "durationSeconds", duration - start);
     let rate = AUDIO_SAMPLE_RATE as f64;
-    for stem in stems {
-        let ty = jstr(stem, "type");
-        let gain = get_d(stem, "gain", 0.0);
-        let start = get_d(stem, "startSeconds", 0.0);
-        let stem_dur = get_d(stem, "durationSeconds", duration - start);
-        let n0 = (start * rate) as usize;
-        let n1 = (((start + stem_dur) * rate) as usize).min(frames);
-        match ty {
-            "sine" | "tone" => {
-                let f = get_d(stem, "freqHz", 0.0);
-                for n in n0..n1 {
-                    let t = n as f64 / rate;
-                    let v = gain
-                        * (2.0 * std::f64::consts::PI * f * t).sin()
-                        * envelope_at(stem, t, stem_dur);
-                    channels[0][n] += v;
-                    channels[1][n] += v;
-                }
+    let n0 = (start * rate) as usize;
+    let n1 = (((start + stem_dur) * rate) as usize).min(frames);
+    match ty {
+        "sine" | "tone" => {
+            let f = get_d(stem, "freqHz", 0.0);
+            for n in n0..n1 {
+                let t = n as f64 / rate;
+                let v = gain
+                    * (2.0 * std::f64::consts::PI * f * t).sin()
+                    * envelope_at(stem, t, stem_dur);
+                channels[0][n] += v;
+                channels[1][n] += v;
             }
-            "binaural" => {
-                let base = get_d(stem, "baseHz", 0.0);
-                let beat = get_d(stem, "beatHz", 0.0);
-                let fl = base - beat / 2.0;
-                let fr = base + beat / 2.0;
-                for n in n0..n1 {
-                    let t = n as f64 / rate;
-                    let e = envelope_at(stem, t, stem_dur);
-                    channels[0][n] += gain * (2.0 * std::f64::consts::PI * fl * t).sin() * e;
-                    channels[1][n] += gain * (2.0 * std::f64::consts::PI * fr * t).sin() * e;
-                }
+        }
+        "binaural" => {
+            let base = get_d(stem, "baseHz", 0.0);
+            let beat = get_d(stem, "beatHz", 0.0);
+            let fl = base - beat / 2.0;
+            let fr = base + beat / 2.0;
+            for n in n0..n1 {
+                let t = n as f64 / rate;
+                let e = envelope_at(stem, t, stem_dur);
+                channels[0][n] += gain * (2.0 * std::f64::consts::PI * fl * t).sin() * e;
+                channels[1][n] += gain * (2.0 * std::f64::consts::PI * fr * t).sin() * e;
             }
-            "noise" => {
-                let cutoff = get_d(stem, "cutoffHz", 1000.0);
-                let a = 1.0 - (-2.0 * std::f64::consts::PI * cutoff / rate).exp();
-                for (ch_idx, channel) in channels.iter_mut().enumerate() {
-                    let mut rng =
-                        Xoshiro256::from_seed(seed.wrapping_add(7919 * (ch_idx as u64 + 1)));
-                    let mut lp = 0.0f64;
-                    for (n, sample) in channel.iter_mut().enumerate().take(n1) {
-                        lp += a * (rng.uniform() - lp);
-                        if n >= n0 {
-                            let t = n as f64 / rate;
-                            *sample += gain * lp * envelope_at(stem, t, stem_dur);
-                        }
+        }
+        "noise" => {
+            let cutoff = get_d(stem, "cutoffHz", 1000.0);
+            let a = 1.0 - (-2.0 * std::f64::consts::PI * cutoff / rate).exp();
+            for (ch_idx, channel) in channels.iter_mut().enumerate() {
+                let mut rng = Xoshiro256::from_seed(seed.wrapping_add(7919 * (ch_idx as u64 + 1)));
+                let mut lp = 0.0f64;
+                for (n, sample) in channel.iter_mut().enumerate().take(n1) {
+                    lp += a * (rng.uniform() - lp);
+                    if n >= n0 {
+                        let t = n as f64 / rate;
+                        *sample += gain * lp * envelope_at(stem, t, stem_dur);
                     }
                 }
             }
-            _ => {}
         }
+        _ => {}
     }
     channels
+}
+
+/// Renders one `subliminal` stem: encodes the named source
+/// stem's mono sum through `subliminal-encode/1`, then
+/// applies this stem's gain, envelope and window. A source
+/// that cannot be encoded (validation refuses such recipes
+/// before render) renders silence.
+fn synthesize_subliminal_stem(
+    stem: &Value,
+    source: &[Vec<f64>; 2],
+    seed: i64,
+    duration: f64,
+    frames: usize,
+) -> ([Vec<f64>; 2], f64) {
+    let mut channels = [vec![0.0f64; frames], vec![0.0f64; frames]];
+    let params = subliminal_params(stem, seed);
+    let mono: Vec<f64> = source[0]
+        .iter()
+        .zip(source[1].iter())
+        .map(|(l, r)| (l + r) * 0.5)
+        .collect();
+    let Ok(encoded) = crate::subliminal::encode_subliminal(&mono, &params, AUDIO_SAMPLE_RATE)
+    else {
+        return (channels, 0.0);
+    };
+    // The spectrum census measures the encoded stem itself,
+    // before this stem's gain and envelope shape it.
+    let band_fraction = crate::subliminal::band_energy_fraction(
+        &encoded,
+        AUDIO_SAMPLE_RATE,
+        params.carrier_hz + params.band_low_hz,
+        params.carrier_hz + params.band_high_hz,
+    );
+    let gain = get_d(stem, "gain", 0.0);
+    let start = get_d(stem, "startSeconds", 0.0);
+    let stem_dur = get_d(stem, "durationSeconds", duration - start);
+    let rate = AUDIO_SAMPLE_RATE as f64;
+    let n0 = (start * rate) as usize;
+    let n1 = (((start + stem_dur) * rate) as usize).min(frames);
+    for n in n0..n1 {
+        let t = n as f64 / rate;
+        let v = gain * encoded[n] * envelope_at(stem, t, stem_dur);
+        channels[0][n] += v;
+        channels[1][n] += v;
+    }
+    (channels, band_fraction)
+}
+
+/// Synthesizes the mix and the per-stem subliminal census.
+/// Buffers are summed in recipe order, so a recipe without
+/// subliminal stems renders exactly what it always did.
+pub fn synthesize_mix(recipe: &Value, frames: usize) -> (Vec<Vec<f64>>, Vec<SubliminalCensus>) {
+    let duration = get_d(recipe, "durationSeconds", 0.0);
+    let seed = get_i(recipe, "seed", 0);
+    let stems_v = jget(recipe, "stems");
+    let Some(stems) = stems_v.as_array() else {
+        return (vec![vec![0.0f64; frames], vec![0.0f64; frames]], Vec::new());
+    };
+    let mut buffers: Vec<Option<[Vec<f64>; 2]>> = Vec::with_capacity(stems.len());
+    let mut census: Vec<SubliminalCensus> = Vec::new();
+    for stem in stems {
+        if jstr(stem, "type") == "subliminal" {
+            buffers.push(None);
+            continue;
+        }
+        buffers.push(Some(synthesize_stem(
+            stem,
+            seed as u64,
+            duration,
+            frames,
+        )));
+    }
+    for (index, stem) in stems.iter().enumerate() {
+        if jstr(stem, "type") != "subliminal" {
+            continue;
+        }
+        let source_name = jstr(stem, "sourceStem");
+        let source = stems.iter().enumerate().find_map(|(i, s)| {
+            if jstr(s, "name") == source_name && jstr(s, "type") != "subliminal" {
+                buffers[i].as_ref()
+            } else {
+                None
+            }
+        });
+        let Some(source) = source else {
+            buffers[index] = Some([vec![0.0f64; frames], vec![0.0f64; frames]]);
+            continue;
+        };
+        let (rendered, band_fraction) =
+            synthesize_subliminal_stem(stem, source, seed, duration, frames);
+        let params = subliminal_params(stem, seed);
+        census.push(SubliminalCensus {
+            stem: index,
+            name: jstr(stem, "name").to_string(),
+            carrier_hz: params.carrier_hz,
+            band_low_hz: params.band_low_hz,
+            band_high_hz: params.band_high_hz,
+            encoder_gain: params.encoder_gain,
+            band_fraction,
+        });
+        buffers[index] = Some(rendered);
+    }
+    let mut channels = vec![vec![0.0f64; frames], vec![0.0f64; frames]];
+    for buffer in buffers.into_iter().flatten() {
+        for (channel, stem_channel) in channels.iter_mut().zip(buffer.iter()) {
+            for (sample, value) in channel.iter_mut().zip(stem_channel.iter()) {
+                *sample += value;
+            }
+        }
+    }
+    (channels, census)
+}
+
+pub fn synthesize(recipe: &Value, frames: usize) -> Vec<Vec<f64>> {
+    synthesize_mix(recipe, frames).0
 }
 
 // -- Rendering ----------------------------------------------------
@@ -519,7 +736,21 @@ pub fn render_recipe(recipe: &Value, recipe_text: &str, out_dir: &str) -> Render
     }
     let duration = get_d(recipe, "durationSeconds", 0.0);
     let frames = (duration * AUDIO_SAMPLE_RATE as f64 + 0.5) as usize;
-    let mut channels = synthesize(recipe, frames);
+    let (mut channels, census) = synthesize_mix(recipe, frames);
+    for entry in &census {
+        if entry.band_fraction < crate::subliminal::SPECTRUM_BAND_MIN {
+            return RenderResult {
+                manifest: Value::Null,
+                error: format!(
+                    "{}: stem {} measured band energy fraction {:.4} below the law {}; refused, not rendered",
+                    crate::subliminal::TG_SUBLIMINAL_SPECTRUM,
+                    entry.stem,
+                    entry.band_fraction,
+                    crate::subliminal::SPECTRUM_BAND_MIN
+                ),
+            };
+        }
+    }
     let target = get_d(recipe, "targetLufs", -16.0);
     let ceiling = get_d(recipe, "truePeakDb", -1.0);
     let lufs = measure_lufs(&channels, AUDIO_SAMPLE_RATE);
@@ -589,6 +820,24 @@ pub fn render_recipe(recipe: &Value, recipe_text: &str, out_dir: &str) -> Render
     manifest.insert("truePeakCeilingDb".to_string(), json!(ceiling));
     manifest.insert("gainAppliedDb".to_string(), json!(round3(gain_db)));
     manifest.insert("license".to_string(), json!(AUDIO_LICENSE));
+    if !census.is_empty() {
+        let rows: Vec<Value> = census
+            .iter()
+            .map(|entry| {
+                json!({
+                    "stem": entry.stem,
+                    "name": entry.name,
+                    "encoder": crate::subliminal::ENCODE_FORMAT,
+                    "carrierHz": entry.carrier_hz,
+                    "bandLowHz": entry.band_low_hz,
+                    "bandHighHz": entry.band_high_hz,
+                    "encoderGain": entry.encoder_gain,
+                    "bandEnergyFraction": (entry.band_fraction * 10_000.0).round() / 10_000.0,
+                })
+            })
+            .collect();
+        manifest.insert("subliminalStems".to_string(), Value::Array(rows));
+    }
     let manifest_doc = Value::Object(manifest);
     let manifest_path = format!("{out_dir}/{name}.manifest.json");
     let text = torogao_format::jsonfmt::to_d_json(&manifest_doc);

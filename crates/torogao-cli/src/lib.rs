@@ -38,6 +38,7 @@ pub mod rigexport;
 pub mod scenes;
 pub mod sessionbuild;
 pub mod specials;
+pub mod subliminal;
 pub mod templates;
 pub mod tracking;
 pub mod tutorials;
