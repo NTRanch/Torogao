@@ -1,0 +1,13 @@
+[package]
+name = "torogao-osc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "VRChat-dialect OSC parameter surface for Torogao: a bounded OSC 1.0 codec, a declared typed surface over /avatar/parameters/*, /avatar/change, /input/* and /chatbox/*, and a localhost-first UDP transport whose rejections are counted, never panicked on."
+
+[dependencies]
+
+[lib]
+name = "torogao_osc"
+path = "src/lib.rs"

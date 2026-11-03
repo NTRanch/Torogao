@@ -3213,6 +3213,10 @@ name = "torogao-jam-laws"
 version = "0.4.0"
 
 [[package]]
+name = "torogao-osc"
+version = "0.4.0"
+
+[[package]]
 name = "torogao-session"
 version = "0.4.0"
 dependencies = [
