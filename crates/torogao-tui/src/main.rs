@@ -82,6 +82,14 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) 
             _ => {}
         }
         if app.quit {
+            // App exit deletes any placed image (D-639, SPEC
+            // section 3): the blast-None cleanup above never
+            // runs on the quit turn, so the shell does it here.
+            if blasted.is_some() && app.media.mode == torogao_tui::media::GraphicsMode::Kitty {
+                let mut stdout = io::stdout();
+                stdout.write_all(torogao_tui::media::kitty_delete().as_bytes())?;
+                stdout.flush()?;
+            }
             torogao_tui::media::cleanup_preview_tmp();
             return Ok(());
         }
