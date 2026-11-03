@@ -9,6 +9,7 @@ members = [
     "crates/torogao-jam-laws",
     "crates/torogao-session",
     "crates/torogao-tui",
+    "crates/torogao-viseme",
     "crates/torogao-vmc",
     "crates/torogao-voice",
 ]
