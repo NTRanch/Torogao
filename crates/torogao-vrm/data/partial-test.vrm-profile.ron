@@ -1,0 +1,18 @@
+// vrm-profile/1 — DELIBERATELY INCOMPLETE fixture for the
+// loud-refusal proving run: `modification` and
+// `allow_redistribution` are unset, so loading this profile
+// must fail with ProfileUnset naming exactly those two fields.
+(
+    id: "vrm-profile/1",
+    name: "Incomplete Fixture",
+    version: "0.0.1",
+    authors: ["Nice Thoughts Ranch"],
+    license_url: "https://vrm.dev/licenses/1.0/",
+    avatar_permission: OnlyAuthor,
+    allow_excessively_violent_usage: false,
+    allow_excessively_sexual_usage: false,
+    commercial_usage: PersonalNonProfit,
+    allow_political_or_religious_usage: false,
+    allow_antisocial_or_hate_usage: false,
+    credit_notation: Required,
+)
