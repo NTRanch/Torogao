@@ -27,8 +27,14 @@ use crate::game::op::{
     TriggerDefineInput, ValueDefineInput,
 };
 use crate::intake::sha256_hex;
-use crate::limits::{ASSETS_MAX, AUDIO_BINDINGS_MAX, IMAGE_SIDE_MAX, PROVENANCE_TEXT_BYTES_MAX};
-use crate::model::{Asset, AudioBinding, AudioBindingKind, DeformerKind, Keyforms, Project};
+use crate::limits::{
+    ASSETS_MAX, AUDIO_BINDINGS_MAX, HYPNOSIS_GAIN_OFFSET_DB_MAX, HYPNOSIS_LAYERS_MAX,
+    IMAGE_SIDE_MAX, PROVENANCE_TEXT_BYTES_MAX, VISUAL_BINDINGS_MAX, VISUAL_LOOP_SECONDS_MAX,
+};
+use crate::model::{
+    Asset, AudioBinding, AudioBindingKind, DeformerKind, Keyforms, LoopSync, Project,
+    VisualBinding, VisualBindingKind,
+};
 use crate::op::{
     ArtBindInput, BlendInput, ClipInput, Coordinate, DeformerParentInput, DrawInput,
     ExpressionDefineInput, FormInput, GlueInput, GridInput, IdInput, InitInput, KeyformSetInput,
@@ -161,8 +167,8 @@ pub fn sweep(project: &Project) -> Result<Project, Refusal> {
         }
     }
     rebuilt.variant_sets = project.variant_sets.clone();
-    // Audio bindings have no authoring ops yet (their verbs
-    // are slice A3), so the sweep checks each stored row and
+    // Audio bindings are authored by `audio_binding_set`
+    // since Q1 (D-634); the sweep checks each stored row and
     // carries the section across, as it does for assets and
     // variant sets. Lock-state admission is NOT checked here:
     // unadmitted bindings are legal while authoring; the
@@ -174,13 +180,38 @@ pub fn sweep(project: &Project) -> Result<Project, Refusal> {
         return Err(Refusal::new(RefusalClass::Range, "too many audio bindings"));
     }
     rebuilt.audio_bindings = project.audio_bindings.clone();
+    for binding in &project.visual_bindings {
+        check_visual_binding(binding)?;
+    }
+    if project.visual_bindings.len() > VISUAL_BINDINGS_MAX {
+        return Err(Refusal::new(
+            RefusalClass::Range,
+            "too many visual bindings",
+        ));
+    }
+    rebuilt.visual_bindings = project.visual_bindings.clone();
     Ok(rebuilt)
+}
+
+/// A reference string's facts in a stored row: present and
+/// within the provenance text bound (namespace strings, never
+/// id-checked here).
+fn check_ref_field(row: &str, what: &str, value: &str) -> Result<(), Refusal> {
+    if value.is_empty() || value.len() > PROVENANCE_TEXT_BYTES_MAX {
+        return Err(Refusal::new(
+            RefusalClass::Malformed,
+            format!("binding '{row}' {what} reference is empty or over the bound"),
+        ));
+    }
+    Ok(())
 }
 
 /// The facts a stored audio-binding row must carry: the row id
 /// and its character in id syntax; the torori delivery
 /// references present and within the provenance text bound
 /// (they are torori-namespace strings, never id-checked here).
+/// A hypnosis-track row additionally carries a bounded,
+/// kind-unique layer stack with in-range gain offsets.
 fn check_audio_binding(binding: &AudioBinding) -> Result<(), Refusal> {
     check_id(&binding.id, "audio binding id")?;
     match &binding.kind {
@@ -190,15 +221,107 @@ fn check_audio_binding(binding: &AudioBinding) -> Result<(), Refusal> {
                 ("identity", &voice.delivery.identity),
                 ("record", &voice.delivery.record),
             ] {
-                if value.is_empty() || value.len() > PROVENANCE_TEXT_BYTES_MAX {
+                check_ref_field(&binding.id, &format!("delivery {what}"), value)?;
+            }
+        }
+        AudioBindingKind::HypnosisTrack(track) => {
+            check_ref_field(&binding.id, "session", &track.session)?;
+            if track.layers.is_empty() || track.layers.len() > HYPNOSIS_LAYERS_MAX {
+                return Err(Refusal::new(
+                    RefusalClass::Range,
+                    format!(
+                        "audio binding '{}' layer count {} outside [1, {}]",
+                        binding.id,
+                        track.layers.len(),
+                        HYPNOSIS_LAYERS_MAX
+                    ),
+                ));
+            }
+            let mut kinds = std::collections::BTreeSet::new();
+            for layer in &track.layers {
+                if !kinds.insert(layer.kind.label()) {
                     return Err(Refusal::new(
                         RefusalClass::Malformed,
                         format!(
-                            "audio binding '{}' delivery {what} reference is empty or over the bound",
-                            binding.id
+                            "audio binding '{}' names layer kind '{}' twice",
+                            binding.id,
+                            layer.kind.label()
                         ),
                     ));
                 }
+                check_ref_field(&binding.id, "layer stem", &layer.stem)?;
+                if !layer.gain_offset_db.is_finite()
+                    || layer.gain_offset_db.abs() > HYPNOSIS_GAIN_OFFSET_DB_MAX
+                {
+                    return Err(Refusal::new(
+                        RefusalClass::Range,
+                        format!(
+                            "audio binding '{}' layer gain offset {} dB outside the bound",
+                            binding.id, layer.gain_offset_db
+                        ),
+                    ));
+                }
+                if let Some(envelope) = &layer.envelope {
+                    check_ref_field(&binding.id, "layer envelope", envelope)?;
+                }
+                for edition in &layer.editions {
+                    check_id(edition, "edition id")?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The facts a stored visual-binding row must carry.
+fn check_visual_binding(binding: &VisualBinding) -> Result<(), Refusal> {
+    check_id(&binding.id, "visual binding id")?;
+    match &binding.kind {
+        VisualBindingKind::VisualLoop(loop_binding) => {
+            check_ref_field(&binding.id, "loop asset", &loop_binding.asset)?;
+            check_ref_field(&binding.id, "session", &loop_binding.session)?;
+            if let LoopSync::Count(count) = loop_binding.sync {
+                if count == 0 {
+                    return Err(Refusal::new(
+                        RefusalClass::Range,
+                        format!("visual binding '{}' loop count is zero", binding.id),
+                    ));
+                }
+            }
+            if !loop_binding.duration_seconds.is_finite()
+                || loop_binding.duration_seconds <= 0.0
+                || loop_binding.duration_seconds > VISUAL_LOOP_SECONDS_MAX
+            {
+                return Err(Refusal::new(
+                    RefusalClass::Range,
+                    format!(
+                        "visual binding '{}' loop duration {} s outside the bound",
+                        binding.id, loop_binding.duration_seconds
+                    ),
+                ));
+            }
+            if loop_binding.frame_rate == 0 || loop_binding.frame_rate > 240 {
+                return Err(Refusal::new(
+                    RefusalClass::Range,
+                    format!(
+                        "visual binding '{}' frame rate {} outside [1, 240]",
+                        binding.id, loop_binding.frame_rate
+                    ),
+                ));
+            }
+        }
+        VisualBindingKind::OverlayHook(hook) => {
+            check_ref_field(&binding.id, "overlay hook", &hook.hook)?;
+            check_ref_field(&binding.id, "session", &hook.session)?;
+            check_ref_field(&binding.id, "opacity envelope", &hook.opacity_envelope)?;
+            if !hook.rotation_rate.is_finite() || hook.rotation_rate.abs() > 100.0 {
+                return Err(Refusal::new(
+                    RefusalClass::Range,
+                    format!(
+                        "visual binding '{}' rotation rate {} rad/s outside the bound",
+                        binding.id, hook.rotation_rate
+                    ),
+                ));
             }
         }
     }

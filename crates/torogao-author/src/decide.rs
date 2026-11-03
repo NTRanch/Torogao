@@ -102,6 +102,9 @@ pub fn decide(state: Option<&Project>, op: &Op, observed: &Observed) -> Result<V
             crate::motion::decide_motion(project, op)
         }
         Op::AudioBindSet(_) | Op::AudioTrackDefine(_) => crate::audio::decide_audio(project, op),
+        Op::AudioBindingSet(_) | Op::VisualBindingSet(_) => {
+            crate::hypnosis::decide_hypnosis(project, op)
+        }
         _ => decide_rig(project, op),
     }
 }

@@ -151,12 +151,7 @@ impl Biquad {
         let alpha = w.sin() / (2.0 * std::f64::consts::FRAC_1_SQRT_2);
         let cos = w.cos();
         let (b0, b1, b2, a0) = if lowpass {
-            (
-                (1.0 - cos) / 2.0,
-                1.0 - cos,
-                (1.0 - cos) / 2.0,
-                1.0 + alpha,
-            )
+            ((1.0 - cos) / 2.0, 1.0 - cos, (1.0 - cos) / 2.0, 1.0 + alpha)
         } else {
             (
                 (1.0 + cos) / 2.0,
@@ -357,11 +352,7 @@ pub fn band_energy_fraction(samples: &[f64], sample_rate: u32, low_hz: f64, high
             inside += energy;
         }
     }
-    if total <= 0.0 {
-        0.0
-    } else {
-        inside / total
-    }
+    if total <= 0.0 { 0.0 } else { inside / total }
 }
 
 /// The amplitude envelope of a buffer: mean absolute value

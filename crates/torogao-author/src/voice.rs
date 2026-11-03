@@ -173,7 +173,11 @@ pub fn validate_shippable(
 ) -> Vec<Refusal> {
     let mut findings = Vec::new();
     for binding in &project.audio_bindings {
-        let AudioBindingKind::Voice(voice) = &binding.kind;
+        // The sweep judges voice bindings only; a hypnosis
+        // track row carries no torori identity to admit.
+        let AudioBindingKind::Voice(voice) = &binding.kind else {
+            continue;
+        };
         let identity = &voice.delivery.identity;
         let message = match snapshot {
             None => Some(format!(

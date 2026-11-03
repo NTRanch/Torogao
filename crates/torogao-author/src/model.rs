@@ -57,6 +57,9 @@ pub struct Project {
     pub pose: Vec<PoseEntry>,
     /// Named variant stacks from separated art, sorted by id.
     pub variant_sets: Vec<VariantSet>,
+    /// Visual-binding rows (Q1, §c), sorted by id. Absent from
+    /// the file when empty.
+    pub visual_bindings: Vec<VisualBinding>,
     /// The AUTH-G game section, when the project authors a game.
     /// Absent means absent: rig-only projects carry no field and
     /// serialize exactly as before the game layer existed.
@@ -634,12 +637,188 @@ pub struct AudioBinding {
 /// Audio-binding kinds. The voice kind is the torori seam
 /// (voice plan §3); the audio-reactive kinds belong to slice
 /// A3's `audio_track_define` / `audio_bind_set` and land with
-/// that slice, not here.
+/// that slice, not here. The hypnosis-track kind lands with
+/// the Q1 hypnosis build (D-634): a layered hypnosis track
+/// bound into a project (TOROGAO-HYPNO-CAPABILITY §b).
 #[derive(Clone, Debug, PartialEq)]
 pub enum AudioBindingKind {
     /// A spoken line: one character, voiced by torori from the
     /// delivery record the row references.
     Voice(VoiceBinding),
+    /// A layered hypnosis track: a session reference plus the
+    /// layer map that names its stack.
+    HypnosisTrack(HypnosisTrackBinding),
+}
+
+/// A hypnosis track binding's payload (TECHNIQUE-SPEC T3/T8):
+/// the session the track renders, and the layer map naming
+/// the stack. Layers are kept separate through the whole
+/// pipeline; an edition is a mix decision over this map, not
+/// a re-render.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HypnosisTrackBinding {
+    /// The session reference (a `torogao-session` document id;
+    /// an opaque reference string here, like a delivery ref).
+    pub session: String,
+    /// The layer stack, sorted by kind label.
+    pub layers: Vec<HypnosisLayer>,
+}
+
+/// One layer of a hypnosis track's stack.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HypnosisLayer {
+    /// The layer's perceptual job in the stack.
+    pub kind: HypnosisLayerKind,
+    /// The stem reference this layer renders.
+    pub stem: String,
+    /// Gain offset in dB against the session's own staging.
+    pub gain_offset_db: f64,
+    /// The named gain envelope for this layer, when one is
+    /// bound (beyond the session's fixed edges).
+    pub envelope: Option<String>,
+    /// The named editions that include this layer. Empty
+    /// means every edition (T8's layer-subset publishing,
+    /// decided at authoring time).
+    pub editions: Vec<String>,
+    /// Whether the layer loops continuously beneath the
+    /// session (the T5 drone posture).
+    pub looped: bool,
+}
+
+/// A hypnosis layer's job in the stack (T3).
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum HypnosisLayerKind {
+    /// The audible narration layer.
+    Voice,
+    /// The binaural carrier layer.
+    Carrier,
+    /// The noise-bed layer.
+    Bed,
+    /// The encoded affirmation layer.
+    Subliminal,
+    /// A sound-effect layer.
+    Sfx,
+}
+
+impl HypnosisLayerKind {
+    /// The kind's wire/record label.
+    pub fn label(self) -> &'static str {
+        match self {
+            HypnosisLayerKind::Voice => "voice",
+            HypnosisLayerKind::Carrier => "carrier",
+            HypnosisLayerKind::Bed => "bed",
+            HypnosisLayerKind::Subliminal => "subliminal",
+            HypnosisLayerKind::Sfx => "sfx",
+        }
+    }
+
+    /// The kind for a wire/record label.
+    pub fn from_label(label: &str) -> Option<Self> {
+        match label {
+            "voice" => Some(HypnosisLayerKind::Voice),
+            "carrier" => Some(HypnosisLayerKind::Carrier),
+            "bed" => Some(HypnosisLayerKind::Bed),
+            "subliminal" => Some(HypnosisLayerKind::Subliminal),
+            "sfx" => Some(HypnosisLayerKind::Sfx),
+            _ => None,
+        }
+    }
+}
+
+impl HypnosisTrackBinding {
+    /// The layers an edition includes, in stack order: a
+    /// layer with an empty edition mask rides every edition;
+    /// otherwise the edition must be named.
+    pub fn layers_for_edition<'a>(&'a self, edition: &str) -> Vec<&'a HypnosisLayer> {
+        self.layers
+            .iter()
+            .filter(|layer| {
+                layer.editions.is_empty() || layer.editions.iter().any(|e| e == edition)
+            })
+            .collect()
+    }
+}
+
+/// One visual-binding row: a visual induction channel bound
+/// into the project beside the audio bindings
+/// (TOROGAO-HYPNO-CAPABILITY §c). Rows are references and
+/// seeded parameters only — no pixels, ever.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VisualBinding {
+    /// Stable id.
+    pub id: String,
+    /// What kind of visual channel the row binds.
+    pub kind: VisualBindingKind,
+}
+
+/// Visual-binding kinds.
+#[derive(Clone, Debug, PartialEq)]
+pub enum VisualBindingKind {
+    /// A looping visual accompaniment bound to a session
+    /// (T9's shape: portrait, seamless, fixed duration).
+    VisualLoop(VisualLoopBinding),
+    /// A procedural overlay hook with seeded parameters.
+    OverlayHook(OverlayHookBinding),
+}
+
+/// A visual loop binding's payload. The loop starts at phase
+/// boundaries — that is the binding's fixed semantics, not a
+/// field — and its repetition is declared here, never
+/// improvised at runtime.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VisualLoopBinding {
+    /// The loop asset reference.
+    pub asset: String,
+    /// The session reference the loop accompanies.
+    pub session: String,
+    /// How the loop covers the session's duration.
+    pub sync: LoopSync,
+    /// The loop's declared duration in seconds (T9's fixed
+    /// duration, as data).
+    pub duration_seconds: f64,
+    /// The loop's declared frame rate.
+    pub frame_rate: u32,
+}
+
+/// How a visual loop covers a session's duration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LoopSync {
+    /// The loop repeats this many times.
+    Count(u32),
+    /// The loop stretches to the session's duration.
+    Stretch,
+}
+
+/// A procedural overlay hook's payload: a named hook plus its
+/// seeded parameters, all data in the binding. The hook is
+/// replaceable per game without code.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OverlayHookBinding {
+    /// The named overlay hook (e.g. a spiral).
+    pub hook: String,
+    /// The session reference the overlay accompanies.
+    pub session: String,
+    /// The parameter seed: the overlay's motion derives from
+    /// it deterministically.
+    pub seed: i64,
+    /// Rotation rate in radians per second (signed).
+    pub rotation_rate: f64,
+    /// The named opacity envelope (tied to phase by the
+    /// presentation layer).
+    pub opacity_envelope: String,
+}
+
+impl OverlayHookBinding {
+    /// The overlay's deterministic phase at a sample position
+    /// on the session's 48 kHz clock: a seed-derived offset
+    /// advanced by the bound rotation rate. Same record, same
+    /// sample → same phase, on every machine.
+    pub fn phase_at(&self, at_sample: u64) -> f64 {
+        let mixed = (self.seed as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let offset = ((mixed >> 11) as f64 / 9_007_199_254_740_992.0) * std::f64::consts::TAU;
+        let advanced = self.rotation_rate * (at_sample as f64 / 48_000.0);
+        (offset + advanced).rem_euclid(std::f64::consts::TAU)
+    }
 }
 
 /// A voice binding's payload: who speaks, and which torori
@@ -723,6 +902,11 @@ impl Project {
     /// The audio-binding row with this id.
     pub fn audio_binding(&self, id: &str) -> Option<&AudioBinding> {
         find(&self.audio_bindings, id, |binding| &binding.id)
+    }
+
+    /// The visual-binding row with this id.
+    pub fn visual_binding(&self, id: &str) -> Option<&VisualBinding> {
+        find(&self.visual_bindings, id, |binding| &binding.id)
     }
 
     /// The neutral value of a parameter: its pose entry when one

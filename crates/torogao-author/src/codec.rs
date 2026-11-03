@@ -13,10 +13,12 @@ use crate::model::{
     AnchorKind, ArtBind, Asset, AssetKind, AudioBind, AudioBindTarget, AudioBinding,
     AudioBindingKind, AudioMarker, AudioTrack, Blend, Clip, Completion, Consent, Deformer,
     DeformerKind, DeliveryRef, Draw, Expression, ExpressionValue, ExpressionVisibility, Glue,
-    Header, Keyform, Keyforms, Mesh, MeshForm, Motion, MotionCurve, MotionKeyframe, PROJECT_FORMAT,
+    Header, HypnosisLayer, HypnosisLayerKind, HypnosisTrackBinding, Keyform, Keyforms, LoopSync,
+    Mesh, MeshForm, Motion, MotionCurve, MotionKeyframe, OverlayHookBinding, PROJECT_FORMAT,
     PROJECT_FORMAT_VERSION, Parameter, Part, PhysicsAnchor, PhysicsGroup, PhysicsInput,
     PhysicsOutput, PhysicsParticle, PhysicsStrand, Point, PoseEntry, Project, Provenance, Rect,
-    Rotation, RotationForm, Stamp, VariantSet, VoiceBinding, Warp, WarpForm,
+    Rotation, RotationForm, Stamp, VariantSet, VisualBinding, VisualBindingKind, VisualLoopBinding,
+    VoiceBinding, Warp, WarpForm,
 };
 use crate::refusal::{Refusal, RefusalClass, refuse};
 use crate::ron::{Ron, emit_document, parse_document};
@@ -185,6 +187,18 @@ fn project_to_ron(project: &Project) -> Ron {
                 .collect(),
         ),
     ));
+    if !project.visual_bindings.is_empty() {
+        fields.push((
+            "visual_bindings",
+            Ron::List(
+                project
+                    .visual_bindings
+                    .iter()
+                    .map(visual_binding_to_ron)
+                    .collect(),
+            ),
+        ));
+    }
     record("Project", fields)
 }
 
@@ -721,6 +735,34 @@ fn audio_marker_to_ron(marker: &AudioMarker) -> Ron {
     )
 }
 
+fn layer_kind_ident(kind: &HypnosisLayerKind) -> String {
+    match kind {
+        HypnosisLayerKind::Voice => "Voice",
+        HypnosisLayerKind::Carrier => "Carrier",
+        HypnosisLayerKind::Bed => "Bed",
+        HypnosisLayerKind::Subliminal => "Subliminal",
+        HypnosisLayerKind::Sfx => "Sfx",
+    }
+    .to_string()
+}
+
+fn hypnosis_layer_to_ron(layer: &HypnosisLayer) -> Ron {
+    record(
+        "HypnosisLayer",
+        vec![
+            ("editions", texts(&layer.editions)),
+            (
+                "envelope",
+                opt(layer.envelope.as_ref(), |value| text(value)),
+            ),
+            ("gain_offset_db", Ron::Float(layer.gain_offset_db)),
+            ("kind", Ron::Ident(layer_kind_ident(&layer.kind))),
+            ("looped", Ron::Bool(layer.looped)),
+            ("stem", text(&layer.stem)),
+        ],
+    )
+}
+
 fn audio_binding_to_ron(binding: &AudioBinding) -> Ron {
     match &binding.kind {
         AudioBindingKind::Voice(voice) => record(
@@ -739,6 +781,64 @@ fn audio_binding_to_ron(binding: &AudioBinding) -> Ron {
                     ),
                 ),
                 ("kind", Ron::Ident("Voice".to_string())),
+            ],
+        ),
+        AudioBindingKind::HypnosisTrack(track) => record(
+            "AudioBinding",
+            vec![
+                ("id", text(&binding.id)),
+                ("kind", Ron::Ident("HypnosisTrack".to_string())),
+                (
+                    "layers",
+                    Ron::List(track.layers.iter().map(hypnosis_layer_to_ron).collect()),
+                ),
+                ("session", text(&track.session)),
+            ],
+        ),
+    }
+}
+
+fn visual_binding_to_ron(binding: &VisualBinding) -> Ron {
+    match &binding.kind {
+        VisualBindingKind::VisualLoop(binding_loop) => record(
+            "VisualBinding",
+            vec![
+                ("id", text(&binding.id)),
+                ("asset", text(&binding_loop.asset)),
+                (
+                    "duration_seconds",
+                    Ron::Float(binding_loop.duration_seconds),
+                ),
+                ("frame_rate", Ron::Int(i64::from(binding_loop.frame_rate))),
+                ("kind", Ron::Ident("VisualLoop".to_string())),
+                ("session", text(&binding_loop.session)),
+                (
+                    "sync",
+                    record(
+                        "LoopSync",
+                        match binding_loop.sync {
+                            LoopSync::Count(count) => vec![
+                                ("count", Ron::Int(i64::from(count))),
+                                ("kind", Ron::Ident("Count".to_string())),
+                            ],
+                            LoopSync::Stretch => {
+                                vec![("kind", Ron::Ident("Stretch".to_string()))]
+                            }
+                        },
+                    ),
+                ),
+            ],
+        ),
+        VisualBindingKind::OverlayHook(hook) => record(
+            "VisualBinding",
+            vec![
+                ("id", text(&binding.id)),
+                ("hook", text(&hook.hook)),
+                ("kind", Ron::Ident("OverlayHook".to_string())),
+                ("opacity_envelope", text(&hook.opacity_envelope)),
+                ("rotation_rate", Ron::Float(hook.rotation_rate)),
+                ("seed", Ron::Int(hook.seed)),
+                ("session", text(&hook.session)),
             ],
         ),
     }
@@ -1023,6 +1123,7 @@ fn project_from_ron(value: Ron) -> Result<Project, Refusal> {
     let physics_groups = list_section(&mut fields, "physics_groups", physics_group_from_ron)?;
     let pose = collect(fields.list("pose")?, pose_from_ron)?;
     let variant_sets = collect(fields.list("variant_sets")?, variant_set_from_ron)?;
+    let visual_bindings = list_section(&mut fields, "visual_bindings", visual_binding_from_ron)?;
     // The game section is the one optional section: a file
     // without it is a rig-only project. `game: None` written out
     // longhand parses to the same absence and is non-canonical
@@ -1065,6 +1166,7 @@ fn project_from_ron(value: Ron) -> Result<Project, Refusal> {
         physics_groups: sorted_unique(physics_groups, "physics groups", |item| &item.id)?,
         pose: sorted_unique(pose, "pose entries", |item| &item.parameter)?,
         variant_sets: sorted_unique(variant_sets, "variant sets", |item| &item.id)?,
+        visual_bindings: sorted_unique(visual_bindings, "visual bindings", |item| &item.id)?,
         game,
         content: Vec::new(),
         content_locale: None,
@@ -1205,6 +1307,31 @@ fn audio_marker_from_ron(value: Ron) -> Result<AudioMarker, Refusal> {
     Ok(marker)
 }
 
+fn hypnosis_layer_from_ron(value: Ron) -> Result<HypnosisLayer, Refusal> {
+    let mut fields = open(value, "HypnosisLayer")?;
+    let kind = match fields.ident("kind")?.as_str() {
+        "Voice" => HypnosisLayerKind::Voice,
+        "Carrier" => HypnosisLayerKind::Carrier,
+        "Bed" => HypnosisLayerKind::Bed,
+        "Subliminal" => HypnosisLayerKind::Subliminal,
+        "Sfx" => HypnosisLayerKind::Sfx,
+        other => return unknown_variant("kind", other),
+    };
+    let layer = HypnosisLayer {
+        kind,
+        stem: fields.string("stem")?,
+        gain_offset_db: fields.float("gain_offset_db")?,
+        envelope: optional_string(&mut fields, "envelope")?,
+        editions: collect(fields.list("editions")?, |item| match item {
+            Ron::Str(text) => Ok(text),
+            _ => wrong_type("editions", "strings"),
+        })?,
+        looped: fields.boolean("looped")?,
+    };
+    fields.done()?;
+    Ok(layer)
+}
+
 fn audio_binding_from_ron(value: Ron) -> Result<AudioBinding, Refusal> {
     let mut fields = open(value, "AudioBinding")?;
     let id = fields.string("id")?;
@@ -1222,10 +1349,53 @@ fn audio_binding_from_ron(value: Ron) -> Result<AudioBinding, Refusal> {
                 delivery,
             })
         }
+        "HypnosisTrack" => {
+            let layers = collect(fields.list("layers")?, hypnosis_layer_from_ron)?;
+            AudioBindingKind::HypnosisTrack(HypnosisTrackBinding {
+                session: fields.string("session")?,
+                layers,
+            })
+        }
         other => return unknown_variant("kind", other),
     };
     fields.done()?;
     Ok(AudioBinding { id, kind })
+}
+
+fn visual_binding_from_ron(value: Ron) -> Result<VisualBinding, Refusal> {
+    let mut fields = open(value, "VisualBinding")?;
+    let id = fields.string("id")?;
+    let kind = match fields.ident("kind")?.as_str() {
+        "VisualLoop" => {
+            let mut sync_fields = open(fields.take("sync")?, "LoopSync")?;
+            let sync = match sync_fields.ident("kind")?.as_str() {
+                "Count" => {
+                    let count = sync_fields.uint("count")?;
+                    LoopSync::Count(count)
+                }
+                "Stretch" => LoopSync::Stretch,
+                other => return unknown_variant("kind", other),
+            };
+            sync_fields.done()?;
+            VisualBindingKind::VisualLoop(VisualLoopBinding {
+                asset: fields.string("asset")?,
+                session: fields.string("session")?,
+                sync,
+                duration_seconds: fields.float("duration_seconds")?,
+                frame_rate: fields.uint("frame_rate")?,
+            })
+        }
+        "OverlayHook" => VisualBindingKind::OverlayHook(OverlayHookBinding {
+            hook: fields.string("hook")?,
+            session: fields.string("session")?,
+            seed: fields.int("seed")?,
+            rotation_rate: fields.float("rotation_rate")?,
+            opacity_envelope: fields.string("opacity_envelope")?,
+        }),
+        other => return unknown_variant("kind", other),
+    };
+    fields.done()?;
+    Ok(VisualBinding { id, kind })
 }
 
 fn audio_bind_from_ron(value: Ron) -> Result<AudioBind, Refusal> {

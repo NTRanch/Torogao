@@ -13,6 +13,14 @@ pub use torogao_format::limits::{
 pub const ASSETS_MAX: usize = 1024;
 /// Maximum audio-binding rows per project.
 pub const AUDIO_BINDINGS_MAX: usize = 256;
+/// Maximum layers in one hypnosis track's stack.
+pub const HYPNOSIS_LAYERS_MAX: usize = 16;
+/// Maximum gain offset magnitude for a hypnosis layer, in dB.
+pub const HYPNOSIS_GAIN_OFFSET_DB_MAX: f64 = 48.0;
+/// Maximum visual-binding rows per project.
+pub const VISUAL_BINDINGS_MAX: usize = 256;
+/// Maximum declared duration of a visual loop, in seconds.
+pub const VISUAL_LOOP_SECONDS_MAX: f64 = 3600.0;
 /// Maximum draw-order band number (inclusive); bands are 0..=99.
 pub const DRAW_BAND_MAX: u32 = 99;
 /// Maximum index within a draw-order band (inclusive).

@@ -223,7 +223,9 @@ pub fn validate_recipe(recipe: &Value) -> Vec<Finding> {
                         } else {
                             crate::subliminal::TG_SUBLIMINAL_PARAM
                         };
-                    let text = message.split_once(": ").map_or(message.as_str(), |(_, t)| t);
+                    let text = message
+                        .split_once(": ")
+                        .map_or(message.as_str(), |(_, t)| t);
                     findings.push(Finding::new(
                         code,
                         "error",
@@ -234,7 +236,9 @@ pub fn validate_recipe(recipe: &Value) -> Vec<Finding> {
                 if jstr(stem, "sourceStem").is_empty() {
                     add(
                         TG_AUDIO_SUBLIMINAL_SOURCE,
-                        format!("{prefix}subliminal stem needs a sourceStem naming the stem it encodes"),
+                        format!(
+                            "{prefix}subliminal stem needs a sourceStem naming the stem it encodes"
+                        ),
                         &mut findings,
                     );
                 }
@@ -304,21 +308,9 @@ pub fn validate_recipe(recipe: &Value) -> Vec<Finding> {
 pub fn subliminal_params(stem: &Value, seed: i64) -> crate::subliminal::SubliminalParams {
     crate::subliminal::SubliminalParams {
         carrier_hz: get_d(stem, "carrierHz", 16_000.0),
-        band_low_hz: get_d(
-            stem,
-            "bandLowHz",
-            crate::subliminal::BAND_LOW_DEFAULT_HZ,
-        ),
-        band_high_hz: get_d(
-            stem,
-            "bandHighHz",
-            crate::subliminal::BAND_HIGH_DEFAULT_HZ,
-        ),
-        encoder_gain: get_d(
-            stem,
-            "encoderGain",
-            crate::subliminal::ENCODER_GAIN_DEFAULT,
-        ),
+        band_low_hz: get_d(stem, "bandLowHz", crate::subliminal::BAND_LOW_DEFAULT_HZ),
+        band_high_hz: get_d(stem, "bandHighHz", crate::subliminal::BAND_HIGH_DEFAULT_HZ),
+        encoder_gain: get_d(stem, "encoderGain", crate::subliminal::ENCODER_GAIN_DEFAULT),
         seed: seed as u64,
     }
 }
@@ -662,12 +654,7 @@ pub fn synthesize_mix(recipe: &Value, frames: usize) -> (Vec<Vec<f64>>, Vec<Subl
             buffers.push(None);
             continue;
         }
-        buffers.push(Some(synthesize_stem(
-            stem,
-            seed as u64,
-            duration,
-            frames,
-        )));
+        buffers.push(Some(synthesize_stem(stem, seed as u64, duration, frames)));
     }
     for (index, stem) in stems.iter().enumerate() {
         if jstr(stem, "type") != "subliminal" {

@@ -236,7 +236,9 @@ fn carries_v2_keys(session: &Value) -> bool {
             ]
             .iter()
             .any(|key| phase.get(key).is_some())
-                || (phase.get("subliminal").is_some_and(|s| s.get("affirmationSet").is_some()))
+                || (phase
+                    .get("subliminal")
+                    .is_some_and(|s| s.get("affirmationSet").is_some()))
         }),
         None => false,
     }
@@ -245,7 +247,10 @@ fn carries_v2_keys(session: &Value) -> bool {
 /// The named pass-through stems a v2 document declares.
 fn declared_stem_names(session: &Value) -> Vec<String> {
     match jget(session, "stems").as_array() {
-        Some(stems) => stems.iter().map(|stem| jstr(stem, "name").to_string()).collect(),
+        Some(stems) => stems
+            .iter()
+            .map(|stem| jstr(stem, "name").to_string())
+            .collect(),
         None => Vec::new(),
     }
 }
@@ -349,7 +354,10 @@ fn validate_v2(session: &Value, is_v2: bool, findings: &mut Vec<Finding>) {
             if !BLOCK_KINDS.contains(&kind) {
                 findings.push(finding(
                     TG_SESSION_KIND,
-                    format!("phase {i} ('{name}'): kind '{kind}' is not one of {}", BLOCK_KINDS.join(", ")),
+                    format!(
+                        "phase {i} ('{name}'): kind '{kind}' is not one of {}",
+                        BLOCK_KINDS.join(", ")
+                    ),
                 ));
             }
             if kind == "deepener" {
@@ -543,10 +551,7 @@ pub fn build_session_recipe(session: &Value) -> Result<Value, String> {
                     let mut placement = Map::new();
                     placement.insert("block".to_string(), json!(jstr(phase, "name")));
                     placement.insert("atSeconds".to_string(), json!(t));
-                    placement.insert(
-                        "atSample".to_string(),
-                        json!((t * 48_000.0).round() as i64),
-                    );
+                    placement.insert("atSample".to_string(), json!((t * 48_000.0).round() as i64));
                     placement.insert("identity".to_string(), json!(jstr(line, "identity")));
                     placement.insert("record".to_string(), json!(jstr(line, "record")));
                     if jget(line, "envelope").is_object() {
@@ -569,7 +574,11 @@ pub fn build_session_recipe(session: &Value) -> Result<Value, String> {
                 );
                 stem.insert(
                     "encoderGain".to_string(),
-                    json!(num(sub, "encoderGain", crate::subliminal::ENCODER_GAIN_DEFAULT)),
+                    json!(num(
+                        sub,
+                        "encoderGain",
+                        crate::subliminal::ENCODER_GAIN_DEFAULT
+                    )),
                 );
                 let level = num(sub, "levelDb", 0.0);
                 stem.insert(
@@ -649,7 +658,10 @@ pub fn build_session_recipe(session: &Value) -> Result<Value, String> {
     doc.insert("stems".to_string(), Value::Array(stems));
     if is_v2 {
         if !voice_placements.is_empty() {
-            doc.insert("voicePlacements".to_string(), Value::Array(voice_placements));
+            doc.insert(
+                "voicePlacements".to_string(),
+                Value::Array(voice_placements),
+            );
         }
         if !visual_cues.is_empty() {
             doc.insert("visualCues".to_string(), Value::Array(visual_cues));

@@ -1,6 +1,6 @@
 //! The verb manifest and the typed op inputs.
 //!
-//! `MANIFEST` is the brief's §Item 4 surface, all 47 verbs in
+//! `MANIFEST` is the brief's §Item 4 surface, all 49 verbs in
 //! pipeline group order, alphabetical within each group, each
 //! tagged with the slice that delivers it. This slice (A1)
 //! implements the verbs tagged `A1`; every other verb is refused
@@ -67,8 +67,8 @@ const fn verb(name: &'static str, group: &'static str, slice: Slice, mutating: b
     }
 }
 
-/// The §Item 4 manifest: 47 verbs in 11 groups.
-pub const MANIFEST: [VerbSpec; 47] = [
+/// The §Item 4 manifest: 49 verbs in 12 groups.
+pub const MANIFEST: [VerbSpec; 49] = [
     verb("project_diff", "project", Slice::A1, false),
     verb("project_import", "project", Slice::A1, true),
     verb("project_init", "project", Slice::A1, true),
@@ -114,12 +114,14 @@ pub const MANIFEST: [VerbSpec; 47] = [
     verb("motion_bake", "motion", Slice::A3, true),
     verb("motion_create", "motion", Slice::A3, true),
     verb("audio_bind_set", "audio-reactive hooks", Slice::A3, true),
+    verb("audio_binding_set", "audio-reactive hooks", Slice::A3, true),
     verb(
         "audio_track_define",
         "audio-reactive hooks",
         Slice::A3,
         true,
     ),
+    verb("visual_binding_set", "visual induction", Slice::A3, true),
     verb("render_range_sweep", "render", Slice::A3, false),
     verb("render_still", "render", Slice::A3, false),
     verb("render_take", "render", Slice::A3, false),
@@ -165,13 +167,16 @@ pub fn refuse_unimplemented<T>(name: &str) -> Result<T, Refusal> {
 /// The rig-manifest verbs the G-10 completion implements in
 /// this crate (the A2 physics records, the A3 motion and audio
 /// records, and the export group's manifest read), alphabetical.
-/// Together with the A1 slice (30) these bring the author
-/// surface to 39 of 47; the remaining eight are descoped by
-/// recorded ruling ([`DESCOPED`]), so the census is 47/47
+/// The Q1 hypnosis build (D-634) adds the two binding verbs
+/// ([`crate::hypnosis`]). Together with the A1 slice (30)
+/// these bring the author surface to 41 of 49; the remaining
+/// eight are descoped by recorded ruling ([`DESCOPED`]), so
+/// the census is 49/49
 /// accounted — implemented here, or named with its capability's
 /// home and the ruling that put it there.
 pub const RIGX_IMPLEMENTED: &[&str] = &[
     "audio_bind_set",
+    "audio_binding_set",
     "audio_track_define",
     "curve_from_samples",
     "curve_set",
@@ -180,6 +185,7 @@ pub const RIGX_IMPLEMENTED: &[&str] = &[
     "physics_forces_set",
     "physics_group_define",
     "physics_group_remove",
+    "visual_binding_set",
 ];
 
 /// A verb descoped from the author surface by recorded ruling:
@@ -670,6 +676,8 @@ pub struct ExpressionDefineInput {
 pub enum Op {
     /// `audio_bind_set` (A3).
     AudioBindSet(crate::audio::AudioBindSetInput),
+    /// `audio_binding_set` (Q1, D-634).
+    AudioBindingSet(crate::hypnosis::AudioBindingSetInput),
     /// `audio_track_define` (A3).
     AudioTrackDefine(crate::audio::AudioTrackDefineInput),
     /// `curve_from_samples` (A3).
@@ -736,6 +744,8 @@ pub enum Op {
     ProjectImport(ImportInput),
     /// `project_init`.
     ProjectInit(InitInput),
+    /// `visual_binding_set` (Q1, D-634).
+    VisualBindingSet(crate::hypnosis::VisualBindingSetInput),
 }
 
 fn typed<T: for<'de> Deserialize<'de>>(verb: &str, inputs: &Value) -> Result<T, Refusal> {
@@ -756,6 +766,7 @@ impl Op {
         }
         let op = match verb {
             "audio_bind_set" => Op::AudioBindSet(typed(verb, inputs)?),
+            "audio_binding_set" => Op::AudioBindingSet(typed(verb, inputs)?),
             "audio_track_define" => Op::AudioTrackDefine(typed(verb, inputs)?),
             "curve_from_samples" => Op::CurveFromSamples(typed(verb, inputs)?),
             "curve_set" => Op::CurveSet(typed(verb, inputs)?),
@@ -788,6 +799,7 @@ impl Op {
             "physics_group_remove" => Op::PhysicsGroupRemove(typed(verb, inputs)?),
             "project_import" => Op::ProjectImport(typed(verb, inputs)?),
             "project_init" => Op::ProjectInit(typed(verb, inputs)?),
+            "visual_binding_set" => Op::VisualBindingSet(typed(verb, inputs)?),
             other => return refuse_unimplemented(other),
         };
         Ok(op)
@@ -797,6 +809,7 @@ impl Op {
     pub fn verb(&self) -> &'static str {
         match self {
             Op::AudioBindSet(_) => "audio_bind_set",
+            Op::AudioBindingSet(_) => "audio_binding_set",
             Op::AudioTrackDefine(_) => "audio_track_define",
             Op::CurveFromSamples(_) => "curve_from_samples",
             Op::CurveSet(_) => "curve_set",
@@ -830,6 +843,7 @@ impl Op {
             Op::PhysicsGroupRemove(_) => "physics_group_remove",
             Op::ProjectImport(_) => "project_import",
             Op::ProjectInit(_) => "project_init",
+            Op::VisualBindingSet(_) => "visual_binding_set",
         }
     }
 
@@ -841,6 +855,7 @@ impl Op {
         let result = match self {
             Op::Game(_) => unreachable!("handled above"),
             Op::AudioBindSet(inputs) => serde_json::to_value(inputs),
+            Op::AudioBindingSet(inputs) => serde_json::to_value(inputs),
             Op::AudioTrackDefine(inputs) => serde_json::to_value(inputs),
             Op::CurveFromSamples(inputs) => serde_json::to_value(inputs),
             Op::CurveSet(inputs) => serde_json::to_value(inputs),
@@ -873,6 +888,7 @@ impl Op {
             Op::PhysicsGroupRemove(inputs) => serde_json::to_value(inputs),
             Op::ProjectImport(inputs) => serde_json::to_value(inputs),
             Op::ProjectInit(inputs) => serde_json::to_value(inputs),
+            Op::VisualBindingSet(inputs) => serde_json::to_value(inputs),
         };
         result.or_else(|err| {
             refuse(
@@ -889,8 +905,8 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn manifest_has_47_verbs_in_11_groups_alphabetical_within_group() {
-        assert_eq!(MANIFEST.len(), 47);
+    fn manifest_has_49_verbs_in_12_groups_alphabetical_within_group() {
+        assert_eq!(MANIFEST.len(), 49);
         let mut groups: Vec<&str> = Vec::new();
         for spec in MANIFEST {
             if groups.last() != Some(&spec.group) {
@@ -898,7 +914,7 @@ mod tests {
                 groups.push(spec.group);
             }
         }
-        assert_eq!(groups.len(), 11);
+        assert_eq!(groups.len(), 12);
         for pair in MANIFEST.windows(2) {
             if pair[0].group == pair[1].group {
                 assert!(
@@ -917,7 +933,7 @@ mod tests {
     }
 
     #[test]
-    fn census_is_47_accounted_implemented_or_descoped() {
+    fn census_is_49_accounted_implemented_or_descoped() {
         use super::{DESCOPED, RIGX_IMPLEMENTED, descope, verb_spec};
         // Every RIGX verb is a real manifest verb, not A1, and
         // not descoped; every descoped verb is a real manifest
@@ -932,7 +948,8 @@ mod tests {
             assert_ne!(spec.slice, Slice::A1, "{}", entry.verb);
             assert!(!RIGX_IMPLEMENTED.contains(&entry.verb), "{}", entry.verb);
         }
-        // The three sets partition the manifest: 30 + 9 + 8 = 47.
+        // The three sets partition the manifest: 30 + 11 + 8 = 49
+        // (G-10's nine plus Q1's two binding verbs).
         let a1 = MANIFEST
             .iter()
             .filter(|spec| spec.slice == Slice::A1)
