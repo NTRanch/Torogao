@@ -20,6 +20,14 @@ count — corrected in place and marked.
 1.0.0 is not cancelled; it is unearned yet. It comes back when the
 assessment's work order (G-01…G-11) closes on gate evidence.
 
+## Unreleased
+
+- New crate `torogao-osc` added to the workspace (D-752): the
+  VRChat-dialect OSC parameter surface — a bounded OSC 1.0 codec,
+  a declared typed surface over /avatar/parameters/*,
+  /avatar/change, /input/* and /chatbox/*, and a localhost-first
+  UDP transport whose rejections are counted, never panicked on.
+
 ## 0.4.0 — 2026-10-31
 
 - Jam port-backs landed: all 13 game filings plus the fathom RE
