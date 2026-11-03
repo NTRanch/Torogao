@@ -1,0 +1,16 @@
+[package]
+name = "torogao-viseme"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Deterministic bake of Rhubarb Lip Sync mouth-shape cues onto Torogao's Fac_ mouth morph channels at 60 Hz: the oracle stays at authoring time, the baked torogao-viseme-track/1 document is the shipping artifact."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+
+[lib]
+name = "torogao_viseme"
+path = "src/lib.rs"
