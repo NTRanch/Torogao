@@ -772,12 +772,14 @@ pub fn validate_motion_events_only(ext: &Value, puppet: &Puppet) -> Vec<Finding>
             ));
         }
         let payload_class = pack_str(event, "payloadClass");
-        if !["sfx", "voice", "haptic", "script-beat"].contains(&payload_class.as_str()) {
+        if !["sfx", "voice", "haptic", "script-beat", "visual-cue"]
+            .contains(&payload_class.as_str())
+        {
             findings.push(Finding::new(
                 TG_EVENT_SHAPE,
                 "error",
                 subject.clone(),
-                "payloadClass must be one of sfx, voice, haptic, script-beat",
+                "payloadClass must be one of sfx, voice, haptic, script-beat, visual-cue",
             ));
         }
         if pack_str(event, "payload").is_empty() {
@@ -787,6 +789,29 @@ pub fn validate_motion_events_only(ext: &Value, puppet: &Puppet) -> Vec<Finding>
                 subject.clone(),
                 "event needs a payload reference",
             ));
+        }
+        if payload_class == "visual-cue" {
+            // A flash-text cue (TOROGAO-HYPNO-CAPABILITY §c):
+            // the payload is a text *reference* into the
+            // session's affirmation/anchor data, never a
+            // literal, and its on-screen life is declared in
+            // frames at a declared frame rate.
+            let duration = jget(event, "durationFrames");
+            let fade = jget(event, "fadeFrames");
+            let rate = jget(event, "frameRate");
+            let ok = duration.as_i64().is_some_and(|d| d >= 1)
+                && fade
+                    .as_i64()
+                    .is_some_and(|f| f >= 0 && Some(f) <= duration.as_i64())
+                && rate.as_i64().is_some_and(|r| (1..=240).contains(&r));
+            if !ok {
+                findings.push(Finding::new(
+                    TG_EVENT_SHAPE,
+                    "error",
+                    subject.clone(),
+                    "visual-cue needs durationFrames >= 1, fadeFrames <= durationFrames, frameRate in [1, 240]",
+                ));
+            }
         }
     }
     findings
