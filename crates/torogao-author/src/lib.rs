@@ -14,14 +14,16 @@
 //!
 //! Slice A1 implements the project, art intake, parts & meshes,
 //! deformers, parameters (without `param_link_define`), and
-//! expressions groups: 30 of the manifest's 47 verbs
+//! expressions groups: 30 of the manifest's 49 verbs
 //! ([`op::MANIFEST`]). The G-10 completion adds nine more — the
 //! A2 physics records ([`physics`]), the A3 motion and audio
 //! records ([`motion`], [`audio`]), and `export_manifest`
-//! ([`export`]) — for 39 of 47; the remaining eight are
-//! descoped by recorded ruling ([`op::DESCOPED`]), so every
-//! manifest verb is implemented here or refused by name with
-//! its ruling and its capability's home.
+//! ([`export`]) — and the Q1 hypnosis build (D-634) adds two:
+//! the binding verbs ([`hypnosis`]) — for 41 of 49; the
+//! remaining eight are descoped by recorded ruling
+//! ([`op::DESCOPED`]), so every manifest verb is implemented
+//! here or refused by name with its ruling and its
+//! capability's home.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -34,6 +36,7 @@ pub mod decide;
 pub mod diff;
 pub mod export;
 pub mod game;
+pub mod hypnosis;
 pub mod import;
 pub mod intake;
 pub mod limits;

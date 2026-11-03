@@ -4,8 +4,8 @@
 //! — author through decide() → apply → op log, validate clean,
 //! and replay byte-identically ×3; the refusal battery fires
 //! per family; the eight descoped verbs refuse by name with
-//! their ruling; and the verb census reads 39 implemented +
-//! 8 descoped of 47.
+//! their ruling; and the verb census reads 41 implemented +
+//! 8 descoped of 49 (Q1's binding verbs included).
 
 mod common;
 
@@ -257,10 +257,10 @@ fn export_manifest_reports_constructs_and_lane() {
 }
 
 #[test]
-fn census_reads_39_implemented_and_8_descoped() {
+fn census_reads_41_implemented_and_8_descoped() {
     let doc = verbs_doc();
-    assert_eq!(doc["manifest_count"], 47);
-    assert_eq!(doc["implemented_count"], 39);
+    assert_eq!(doc["manifest_count"], 49);
+    assert_eq!(doc["implemented_count"], 41);
     assert_eq!(doc["descoped_count"], 8);
     assert_eq!(
         doc["deferred"].as_array().expect("deferred").len(),

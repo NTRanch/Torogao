@@ -140,6 +140,9 @@ fn apply<'a>(
         Op::AudioBindSet(_) | Op::AudioTrackDefine(_) => {
             crate::audio::apply_audio(&mut project, op)
         }
+        Op::AudioBindingSet(_) | Op::VisualBindingSet(_) => {
+            crate::hypnosis::apply_hypnosis(&mut project, op)
+        }
         Op::IntakeImage(inputs) => {
             let Observed::Image(image) = observed else {
                 invariant("image observation")

@@ -210,7 +210,9 @@ fn resolve_chain(
                 line.id, line.audio_binding
             ))
         })?;
-        let AudioBindingKind::Voice(voice) = &binding.kind;
+        let AudioBindingKind::Voice(voice) = &binding.kind else {
+            panic!("voice fixture binding");
+        };
         if voice.character != line.speaker {
             return Err(dangling(format!(
                 "dialogue line '{}' speaker '{}' disagrees with binding '{}' character '{}'",
@@ -340,7 +342,9 @@ fn binding_codec_round_trip_and_determinism() {
     let first = project
         .audio_binding("voice-prima-001")
         .expect("first binding");
-    let AudioBindingKind::Voice(voice) = &first.kind;
+    let AudioBindingKind::Voice(voice) = &first.kind else {
+        panic!("voice fixture binding");
+    };
     assert_eq!(voice.character, "prima");
     assert_eq!(voice.delivery.identity, IDENTITY);
     assert_eq!(voice.delivery.record, "cond.prima.greet.1");
@@ -605,7 +609,9 @@ fn empty_delivery_record_refused_by_sweep() {
     // the rebuild sweep refuses an empty delivery reference,
     // so the project cannot validate.
     let mut project = fixture_project();
-    let AudioBindingKind::Voice(voice) = &mut project.audio_bindings[0].kind;
+    let AudioBindingKind::Voice(voice) = &mut project.audio_bindings[0].kind else {
+        panic!("voice fixture binding");
+    };
     voice.delivery.record = String::new();
     let text = emit_project(&project);
     let root = common::fresh("voice-seam-empty-record");
