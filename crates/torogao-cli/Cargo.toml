@@ -6,9 +6,16 @@ license.workspace = true
 rust-version.workspace = true
 description = "The Torogao command-line tools: the registry, MCP and A2A servers, scenes, writer, tutorials, toolbox, and conversion."
 
+[features]
+# The generation-conditioning seam's CLI face (D-822):
+# `torogao gencond <verb> <project-dir> [inputs-json]`. Off by
+# default; the default CLI build does not link torogao-author.
+gen-conditioning = ["dep:torogao-author", "torogao-author/gen-conditioning"]
+
 [dependencies]
 serde_json = { workspace = true }
 sha2 = "0.10"
+torogao-author = { path = "../torogao-author", version = "0.4.0", optional = true }
 torogao-engine = { path = "../torogao-engine", version = "0.4.0" }
 torogao-format = { path = "../torogao-format", version = "0.4.0" }
 # WS2-W5 (D-113): the `mcp` mode's framing moves to the official

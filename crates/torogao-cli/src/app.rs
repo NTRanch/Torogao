@@ -64,6 +64,12 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     if let Some(code) = crate::specials::run_special(args, out, err) {
         return code;
     }
+    // The generation-conditioning face (D-822) intercepts
+    // next, in builds that carry the feature.
+    #[cfg(feature = "gen-conditioning")]
+    if args.first().map(String::as_str) == Some("gencond") {
+        return crate::gencond_face::run_gencond(args, out, err);
+    }
     match args.first().map(String::as_str) {
         Some("paths") => return run_paths(out),
         Some("project-info") => return run_project_info(args, out, err),

@@ -20,6 +20,8 @@ pub mod effects;
 pub mod extdoc;
 pub mod families;
 pub mod fluids;
+#[cfg(feature = "gen-conditioning")]
+pub mod gencond_face;
 pub mod glb;
 pub mod guards;
 pub mod handlers;
