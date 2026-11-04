@@ -3126,6 +3126,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tokio",
+ "torogao-author",
  "torogao-engine",
  "torogao-format",
 ]
@@ -3160,6 +3161,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "torogao-format",
+ "torogao-gencond",
 ]
 
 [[package]]
@@ -3196,6 +3198,16 @@ dependencies = [
  "ron",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "torogao-gencond"
+version = "0.4.0"
+dependencies = [
+ "png",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

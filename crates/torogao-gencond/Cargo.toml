@@ -1,0 +1,13 @@
+[package]
+name = "torogao-gencond"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Torogao's experimental generation-conditioning seam (D-822): the Conditioning record schema, canon compilation, and the torogao-gen-graph/1 compiler. Enters the author surface only behind torogao-author's `gen-conditioning` feature; no core crate may depend on it (DESIGN §3.2, enforced by an architecture gate)."
+
+[dependencies]
+png = "0.18"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
