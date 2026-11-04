@@ -8,6 +8,7 @@ members = [
     "crates/torogao-format",
     "crates/torogao-gencond",
     "crates/torogao-jam-laws",
+    "crates/torogao-motion-clip",
     "crates/torogao-osc",
     "crates/torogao-rig",
     "crates/torogao-session",

@@ -1,0 +1,225 @@
+{
+  "format": "torogao-motion-clip/1",
+  "id": "golden-clip",
+  "skeleton": {
+    "def": "torogao-humanoid/1",
+    "sha256": "ad9c05d8bcc2ac6af39d6888dfed9ab3de7be8f4f7becd06a572728542b00aee"
+  },
+  "frames": 6,
+  "loop": false,
+  "groups": [
+    {
+      "kind": "body",
+      "tracks": [
+        {
+          "bone": "Head",
+          "rotation": [
+            {
+              "frame": 0,
+              "value": [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "interpolation": "linear"
+            },
+            {
+              "frame": 5,
+              "value": [
+                0.0,
+                0.7071067811865476,
+                0.0,
+                0.7071067811865476
+              ],
+              "interpolation": "linear"
+            }
+          ]
+        },
+        {
+          "bone": "Hips",
+          "scale": [
+            {
+              "frame": 0,
+              "value": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "interpolation": "linear"
+            }
+          ],
+          "translation": [
+            {
+              "frame": 0,
+              "value": [
+                0.0,
+                1.0,
+                0.0
+              ],
+              "interpolation": "linear"
+            },
+            {
+              "frame": 5,
+              "value": [
+                0.5,
+                1.0,
+                0.0
+              ],
+              "interpolation": "linear"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "camera",
+      "mode": "moving"
+    },
+    {
+      "kind": "face",
+      "tracks": [
+        {
+          "channel": "blink",
+          "keys": [
+            {
+              "frame": 0,
+              "value": 0.0,
+              "interpolation": "linear"
+            },
+            {
+              "frame": 5,
+              "value": 1.0,
+              "interpolation": "linear"
+            }
+          ]
+        },
+        {
+          "channel": "jawOpen",
+          "keys": [
+            {
+              "frame": 0,
+              "value": 0.25,
+              "interpolation": "linear"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "hands"
+    }
+  ],
+  "layers": [
+    {
+      "id": "gold-head",
+      "weight": 0.75,
+      "scope": {
+        "bones": [
+          "Head"
+        ],
+        "channels": []
+      },
+      "tracks": [
+        {
+          "bone": "Head",
+          "rotation": [
+            {
+              "frame": 0,
+              "value": [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "interpolation": "linear"
+            },
+            {
+              "frame": 5,
+              "value": [
+                0.0,
+                0.0,
+                0.7071067811865476,
+                0.7071067811865476
+              ],
+              "interpolation": "linear"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gold-blink",
+      "weight": 1.0,
+      "scope": {
+        "bones": [],
+        "channels": [
+          "blink"
+        ]
+      },
+      "tracks": [
+        {
+          "channel": "blink",
+          "keys": [
+            {
+              "frame": 0,
+              "value": 0.125,
+              "interpolation": "linear"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gold-reserved",
+      "name": "reserved for stage work",
+      "weight": 1.0,
+      "scope": {
+        "bones": [],
+        "channels": []
+      },
+      "tracks": []
+    }
+  ],
+  "provenance": {
+    "format": "torogao-take-provenance/1",
+    "groups": [
+      {
+        "group": "body",
+        "source_class": "converted",
+        "converter": "vmd-import/1",
+        "frame_map": {
+          "source_frame_count": 3,
+          "source_rate": {
+            "num": 30,
+            "den": 1
+          },
+          "entries": [
+            0,
+            0,
+            1,
+            1,
+            2,
+            2
+          ]
+        }
+      },
+      {
+        "group": "camera",
+        "source_class": "authored",
+        "converter": "authored"
+      },
+      {
+        "group": "face",
+        "source_class": "generated",
+        "converter": "lumen-face/1",
+        "model_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      {
+        "group": "hands",
+        "source_class": "captured",
+        "converter": "glove-capture/1"
+      }
+    ]
+  }
+}

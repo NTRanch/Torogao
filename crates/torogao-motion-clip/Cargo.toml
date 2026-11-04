@@ -1,0 +1,16 @@
+[package]
+name = "torogao-motion-clip"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Parser, validator, and deterministic layer-replay evaluator for torogao-motion-clip/1 documents (mocap P1): field-strict JSON, the D-736 additive layer model, canonical 60 Hz evaluation per the format specification."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+
+[lib]
+name = "torogao_motion_clip"
+path = "src/lib.rs"
