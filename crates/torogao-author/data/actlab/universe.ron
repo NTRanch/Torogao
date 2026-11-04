@@ -1,0 +1,36 @@
+// Parameter-universe snapshot — actlab data (D-943, Tool 1).
+// The governed parameter sets of PARAMETER-UNIVERSE.md S6a-S6c as
+// data: which parameters an act record may govern (set parameters)
+// and which it may bind (state parameters). A checked-in export,
+// not a code dependency on the full-rigs workspace.
+ParameterUniverse(
+    format: "torogao-actlab-universe/1",
+    provenance: Provenance(
+        source_documents: [
+            "PARAMETER-UNIVERSE.md (full-rigs-20261103, D-859/D-911)",
+            "evidence/inspect-*.json gate-b dumps (full-rigs-20261103)",
+            "rigs/*.fullrig.ron character records (full-rigs-20261103)",
+        ],
+        generation_method: "parameter rows copied from the gate-b inspect dumps (generated from the built .inx payloads by scripts/inspect_dump.py); part lists are the .inx payload Part-node names, sorted; assembled by the D-943 actlab data generator, 2026-11-04",
+        generated_on: "2026-11-04",
+        record_hashes: [
+            RecordHash(name: "prima-full.inx", sha256: "41be0a71ef42af0666e8c4818c73fe8ba7daa6b49d79999381427eb363b7edaa"),
+            RecordHash(name: "yui-full.inx", sha256: "4fe5277f8f10f1f84f3cf0a9984cd8acad93d247ea8023be1ba7d734f614d72a"),
+            RecordHash(name: "alma-full.inx", sha256: "d7154a02a79688925a967e06ecc930df3de0a1bdb488e904632c4c0365952c1f"),
+            RecordHash(name: "prima.fullrig.ron", sha256: "6cb817738ce2d02a20af26a7e15cb7af7d5d6ac266a1ecd5c9431821a83f96d1"),
+            RecordHash(name: "yui.fullrig.ron", sha256: "f259688ee9145d3260b043f0fd1bf952ccb75c9b6f07facde7e7b703ed2f6886"),
+            RecordHash(name: "alma.fullrig.ron", sha256: "dafe401f1ae6154b45da807a68a8983154655161d86070e59ccbd703ca3d75ea"),
+        ],
+    ),
+    set_parameters: [
+        ParameterSpec(name: "ParamRopeSet", min: 0.0, max: 1.0, integer: false),
+        ParameterSpec(name: "ParamBlindfoldSet", min: 0.0, max: 1.0, integer: false),
+        ParameterSpec(name: "ParamGagSet", min: 0.0, max: 1.0, integer: false),
+        ParameterSpec(name: "ParamCollarSet", min: 0.0, max: 1.0, integer: false),
+        ParameterSpec(name: "ParamHucowSet", min: 0.0, max: 1.0, integer: false),
+    ],
+    state_parameters: [
+        ParameterSpec(name: "ParamCorruptionState", min: 0.0, max: 1.0, integer: false),
+        ParameterSpec(name: "ParamCrescendoStage", min: 0.0, max: 4.0, integer: true),
+    ],
+)

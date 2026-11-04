@@ -1,0 +1,12 @@
+// Validation fixture (D-943): a gear-set act on one rig, built
+// from PARAMETER-UNIVERSE.md S6a mechanisms only.
+ActRecord(
+    slug: "rope-set-prima",
+    rigs: ["prima"],
+    set_parameter: SetParameter(name: "ParamRopeSet", value: 1.0),
+    parts: ["RopeSet"],
+    state_bindings: [
+        StateBinding(parameter: "ParamCorruptionState", value: 0.5),
+    ],
+    source: "PARAMETER-UNIVERSE.md S6a gear sets (D-911); D-943 test fixture",
+)

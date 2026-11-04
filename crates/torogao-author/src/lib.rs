@@ -8,6 +8,10 @@
 //! A denial is final: no verb, input, or face carries an override,
 //! force, or skip-checks parameter.
 //!
+//! The actlab family ([`actlab`], D-943) validates §6d act
+//! records against data snapshots and simulates Crescendo;
+//! its one verb routes by name alongside the game verbs.
+//!
 //! Faces (the `torogao author` CLI now, MCP in slice A4) call
 //! [`session::run_verb`] / [`session::run_requests`] and hold no
 //! validation logic of their own.
@@ -28,6 +32,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+pub mod actlab;
 pub mod apply;
 pub mod audio;
 pub mod census;

@@ -127,6 +127,18 @@ pub fn run_verb(
         }
         return crate::conditioning::run_compile_query(root, inputs);
     }
+    // The actlab family (D-943): one read-only verb,
+    // project-independent (its inputs are document texts, not a
+    // project), routed by name like the game verbs.
+    if verb == crate::actlab::ACTLAB_VERB {
+        return match crate::actlab::run_actlab_verb(inputs) {
+            Ok((valid, doc)) => Answer {
+                status: if valid { Status::Ok } else { Status::Findings },
+                doc,
+            },
+            Err(refusal) => refused(verb, &refusal),
+        };
+    }
     if let Some(spec) = crate::game::op::game_verb_spec(verb) {
         if !spec.implemented {
             let Err(refusal) = crate::game::op::refuse_game_unimplemented::<()>(verb) else {

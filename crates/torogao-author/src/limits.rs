@@ -183,3 +183,26 @@ pub const PHYSICS_STRANDS_MAX: usize = 256;
 /// envelope ticks: one million ticks is days of runtime at any
 /// plausible step rate, far past any authored clip.
 pub const TICKS_MAX: u32 = 1_000_000;
+
+// ---- Actlab (D-943) bounds ---------------------------------------
+
+/// Maximum bytes of one actlab document (act record, universe
+/// snapshot, or rig snapshot) accepted by the actlab parsers.
+pub const ACTLAB_TEXT_BYTES_MAX: usize = 1_048_576;
+/// Maximum slug length, in bytes (the estate id bound).
+pub const ACTLAB_SLUG_BYTES_MAX: usize = 64;
+/// Maximum rigs one act record may target (and snapshots one
+/// `act_validate` call may carry).
+pub const ACTLAB_RIGS_MAX: usize = 8;
+/// Maximum part entries in one act record.
+pub const ACTLAB_PARTS_MAX: usize = 64;
+/// Maximum state bindings in one act record.
+pub const ACTLAB_BINDINGS_MAX: usize = 32;
+/// Maximum source-document entries in one provenance record.
+pub const ACTLAB_SOURCES_MAX: usize = 32;
+/// Maximum record hashes in one provenance record.
+pub const ACTLAB_HASHES_MAX: usize = 32;
+/// Maximum parameters in one snapshot document.
+pub const ACTLAB_SNAPSHOT_PARAMETERS_MAX: usize = 512;
+/// Maximum part variants in one rig snapshot.
+pub const ACTLAB_SNAPSHOT_PARTS_MAX: usize = 512;

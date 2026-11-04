@@ -1,0 +1,10 @@
+// Validation fixture (D-943): one act targeting two rigs; the
+// set parameter and part must resolve on both.
+ActRecord(
+    slug: "blindfold-set-prima-yui",
+    rigs: ["prima", "yui"],
+    set_parameter: SetParameter(name: "ParamBlindfoldSet", value: 1.0),
+    parts: ["BlindfoldSet"],
+    state_bindings: [],
+    source: "PARAMETER-UNIVERSE.md S6a gear sets (D-911); D-943 test fixture",
+)

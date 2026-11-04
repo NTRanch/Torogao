@@ -1,0 +1,12 @@
+// Validation fixture (D-943): Alma's ParamHucowSet precedent
+// (S6a) with her own gear part variants.
+ActRecord(
+    slug: "hucow-set-alma",
+    rigs: ["alma"],
+    set_parameter: SetParameter(name: "ParamHucowSet", value: 1.0),
+    parts: ["BellCollar", "CowEarL", "CowEarR"],
+    state_bindings: [
+        StateBinding(parameter: "ParamCorruptionState", value: 0.75),
+    ],
+    source: "PARAMETER-UNIVERSE.md S6a HucowSet precedent (D-911); D-943 test fixture",
+)
