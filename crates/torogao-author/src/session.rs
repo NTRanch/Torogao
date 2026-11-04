@@ -50,6 +50,20 @@ fn unloadable(verb: &str, refusal: &Refusal) -> Answer {
     }
 }
 
+/// The refused answer, for family routers inside this crate
+/// (the conditioning family's query path).
+#[cfg(feature = "gen-conditioning")]
+pub(crate) fn refused_for(verb: &str, refusal: &Refusal) -> Answer {
+    refused(verb, refusal)
+}
+
+/// The unloadable answer, for family routers inside this
+/// crate.
+#[cfg(feature = "gen-conditioning")]
+pub(crate) fn unloadable_for(verb: &str, refusal: &Refusal) -> Answer {
+    unloadable(verb, refusal)
+}
+
 /// Inputs of verbs that take none: an empty object (any field,
 /// including any override-style flag, is refused).
 #[derive(Deserialize)]
@@ -92,6 +106,27 @@ pub fn run_verb(
     inputs: &Value,
     resolve: &dyn Fn(&str) -> Result<PathBuf, Refusal>,
 ) -> Answer {
+    // The conditioning family (D-822) routes first, like the
+    // game family: its verbs are in neither the rig manifest
+    // nor the game manifest. Without the feature the names
+    // fall through to the manifest refusal, which names the
+    // family (op::refuse_unimplemented).
+    #[cfg(feature = "gen-conditioning")]
+    if let Some(spec) = crate::conditioning::conditioning_verb_spec(verb) {
+        if spec.mutating {
+            return match crate::op::Op::parse(verb, inputs) {
+                Ok(_) => {
+                    let request = Request {
+                        verb: verb.to_string(),
+                        inputs: inputs.clone(),
+                    };
+                    run_requests(root, base, &[request])
+                }
+                Err(refusal) => refused(verb, &refusal),
+            };
+        }
+        return crate::conditioning::run_compile_query(root, inputs);
+    }
     if let Some(spec) = crate::game::op::game_verb_spec(verb) {
         if !spec.implemented {
             let Err(refusal) = crate::game::op::refuse_game_unimplemented::<()>(verb) else {

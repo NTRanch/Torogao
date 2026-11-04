@@ -32,6 +32,8 @@ pub mod apply;
 pub mod audio;
 pub mod census;
 pub mod codec;
+#[cfg(feature = "gen-conditioning")]
+pub mod conditioning;
 pub mod decide;
 pub mod diff;
 pub mod export;
@@ -53,3 +55,9 @@ pub mod voice;
 
 pub use refusal::{Refusal, RefusalClass};
 pub use session::{Answer, Status, parse_script, run_requests, run_verb, verbs_doc};
+
+/// Whether this build carries the generation-conditioning
+/// seam (the `gen-conditioning` feature). The architecture
+/// gate reads this constant because an integration test
+/// cannot cfg on the library's own features.
+pub const GENCOND_ENABLED: bool = cfg!(feature = "gen-conditioning");

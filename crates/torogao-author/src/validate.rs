@@ -190,6 +190,19 @@ pub fn sweep(project: &Project) -> Result<Project, Refusal> {
         ));
     }
     rebuilt.visual_bindings = project.visual_bindings.clone();
+    // The generation record (D-822) is authored by
+    // `conditioning_set` in feature builds; the sweep carries
+    // the section across like assets and variant sets. The
+    // base record's id is checked in every build; the full
+    // gencond validation runs where the feature exists (in a
+    // build without it the conditioning subtree is inert data
+    // by design, and there is nothing here to judge it with).
+    if let Some(generation) = &project.generation {
+        check_id(&generation.id, "generation record id")?;
+        #[cfg(feature = "gen-conditioning")]
+        crate::conditioning::check_stored_record(generation)?;
+    }
+    rebuilt.generation = project.generation.clone();
     Ok(rebuilt)
 }
 

@@ -6,8 +6,16 @@ license.workspace = true
 rust-version.workspace = true
 description = "The Torogao authoring core: project model, canonical RON serializer, op log, and the decide() gate."
 
+[features]
+# The generation-conditioning seam (D-822): pulls the
+# torogao-gencond crate into the author surface only. Off by
+# default — no core crate depends on gencond in any build,
+# and the default build's surface is unchanged.
+gen-conditioning = ["dep:torogao-gencond"]
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"
 torogao-format = { path = "../torogao-format", version = "0.4.0" }
+torogao-gencond = { path = "../torogao-gencond", version = "0.4.0", optional = true }

@@ -139,6 +139,24 @@ pub fn verb_spec(name: &str) -> Option<&'static VerbSpec> {
 /// name the manifest does not carry. A descoped verb refuses
 /// with its recorded ruling and its capability's home.
 pub fn refuse_unimplemented<T>(name: &str) -> Result<T, Refusal> {
+    // The generation-conditioning family (torogao-gencond,
+    // D-822) is not in this manifest in any build: with the
+    // `gen-conditioning` feature its two verbs route through
+    // their own manifest, and without it they refuse here, by
+    // family name. A saved conditioning record in a project is
+    // inert data in a build without the feature — present,
+    // preserved, and not compilable (DESIGN §3.3.4).
+    if name.starts_with("conditioning_") {
+        return refuse(
+            RefusalClass::UnknownKind,
+            format!(
+                "verb '{name}' belongs to the generation-conditioning family \
+                 (torogao-gencond, D-822), which is not implemented in this build: the \
+                 family enters the author surface only behind the `gen-conditioning` \
+                 feature, and a saved conditioning record is inert data without it"
+            ),
+        );
+    }
     if let Some(descope) = descope(name) {
         return refuse(
             RefusalClass::UnknownKind,
@@ -680,6 +698,9 @@ pub enum Op {
     AudioBindingSet(crate::hypnosis::AudioBindingSetInput),
     /// `audio_track_define` (A3).
     AudioTrackDefine(crate::audio::AudioTrackDefineInput),
+    /// A generation-conditioning op (D-822; feature-gated).
+    #[cfg(feature = "gen-conditioning")]
+    Conditioning(crate::conditioning::ConditioningOp),
     /// `curve_from_samples` (A3).
     CurveFromSamples(crate::motion::CurveFromSamplesInput),
     /// `curve_set` (A3).
@@ -764,6 +785,10 @@ impl Op {
         if crate::game::op::game_verb_spec(verb).is_some() {
             return crate::game::op::parse_game_op(verb, inputs);
         }
+        #[cfg(feature = "gen-conditioning")]
+        if crate::conditioning::conditioning_verb_spec(verb).is_some() {
+            return crate::conditioning::parse_conditioning_op(verb, inputs);
+        }
         let op = match verb {
             "audio_bind_set" => Op::AudioBindSet(typed(verb, inputs)?),
             "audio_binding_set" => Op::AudioBindingSet(typed(verb, inputs)?),
@@ -811,6 +836,8 @@ impl Op {
             Op::AudioBindSet(_) => "audio_bind_set",
             Op::AudioBindingSet(_) => "audio_binding_set",
             Op::AudioTrackDefine(_) => "audio_track_define",
+            #[cfg(feature = "gen-conditioning")]
+            Op::Conditioning(op) => op.verb(),
             Op::CurveFromSamples(_) => "curve_from_samples",
             Op::CurveSet(_) => "curve_set",
             Op::DeformerGlueSet(_) => "deformer_glue_set",
@@ -852,8 +879,14 @@ impl Op {
         if let Op::Game(game_op) = self {
             return game_op.inputs_json();
         }
+        #[cfg(feature = "gen-conditioning")]
+        if let Op::Conditioning(op) = self {
+            return op.inputs_json();
+        }
         let result = match self {
             Op::Game(_) => unreachable!("handled above"),
+            #[cfg(feature = "gen-conditioning")]
+            Op::Conditioning(_) => unreachable!("handled above"),
             Op::AudioBindSet(inputs) => serde_json::to_value(inputs),
             Op::AudioBindingSet(inputs) => serde_json::to_value(inputs),
             Op::AudioTrackDefine(inputs) => serde_json::to_value(inputs),

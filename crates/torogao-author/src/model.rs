@@ -64,6 +64,13 @@ pub struct Project {
     /// Absent means absent: rig-only projects carry no field and
     /// serialize exactly as before the game layer existed.
     pub game: Option<crate::game::model::Game>,
+    /// The generation record (D-822 conditioning seam), when
+    /// the project authors generation. Its `conditioning`
+    /// subtree is carried as opaque RON in every build: in a
+    /// build without the `gen-conditioning` feature the record
+    /// is inert data — loaded, round-tripped, and re-emitted
+    /// untouched, never interpreted.
+    pub generation: Option<GenerationRecord>,
     /// The `content.ron` sidecar's prose entries, sorted by id.
     /// Sidecar state: the store merges them in at load and writes
     /// them back at commit; they are never serialized into
@@ -74,6 +81,58 @@ pub struct Project {
     /// locale is `en`, D-472); preserved verbatim on re-emission
     /// so a translation sidecar stays itself.
     pub content_locale: Option<String>,
+}
+
+/// A generation record (D-822): the base plan plus, when set,
+/// the conditioning section. The base fields are plain author
+/// data in every build; the conditioning subtree's typed form
+/// lives in `torogao-gencond` and exists only behind the
+/// `gen-conditioning` feature — here it is a `crate::ron::Ron`
+/// subtree, carried verbatim.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GenerationRecord {
+    /// Record id.
+    pub id: String,
+    /// S-7 name of the base checkpoint.
+    pub checkpoint: String,
+    /// The latent canvas.
+    pub latent: GenerationLatent,
+    /// The sampler configuration.
+    pub sampler: GenerationSampler,
+    /// The base seed.
+    pub seed: i64,
+    /// Save-image filename prefix.
+    pub filename_prefix: String,
+    /// The conditioning section as an opaque RON subtree
+    /// (a `Conditioning(...)` record in the gencond schema),
+    /// when the record carries one.
+    pub conditioning: Option<crate::ron::Ron>,
+}
+
+/// A generation record's latent canvas.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GenerationLatent {
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+    /// Batch size.
+    pub batch_size: u32,
+}
+
+/// A generation record's sampler configuration.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GenerationSampler {
+    /// Steps.
+    pub steps: u32,
+    /// CFG scale.
+    pub cfg: f64,
+    /// Sampler name.
+    pub name: String,
+    /// Scheduler name.
+    pub scheduler: String,
+    /// Denoise strength.
+    pub denoise: f64,
 }
 
 /// The project header.

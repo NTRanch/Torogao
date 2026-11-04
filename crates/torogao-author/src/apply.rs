@@ -131,6 +131,8 @@ fn apply<'a>(
             return crate::import::apply_import(project, inputs, observed, files);
         }
         Op::Game(game_op) => crate::game::apply::apply_game(&mut project, game_op)?,
+        #[cfg(feature = "gen-conditioning")]
+        Op::Conditioning(op) => crate::conditioning::apply_conditioning(&mut project, op)?,
         Op::PhysicsForcesSet(_) | Op::PhysicsGroupDefine(_) | Op::PhysicsGroupRemove(_) => {
             crate::physics::apply_physics(&mut project, op)
         }

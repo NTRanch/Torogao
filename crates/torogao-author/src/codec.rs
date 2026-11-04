@@ -12,13 +12,13 @@
 use crate::model::{
     AnchorKind, ArtBind, Asset, AssetKind, AudioBind, AudioBindTarget, AudioBinding,
     AudioBindingKind, AudioMarker, AudioTrack, Blend, Clip, Completion, Consent, Deformer,
-    DeformerKind, DeliveryRef, Draw, Expression, ExpressionValue, ExpressionVisibility, Glue,
-    Header, HypnosisLayer, HypnosisLayerKind, HypnosisTrackBinding, Keyform, Keyforms, LoopSync,
-    Mesh, MeshForm, Motion, MotionCurve, MotionKeyframe, OverlayHookBinding, PROJECT_FORMAT,
-    PROJECT_FORMAT_VERSION, Parameter, Part, PhysicsAnchor, PhysicsGroup, PhysicsInput,
-    PhysicsOutput, PhysicsParticle, PhysicsStrand, Point, PoseEntry, Project, Provenance, Rect,
-    Rotation, RotationForm, Stamp, VariantSet, VisualBinding, VisualBindingKind, VisualLoopBinding,
-    VoiceBinding, Warp, WarpForm,
+    DeformerKind, DeliveryRef, Draw, Expression, ExpressionValue, ExpressionVisibility,
+    GenerationLatent, GenerationRecord, GenerationSampler, Glue, Header, HypnosisLayer,
+    HypnosisLayerKind, HypnosisTrackBinding, Keyform, Keyforms, LoopSync, Mesh, MeshForm, Motion,
+    MotionCurve, MotionKeyframe, OverlayHookBinding, PROJECT_FORMAT, PROJECT_FORMAT_VERSION,
+    Parameter, Part, PhysicsAnchor, PhysicsGroup, PhysicsInput, PhysicsOutput, PhysicsParticle,
+    PhysicsStrand, Point, PoseEntry, Project, Provenance, Rect, Rotation, RotationForm, Stamp,
+    VariantSet, VisualBinding, VisualBindingKind, VisualLoopBinding, VoiceBinding, Warp, WarpForm,
 };
 use crate::refusal::{Refusal, RefusalClass, refuse};
 use crate::ron::{Ron, emit_document, parse_document};
@@ -141,6 +141,14 @@ fn project_to_ron(project: &Project) -> Ron {
         fields.push((
             "game",
             Ron::Opt(Some(Box::new(crate::game::codec::game_to_ron(game)))),
+        ));
+    }
+    // The generation section follows `game` alphabetically;
+    // emitted only when present, like the game section.
+    if let Some(generation) = &project.generation {
+        fields.push((
+            "generation",
+            Ron::Opt(Some(Box::new(generation_to_ron(generation)))),
         ));
     }
     fields.push((
@@ -1134,6 +1142,15 @@ fn project_from_ron(value: Ron) -> Result<Project, Refusal> {
         Some(Ron::Opt(Some(inner))) => Some(crate::game::codec::game_from_ron(*inner)?),
         Some(_) => return wrong_type("game", "None or Some(Game(...))"),
     };
+    // The generation section is optional the same way; its
+    // conditioning subtree is decoded as an opaque tree in
+    // every build (inert without the feature, by design).
+    let generation = match fields.try_take("generation") {
+        None => None,
+        Some(Ron::Opt(None)) => None,
+        Some(Ron::Opt(Some(inner))) => Some(generation_from_ron(*inner)?),
+        Some(_) => return wrong_type("generation", "None or Some(Generation(...))"),
+    };
     fields.done()?;
     // Audio binds sort by the (track, marker) pair, which the
     // &str-keyed sorted_unique cannot express; sort and check
@@ -1168,8 +1185,103 @@ fn project_from_ron(value: Ron) -> Result<Project, Refusal> {
         variant_sets: sorted_unique(variant_sets, "variant sets", |item| &item.id)?,
         visual_bindings: sorted_unique(visual_bindings, "visual bindings", |item| &item.id)?,
         game,
+        generation,
         content: Vec::new(),
         content_locale: None,
+    })
+}
+
+fn generation_to_ron(generation: &GenerationRecord) -> Ron {
+    record(
+        "Generation",
+        vec![
+            ("id", text(&generation.id)),
+            (
+                "base",
+                record(
+                    "BasePlan",
+                    vec![
+                        ("checkpoint", text(&generation.checkpoint)),
+                        ("filename_prefix", text(&generation.filename_prefix)),
+                        (
+                            "latent",
+                            record(
+                                "Latent",
+                                vec![
+                                    (
+                                        "batch_size",
+                                        Ron::Int(i64::from(generation.latent.batch_size)),
+                                    ),
+                                    ("height", Ron::Int(i64::from(generation.latent.height))),
+                                    ("width", Ron::Int(i64::from(generation.latent.width))),
+                                ],
+                            ),
+                        ),
+                        (
+                            "sampler",
+                            record(
+                                "Sampler",
+                                vec![
+                                    ("cfg", Ron::Float(generation.sampler.cfg)),
+                                    ("denoise", Ron::Float(generation.sampler.denoise)),
+                                    ("name", text(&generation.sampler.name)),
+                                    ("scheduler", text(&generation.sampler.scheduler)),
+                                    ("steps", Ron::Int(i64::from(generation.sampler.steps))),
+                                ],
+                            ),
+                        ),
+                        ("seed", Ron::Int(generation.seed)),
+                    ],
+                ),
+            ),
+            (
+                "conditioning",
+                Ron::Opt(generation.conditioning.clone().map(Box::new)),
+            ),
+        ],
+    )
+}
+
+fn generation_from_ron(value: Ron) -> Result<GenerationRecord, Refusal> {
+    let mut fields = open(value, "Generation")?;
+    let mut base = open(fields.take("base")?, "BasePlan")?;
+    let checkpoint = base.string("checkpoint")?;
+    let filename_prefix = base.string("filename_prefix")?;
+    let mut latent = open(base.take("latent")?, "Latent")?;
+    let batch_size = latent.uint("batch_size")?;
+    let height = latent.uint("height")?;
+    let width = latent.uint("width")?;
+    latent.done()?;
+    let mut sampler = open(base.take("sampler")?, "Sampler")?;
+    let cfg = sampler.float("cfg")?;
+    let denoise = sampler.float("denoise")?;
+    let name = sampler.string("name")?;
+    let scheduler = sampler.string("scheduler")?;
+    let steps = sampler.uint("steps")?;
+    sampler.done()?;
+    let seed = base.int("seed")?;
+    base.done()?;
+    let conditioning = fields.option("conditioning")?;
+    let id = fields.string("id")?;
+    fields.done()?;
+    Ok(GenerationRecord {
+        id,
+        checkpoint,
+        latent: GenerationLatent {
+            width,
+            height,
+            batch_size,
+        },
+        sampler: GenerationSampler {
+            steps,
+            cfg,
+            name,
+            scheduler,
+            denoise,
+        },
+        seed,
+        filename_prefix,
+        conditioning,
     })
 }
 
