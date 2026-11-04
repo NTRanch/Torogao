@@ -6,6 +6,7 @@ members = [
     "crates/torogao-companion",
     "crates/torogao-engine",
     "crates/torogao-format",
+    "crates/torogao-gen",
     "crates/torogao-gencond",
     "crates/torogao-jam-laws",
     "crates/torogao-motion-clip",
