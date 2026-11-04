@@ -1593,15 +1593,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lumen-rig-core"
-version = "0.2.0"
-source = "git+https://github.com/qompassai/lumen?rev=16e4cfc8a41914bc17f3c3fdb87af434a47b4871#16e4cfc8a41914bc17f3c3fdb87af434a47b4871"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3131,7 +3122,6 @@ dependencies = [
 name = "torogao"
 version = "0.4.0"
 dependencies = [
- "lumen-rig-core",
  "rmcp",
  "serde_json",
  "sha2",
