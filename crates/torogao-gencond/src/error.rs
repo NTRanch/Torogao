@@ -14,6 +14,19 @@ use serde_json::{Value, json};
 pub const CODE_BLANK_MAP: &str = "TG-GENCOND-BLANK-MAP";
 /// Two definitions for one id or text slot disagree.
 pub const CODE_CONFLICT: &str = "TG-GENCOND-CONFLICT";
+/// A regeneration proposal names a node the scene record's
+/// custody map holds frozen (D-838): the proposal refuses
+/// whole, naming every frozen target — no partial
+/// application, ever.
+pub const CODE_CUSTODY_FROZEN: &str = "TG-GENCOND-CUSTODY-FROZEN";
+/// A track freeze cannot meet its stated epsilon within the
+/// keyform bound (D-838): the curve would sit outside its
+/// contract, so no curve is emitted.
+pub const CODE_FREEZE_DEVIATION: &str = "TG-GENCOND-FREEZE-DEVIATION";
+/// A palette freeze names a colour whose nearest locked
+/// palette entry lies beyond the stated tolerance (D-838):
+/// the snap refuses whole, naming every offending colour.
+pub const CODE_PALETTE_UNMATCHED: &str = "TG-GENCOND-PALETTE-UNMATCHED";
 /// A named model, asset blob, or binding names nothing that
 /// exists in the compile inputs.
 pub const CODE_DANGLING: &str = "TG-GENCOND-DANGLING";
