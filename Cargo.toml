@@ -8,6 +8,7 @@ members = [
     "crates/torogao-format",
     "crates/torogao-jam-laws",
     "crates/torogao-osc",
+    "crates/torogao-rig",
     "crates/torogao-session",
     "crates/torogao-tui",
     "crates/torogao-viseme",

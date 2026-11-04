@@ -1,0 +1,11 @@
+[package]
+name = "torogao-rig"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "INP1 puppet evaluation for Torogao: container/payload import, fixed-step deterministic parameter and physics evaluation, and a measurement-grade CPU rasterizer. Independent Torogao-lane implementation (D-876): it shares the INP1 format and the gate/measurement conventions with the lumen rig stack, and no code."
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde_json = { workspace = true, features = ["float_roundtrip"] }
