@@ -14,12 +14,21 @@ use candle_nn::{Linear, Module, VarBuilder};
 use candle_transformers::models::stable_diffusion as sd;
 use tokenizers::Tokenizer;
 
+use crate::clip_vision::ClipVisionH;
+use crate::conditioning::{
+    ConditioningRecord, ConditioningSpec, ControlRecord, IpRecord, load_pose, sha256_file,
+};
+use crate::controlnet::ControlNet;
 use crate::error::{GenError, Result};
+use crate::ipadapter::{load_ip_weights, normalize_reference_embed, rms};
 use crate::limits;
 use crate::rng::GaussianStream;
 use crate::sampler::dpmpp_2m;
 use crate::schedule::Schedule;
-use crate::sd::unet_2d::{BlockConfig, UNet2DConditionModel, UNet2DConditionModelConfig};
+use crate::sd::attention::IpContext;
+use crate::sd::unet_2d::{
+    BlockConfig, ConditioningInputs, UNet2DConditionModel, UNet2DConditionModelConfig,
+};
 
 /// EOS/pad token id for both CLIP tokenizers.
 const PAD_ID: u32 = 49407;
@@ -114,6 +123,127 @@ pub struct GeneratedImage {
     /// SHA-256 of the latent noise buffer (pre-sampler),
     /// a replay fingerprint of the RNG stream.
     pub noise_sha256: String,
+    /// Stage 2 conditioning provenance (D-936); `None`
+    /// exactly when the run was unconditioned (Stage 1).
+    pub conditioning: Option<ConditioningRecord>,
+}
+
+/// Loaded Stage 2 conditioning assets (D-936), built from
+/// a `ConditioningSpec` before generation and consumed by
+/// it: the IP site projections move into the UNet at
+/// attach time, so one assets value serves one run.
+pub struct ConditioningAssets {
+    control: Option<ControlAssets>,
+    ip: Option<IpAssets>,
+    record: ConditioningRecord,
+}
+
+struct ControlAssets {
+    net: ControlNet,
+    pose: Tensor,
+    strength: f64,
+    start: f64,
+    end: f64,
+    cn_type: crate::conditioning::CnType,
+}
+
+struct IpAssets {
+    tokens_raw: Tensor,
+    sites: Vec<(Linear, Linear)>,
+    scale: f64,
+}
+
+impl ConditioningAssets {
+    /// Load and validate every conditioning input for a
+    /// generation of `width` x `height`: hashes are taken
+    /// for the provenance record, the pose map is decoded
+    /// and refused when blank or wrongly sized, and the
+    /// reference image is embedded (vision encoder +
+    /// resampler) — all before the UNet loads.
+    ///
+    /// # Errors
+    /// Returns `gen_conditioning` for any refused input
+    /// and `gen_weights` for misshapen weights files.
+    pub fn load(spec: &ConditioningSpec, width: u32, height: u32, device: &Device) -> Result<Self> {
+        let mut record = ConditioningRecord {
+            control: None,
+            ip: None,
+        };
+        let control = match &spec.control {
+            None => None,
+            Some(cs) => {
+                let controlnet_sha256 = sha256_file(&cs.controlnet_path)?;
+                let pose_sha256 = sha256_file(&cs.pose_path)?;
+                let pose = load_pose(&cs.pose_path, width, height)?;
+                record.control = Some(ControlRecord {
+                    pose_path: cs.pose_path.display().to_string(),
+                    pose_sha256,
+                    controlnet_sha256,
+                    strength: cs.strength,
+                    cn_type: cs.cn_type.name().to_string(),
+                    start: cs.start,
+                    end: cs.end,
+                    pose_stats: pose.stats,
+                });
+                let net = ControlNet::load(&cs.controlnet_path, device)?;
+                let pose_t = Tensor::from_vec(
+                    pose.rgb
+                        .iter()
+                        .map(|v| f32::from(*v) / 255.0)
+                        .collect::<Vec<_>>(),
+                    (1, 3, height as usize, width as usize),
+                    &Device::Cpu,
+                )?
+                .to_device(device)?
+                .to_dtype(DType::F16)?;
+                Some(ControlAssets {
+                    net,
+                    pose: pose_t,
+                    strength: cs.strength,
+                    start: cs.start,
+                    end: cs.end,
+                    cn_type: cs.cn_type,
+                })
+            }
+        };
+        let ip = match &spec.ip {
+            None => None,
+            Some(is) => {
+                let ipadapter_sha256 = sha256_file(&is.ipadapter_path)?;
+                let clip_vision_sha256 = sha256_file(&is.clip_vision_path)?;
+                let reference_sha256 = sha256_file(&is.reference_path)?;
+                // Vision + resampler run once, here; both
+                // are dropped before the sampling phase
+                // (staged residency, as with the UNet).
+                let vision = ClipVisionH::load(&is.clip_vision_path, device)?;
+                let vision_tokens = vision.embed(&is.reference_path)?;
+                drop(vision);
+                let weights = load_ip_weights(&is.ipadapter_path, device)?;
+                let tokens_raw = weights.resampler.forward(&vision_tokens)?;
+                record.ip = Some(IpRecord {
+                    reference_path: is.reference_path.display().to_string(),
+                    reference_sha256,
+                    ipadapter_sha256,
+                    clip_vision_sha256,
+                    scale: is.scale,
+                    embed_rms_raw: rms(&tokens_raw)?,
+                    token_count: tokens_raw.dims3()?.1 as u32,
+                    embed_norm_factor: 0.0,
+                    embed_rms_after: 0.0,
+                });
+                Some(IpAssets {
+                    tokens_raw,
+                    sites: weights.sites,
+                    scale: is.scale,
+                })
+            }
+        };
+        Ok(Self {
+            control,
+            ip,
+            record,
+        })
+    }
 }
 
 /// The loaded SDXL model set.
@@ -307,6 +437,18 @@ impl SdxlModel {
         Ok((context, pooled))
     }
 
+    /// The joined added-conditioning input (f16, 2816)
+    /// for one prompt: [pooled | time-id embedding]. The
+    /// ControlNet branch consumes the same joined input
+    /// through its own projection, so it is built once
+    /// here and shared.
+    fn added_joined(&self, pooled: &Tensor, width: u32, height: u32) -> Result<Tensor> {
+        let ids = crate::schedule::time_ids_embedding(height, width);
+        let ids_t = Tensor::new(ids, &self.device)?.reshape((1, 1536))?;
+        let pooled = pooled.reshape((1, 1280))?.to_device(&self.device)?;
+        Ok(Tensor::cat(&[&pooled, &ids_t], 1)?.to_dtype(DType::F16)?)
+    }
+
     /// The added-conditioning vector (f16, 1280) for one
     /// prompt: add_embedding([pooled | time-id embedding]).
     fn added(
@@ -316,21 +458,44 @@ impl SdxlModel {
         width: u32,
         height: u32,
     ) -> Result<Tensor> {
-        let ids = crate::schedule::time_ids_embedding(height, width);
-        let ids_t = Tensor::new(ids, &self.device)?.reshape((1, 1536))?;
-        let pooled = pooled.reshape((1, 1280))?.to_device(&self.device)?;
-        let joined = Tensor::cat(&[&pooled, &ids_t], 1)?.to_dtype(DType::F16)?;
+        let joined = self.added_joined(pooled, width, height)?;
         let h = add.0.forward(&joined)?;
         let h = candle_nn::ops::silu(&h)?;
         Ok(add.1.forward(&h)?)
     }
 
-    /// Generate one image.
+    /// Generate one image, unconditioned (the Stage 1
+    /// path, unchanged).
     ///
     /// # Errors
     /// Returns limit, tokenizer, and tensor errors typed by
     /// the crate error enum.
     pub fn generate(&self, params: &GenParams) -> Result<GeneratedImage> {
+        self.generate_inner(params, None)
+    }
+
+    /// Generate one image with Stage 2 conditioning
+    /// (D-936). The assets are consumed: the IP site
+    /// projections move into this run's UNet.
+    ///
+    /// # Errors
+    /// Returns the same typed errors as `generate`, plus
+    /// `gen_conditioning` when the assets and the UNet
+    /// disagree (site count) — a weights error by another
+    /// name, refused before sampling starts.
+    pub fn generate_conditioned(
+        &self,
+        params: &GenParams,
+        assets: ConditioningAssets,
+    ) -> Result<GeneratedImage> {
+        self.generate_inner(params, Some(assets))
+    }
+
+    fn generate_inner(
+        &self,
+        params: &GenParams,
+        assets: Option<ConditioningAssets>,
+    ) -> Result<GeneratedImage> {
         params.validate()?;
         let started = std::time::Instant::now();
         let dev = &self.device;
@@ -339,7 +504,7 @@ impl SdxlModel {
         let context = Tensor::cat(&[&ctx_uncond, &ctx_cond], 0)?
             .to_dtype(DType::F16)?
             .to_device(dev)?;
-        let (unet, add_embedding) = self.load_unet()?;
+        let (mut unet, add_embedding) = self.load_unet()?;
         let added = Tensor::cat(
             &[
                 &self.added(&add_embedding, &pooled_uncond, params.width, params.height)?,
@@ -347,6 +512,46 @@ impl SdxlModel {
             ],
             0,
         )?;
+        // Stage 2 conditioning preparation. Unconditioned
+        // runs skip all of it and take the Stage 1 call
+        // path in the sampler closure, byte for byte.
+        let mut record = None;
+        let mut control = None;
+        let mut joined_batch = None;
+        let mut ip_tokens_batch = None;
+        let mut ip_scale = 0.0;
+        if let Some(assets) = assets {
+            let ConditioningAssets {
+                control: c,
+                ip,
+                record: mut rec,
+            } = assets;
+            if let Some(ip) = ip {
+                unet.attach_ip_weights(ip.sites)?;
+                // Per-reference embed normalisation: the
+                // token-count penalty (see ipadapter
+                // module docs for the calibration sweep).
+                let (tokens_norm, factor) = normalize_reference_embed(&ip.tokens_raw)?;
+                if let Some(ip_rec) = rec.ip.as_mut() {
+                    ip_rec.embed_norm_factor = factor;
+                    ip_rec.embed_rms_after = rms(&tokens_norm)?;
+                }
+                ip_tokens_batch =
+                    Some(Tensor::cat(&[&tokens_norm, &tokens_norm], 0)?.to_dtype(DType::F16)?);
+                ip_scale = ip.scale;
+            }
+            if c.is_some() {
+                joined_batch = Some(Tensor::cat(
+                    &[
+                        &self.added_joined(&pooled_uncond, params.width, params.height)?,
+                        &self.added_joined(&pooled_cond, params.width, params.height)?,
+                    ],
+                    0,
+                )?);
+            }
+            control = c;
+            record = Some(rec);
+        }
         let lw = (params.width / 8) as usize;
         let lh = (params.height / 8) as usize;
         let n = 4 * lw * lh;
@@ -365,6 +570,11 @@ impl SdxlModel {
         let added_ref = &added;
         let schedule = &self.schedule;
         let cfg_scale = params.cfg;
+        let steps_total = params.steps;
+        let step_counter = std::cell::Cell::new(0usize);
+        let control_ref = &control;
+        let joined_ref = &joined_batch;
+        let ip_tokens_ref = &ip_tokens_batch;
         let x = dpmpp_2m(x0_latent, &sigmas, |x_in, sigma| {
             // EPS preconditioning (ComfyUI model_sampling
             // EPS.calculate_input, sigma_data = 1): the UNet
@@ -373,9 +583,50 @@ impl SdxlModel {
             let xb = (Tensor::cat(&[x_in, x_in], 0)? / (sigma * sigma + 1.0).sqrt())?
                 .to_dtype(DType::F16)?;
             let timestep = schedule.timestep(sigma) as f64;
-            let eps = unet
-                .forward_with_added(&xb, timestep, context_ref, Some(added_ref))?
-                .to_dtype(DType::F32)?;
+            let eps = if control_ref.is_none() && ip_tokens_ref.is_none() {
+                unet.forward_with_added(&xb, timestep, context_ref, Some(added_ref))?
+            } else {
+                let step = step_counter.get();
+                step_counter.set(step + 1);
+                let mut down_res: Option<Vec<Tensor>> = None;
+                let mut mid_res: Option<Tensor> = None;
+                if let (Some(cn), Some(joined)) = (control_ref, joined_ref) {
+                    let frac = step as f64 / steps_total as f64;
+                    if frac >= cn.start && frac < cn.end {
+                        let pose_batch = Tensor::cat(&[&cn.pose, &cn.pose], 0)?;
+                        let (down, mid) = cn.net.forward(
+                            &xb,
+                            timestep,
+                            context_ref,
+                            joined,
+                            &pose_batch,
+                            cn.cn_type,
+                        )?;
+                        let scaled = down
+                            .iter()
+                            .map(|r| r * cn.strength)
+                            .collect::<candle::Result<Vec<_>>>()?;
+                        down_res = Some(scaled);
+                        mid_res = Some((mid * cn.strength)?);
+                    }
+                }
+                let ip_ctx = ip_tokens_ref.as_ref().map(|t| IpContext {
+                    tokens: t,
+                    scale: ip_scale,
+                });
+                unet.forward_with_conditioning(
+                    &xb,
+                    timestep,
+                    context_ref,
+                    ConditioningInputs {
+                        added_embedding: Some(added_ref),
+                        down_block_additional_residuals: down_res.as_deref(),
+                        mid_block_additional_residual: mid_res.as_ref(),
+                        ip: ip_ctx.as_ref(),
+                    },
+                )?
+            }
+            .to_dtype(DType::F32)?;
             let eps_uncond = eps.narrow(0, 0, 1)?;
             let eps_cond = eps.narrow(0, 1, 1)?;
             let eps = (eps_uncond.clone() + ((eps_cond - eps_uncond)? * cfg_scale as f64)?)?;
@@ -396,6 +647,7 @@ impl SdxlModel {
             height: params.height,
             elapsed_ms: started.elapsed().as_millis() as u64,
             noise_sha256,
+            conditioning: record,
         })
     }
 }

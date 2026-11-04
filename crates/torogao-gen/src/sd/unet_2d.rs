@@ -86,6 +86,26 @@ enum UNetUpBlock {
     CrossAttn(CrossAttnUpBlock2D),
 }
 
+/// The conditioning inputs of one UNet forward (Stage 2,
+/// D-936 bundle: the SDXL added embedding, ControlNet's
+/// additional residuals, and IP-Adapter's decoupled
+/// cross-attention context). Each is independently
+/// optional; the Stage 1 wrappers build the bundle with
+/// only their own input set.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ConditioningInputs<'a> {
+    /// SDXL added embedding (pooled + time ids), added to
+    /// the timestep embedding.
+    pub added_embedding: Option<&'a Tensor>,
+    /// ControlNet down-block residuals, added index-wise
+    /// to the trunk's down-block residual list.
+    pub down_block_additional_residuals: Option<&'a [Tensor]>,
+    /// ControlNet mid-block residual.
+    pub mid_block_additional_residual: Option<&'a Tensor>,
+    /// IP-Adapter decoupled cross-attention context.
+    pub ip: Option<&'a super::attention::IpContext<'a>>,
+}
+
 #[derive(Debug)]
 pub struct UNet2DConditionModel {
     conv_in: Conv2d,
@@ -318,10 +338,65 @@ impl UNet2DConditionModel {
             xs,
             timestep,
             encoder_hidden_states,
-            down_block_additional_residuals,
-            mid_block_additional_residual,
-            None,
+            ConditioningInputs {
+                added_embedding: None,
+                down_block_additional_residuals,
+                mid_block_additional_residual,
+                ip: None,
+            },
         )
+    }
+
+    /// Forward with every Stage 2 conditioning input at
+    /// once (D-936): SDXL added embedding, ControlNet
+    /// additional residuals, and IP-Adapter decoupled
+    /// cross-attention. Each input is independently
+    /// optional; all-None is exactly `forward`.
+    pub fn forward_with_conditioning(
+        &self,
+        xs: &Tensor,
+        timestep: f64,
+        encoder_hidden_states: &Tensor,
+        inputs: ConditioningInputs,
+    ) -> Result<Tensor> {
+        self.forward_impl(xs, timestep, encoder_hidden_states, inputs)
+    }
+
+    /// Attach IP-Adapter key/value projections to this
+    /// UNet's cross-attention sites (Stage 2, D-936).
+    ///
+    /// Site order is the IP-Adapter weights file's own
+    /// enumeration order, measured from the file's shape
+    /// transitions (see torogao-gen's ipadapter module):
+    /// down blocks first, then up blocks, then the mid
+    /// block last. The count must equal the site count
+    /// exactly; a mismatch is a weights error, never a
+    /// partial attach.
+    pub fn attach_ip_weights(&mut self, weights: Vec<(nn::Linear, nn::Linear)>) -> Result<usize> {
+        let mut sites: Vec<&mut super::attention::CrossAttention> = vec![];
+        for block in self.down_blocks.iter_mut() {
+            if let UNetDownBlock::CrossAttn(b) = block {
+                sites.extend(b.ip_sites());
+            }
+        }
+        for block in self.up_blocks.iter_mut() {
+            if let UNetUpBlock::CrossAttn(b) = block {
+                sites.extend(b.ip_sites());
+            }
+        }
+        sites.extend(self.mid_block.ip_sites());
+        if sites.len() != weights.len() {
+            return Err(candle::Error::Msg(format!(
+                "ip weights: {} pairs for {} cross-attention sites",
+                weights.len(),
+                sites.len()
+            )));
+        }
+        let count = sites.len();
+        for (site, (to_k_ip, to_v_ip)) in sites.into_iter().zip(weights) {
+            site.set_ip(to_k_ip, to_v_ip);
+        }
+        Ok(count)
     }
 
     /// Forward with the SDXL added conditioning (the checkpoint
@@ -340,9 +415,12 @@ impl UNet2DConditionModel {
             xs,
             timestep,
             encoder_hidden_states,
-            None,
-            None,
-            added_embedding,
+            ConditioningInputs {
+                added_embedding,
+                down_block_additional_residuals: None,
+                mid_block_additional_residual: None,
+                ip: None,
+            },
         )
     }
 
@@ -351,10 +429,14 @@ impl UNet2DConditionModel {
         xs: &Tensor,
         timestep: f64,
         encoder_hidden_states: &Tensor,
-        down_block_additional_residuals: Option<&[Tensor]>,
-        mid_block_additional_residual: Option<&Tensor>,
-        added_embedding: Option<&Tensor>,
+        inputs: ConditioningInputs,
     ) -> Result<Tensor> {
+        let ConditioningInputs {
+            added_embedding,
+            down_block_additional_residuals,
+            mid_block_additional_residual,
+            ip,
+        } = inputs;
         let (bsize, _channels, height, width) = xs.dims4()?;
         let device = xs.device();
         let n_blocks = self.config.blocks.len();
@@ -385,7 +467,7 @@ impl UNet2DConditionModel {
             let (_xs, res_xs) = match down_block {
                 UNetDownBlock::Basic(b) => b.forward(&xs, Some(&emb))?,
                 UNetDownBlock::CrossAttn(b) => {
-                    b.forward(&xs, Some(&emb), Some(encoder_hidden_states))?
+                    b.forward_with_ip(&xs, Some(&emb), Some(encoder_hidden_states), ip)?
                 }
             };
             down_block_res_xs.extend(res_xs);
@@ -407,9 +489,9 @@ impl UNet2DConditionModel {
         let mut down_block_res_xs = new_down_block_res_xs;
 
         // 4. mid
-        let xs = self
-            .mid_block
-            .forward(&xs, Some(&emb), Some(encoder_hidden_states))?;
+        let xs =
+            self.mid_block
+                .forward_with_ip(&xs, Some(&emb), Some(encoder_hidden_states), ip)?;
         let xs = match mid_block_additional_residual {
             None => xs,
             Some(m) => (m + xs)?,
@@ -429,12 +511,13 @@ impl UNet2DConditionModel {
             }
             xs = match up_block {
                 UNetUpBlock::Basic(b) => b.forward(&xs, &res_xs, Some(&emb), upsample_size)?,
-                UNetUpBlock::CrossAttn(b) => b.forward(
+                UNetUpBlock::CrossAttn(b) => b.forward_with_ip(
                     &xs,
                     &res_xs,
                     Some(&emb),
                     upsample_size,
                     Some(encoder_hidden_states),
+                    ip,
                 )?,
             };
         }

@@ -461,6 +461,34 @@ impl UNetMidBlock2DCrossAttn {
         }
         Ok(xs)
     }
+
+    /// Forward with optional IP-Adapter conditioning
+    /// (Stage 2, D-936); `ip` None runs `forward`'s exact
+    /// op sequence.
+    pub fn forward_with_ip(
+        &self,
+        xs: &Tensor,
+        temb: Option<&Tensor>,
+        encoder_hidden_states: Option<&Tensor>,
+        ip: Option<&super::attention::IpContext>,
+    ) -> Result<Tensor> {
+        let _enter = self.span.enter();
+        let mut xs = self.resnet.forward(xs, temb)?;
+        for (attn, resnet) in self.attn_resnets.iter() {
+            xs = resnet.forward(&attn.forward_with_ip(&xs, encoder_hidden_states, ip)?, temb)?
+        }
+        Ok(xs)
+    }
+
+    /// Cross-attention sites in block order (Stage 2,
+    /// D-936: IP weight attachment).
+    pub(crate) fn ip_sites(&mut self) -> Vec<&mut super::attention::CrossAttention> {
+        let mut sites = vec![];
+        for (attn, _) in self.attn_resnets.iter_mut() {
+            sites.extend(attn.ip_sites());
+        }
+        sites
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -660,6 +688,45 @@ impl CrossAttnDownBlock2D {
             None => xs,
         };
         Ok((xs, output_states))
+    }
+
+    /// Forward with optional IP-Adapter conditioning
+    /// (Stage 2, D-936); `ip` None runs `forward`'s exact
+    /// op sequence.
+    pub fn forward_with_ip(
+        &self,
+        xs: &Tensor,
+        temb: Option<&Tensor>,
+        encoder_hidden_states: Option<&Tensor>,
+        ip: Option<&super::attention::IpContext>,
+    ) -> Result<(Tensor, Vec<Tensor>)> {
+        let _enter = self.span.enter();
+        let mut output_states = vec![];
+        let mut xs = xs.clone();
+        for (resnet, attn) in self.downblock.resnets.iter().zip(self.attentions.iter()) {
+            xs = resnet.forward(&xs, temb)?;
+            xs = attn.forward_with_ip(&xs, encoder_hidden_states, ip)?;
+            output_states.push(xs.clone());
+        }
+        let xs = match &self.downblock.downsampler {
+            Some(downsampler) => {
+                let xs = downsampler.forward(&xs)?;
+                output_states.push(xs.clone());
+                xs
+            }
+            None => xs,
+        };
+        Ok((xs, output_states))
+    }
+
+    /// Cross-attention sites in block order (Stage 2,
+    /// D-936: IP weight attachment).
+    pub(crate) fn ip_sites(&mut self) -> Vec<&mut super::attention::CrossAttention> {
+        let mut sites = vec![];
+        for attn in self.attentions.iter_mut() {
+            sites.extend(attn.ip_sites());
+        }
+        sites
     }
 }
 
@@ -864,5 +931,41 @@ impl CrossAttnUpBlock2D {
             Some(upsampler) => upsampler.forward(&xs, upsample_size),
             None => Ok(xs),
         }
+    }
+
+    /// Forward with optional IP-Adapter conditioning
+    /// (Stage 2, D-936); `ip` None runs `forward`'s exact
+    /// op sequence.
+    pub fn forward_with_ip(
+        &self,
+        xs: &Tensor,
+        res_xs: &[Tensor],
+        temb: Option<&Tensor>,
+        upsample_size: Option<(usize, usize)>,
+        encoder_hidden_states: Option<&Tensor>,
+        ip: Option<&super::attention::IpContext>,
+    ) -> Result<Tensor> {
+        let _enter = self.span.enter();
+        let mut xs = xs.clone();
+        for (index, resnet) in self.upblock.resnets.iter().enumerate() {
+            xs = Tensor::cat(&[&xs, &res_xs[res_xs.len() - index - 1]], 1)?;
+            xs = xs.contiguous()?;
+            xs = resnet.forward(&xs, temb)?;
+            xs = self.attentions[index].forward_with_ip(&xs, encoder_hidden_states, ip)?;
+        }
+        match &self.upblock.upsampler {
+            Some(upsampler) => upsampler.forward(&xs, upsample_size),
+            None => Ok(xs),
+        }
+    }
+
+    /// Cross-attention sites in block order (Stage 2,
+    /// D-936: IP weight attachment).
+    pub(crate) fn ip_sites(&mut self) -> Vec<&mut super::attention::CrossAttention> {
+        let mut sites = vec![];
+        for attn in self.attentions.iter_mut() {
+            sites.extend(attn.ip_sites());
+        }
+        sites
     }
 }

@@ -33,6 +33,16 @@ pub enum GenError {
         /// What failed, in operator terms.
         detail: String,
     },
+    /// A Stage 2 conditioning input was refused before any
+    /// GPU work: a missing reference or weights file, a
+    /// pose map of the wrong size, or a uniform/blank pose
+    /// map (a pose source that failed upstream, e.g. an
+    /// estimator blind on its input, must never silently
+    /// condition a run).
+    Conditioning {
+        /// What was refused, in operator terms.
+        detail: String,
+    },
     /// Plain I/O failure (paths, run records).
     Io(std::io::Error),
 }
@@ -46,6 +56,7 @@ impl GenError {
             Self::Weights { .. } => "gen_weights",
             Self::Tokenizer { .. } => "gen_tokenizer",
             Self::Image { .. } => "gen_image",
+            Self::Conditioning { .. } => "gen_conditioning",
             Self::Io(_) => "gen_io",
         }
     }
@@ -59,6 +70,7 @@ impl fmt::Display for GenError {
             Self::Weights { detail } => write!(f, "gen_weights: {detail}"),
             Self::Tokenizer { detail } => write!(f, "gen_tokenizer: {detail}"),
             Self::Image { detail } => write!(f, "gen_image: {detail}"),
+            Self::Conditioning { detail } => write!(f, "gen_conditioning: {detail}"),
             Self::Io(e) => write!(f, "gen_io: {e}"),
         }
     }

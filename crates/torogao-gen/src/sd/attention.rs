@@ -77,12 +77,30 @@ fn flash_attn(_: &Tensor, _: &Tensor, _: &Tensor, _: f32, _: bool) -> Result<Ten
     unimplemented!("compile with '--features flash-attn'")
 }
 
+/// IP-Adapter conditioning for one cross-attention call
+/// (Stage 2, D-936): the reference-image tokens and the
+/// scale of the decoupled image branch. The image branch
+/// shares this attention's query projection and output
+/// projection; only its key/value projections are its own
+/// (the `to_k_ip` / `to_v_ip` weights of the IP-Adapter
+/// file). Added by the torogao-gen vendoring; upstream
+/// candle 0.11.1 has no IP-Adapter path.
+#[derive(Debug, Clone, Copy)]
+pub struct IpContext<'a> {
+    /// Reference-image tokens, `(batch, tokens, context_dim)`.
+    pub tokens: &'a Tensor,
+    /// Scale of the image branch relative to the text branch.
+    pub scale: f64,
+}
+
 #[derive(Debug)]
 pub struct CrossAttention {
     to_q: nn::Linear,
     to_k: nn::Linear,
     to_v: nn::Linear,
     to_out: nn::Linear,
+    to_k_ip: Option<nn::Linear>,
+    to_v_ip: Option<nn::Linear>,
     heads: usize,
     scale: f64,
     slice_size: Option<usize>,
@@ -118,6 +136,8 @@ impl CrossAttention {
             to_k,
             to_v,
             to_out,
+            to_k_ip: None,
+            to_v_ip: None,
             heads,
             scale,
             slice_size,
@@ -126,6 +146,15 @@ impl CrossAttention {
             span_softmax,
             use_flash_attn,
         })
+    }
+
+    /// Attach this site's IP-Adapter key/value projections
+    /// (Stage 2, D-936). Called once at load time by the
+    /// UNet's site walk; a site without attached weights
+    /// ignores any IpContext it is handed.
+    pub(crate) fn set_ip(&mut self, to_k_ip: nn::Linear, to_v_ip: nn::Linear) {
+        self.to_k_ip = Some(to_k_ip);
+        self.to_v_ip = Some(to_v_ip);
     }
 
     fn reshape_heads_to_batch_dim(&self, xs: &Tensor) -> Result<Tensor> {
@@ -222,6 +251,34 @@ impl CrossAttention {
         };
         self.to_out.forward(&xs)
     }
+
+    /// Forward with optional IP-Adapter conditioning
+    /// (Stage 2, D-936): the decoupled-cross-attention rule
+    /// — text branch unchanged, plus `scale` times an image
+    /// branch that attends from the same queries to the
+    /// reference tokens under its own key/value projections
+    /// and the shared output projection. With `ip` None (or
+    /// no weights attached) this is exactly `forward`.
+    pub fn forward_with_ip(
+        &self,
+        xs: &Tensor,
+        context: Option<&Tensor>,
+        ip: Option<&IpContext>,
+    ) -> Result<Tensor> {
+        let base = self.forward(xs, context)?;
+        let (Some(ip), Some(to_k_ip), Some(to_v_ip)) = (ip, &self.to_k_ip, &self.to_v_ip) else {
+            return Ok(base);
+        };
+        let query = self.to_q.forward(xs)?;
+        let key = to_k_ip.forward(ip.tokens)?;
+        let value = to_v_ip.forward(ip.tokens)?;
+        let query = self.reshape_heads_to_batch_dim(&query)?;
+        let key = self.reshape_heads_to_batch_dim(&key)?;
+        let value = self.reshape_heads_to_batch_dim(&value)?;
+        let xs_ip = self.attention(&query, &key, &value)?;
+        let xs_ip = self.to_out.forward(&xs_ip)?;
+        base + (xs_ip * ip.scale)?
+    }
 }
 
 /// A basic Transformer block.
@@ -285,6 +342,29 @@ impl BasicTransformerBlock {
         let xs = (self.attn1.forward(&self.norm1.forward(xs)?, None)? + xs)?;
         let xs = (self.attn2.forward(&self.norm2.forward(&xs)?, context)? + xs)?;
         self.ff.forward(&self.norm3.forward(&xs)?)? + xs
+    }
+
+    /// Forward with optional IP-Adapter conditioning on the
+    /// cross-attention (attn2) only (Stage 2, D-936).
+    fn forward_with_ip(
+        &self,
+        xs: &Tensor,
+        context: Option<&Tensor>,
+        ip: Option<&IpContext>,
+    ) -> Result<Tensor> {
+        let _enter = self.span.enter();
+        let xs = (self.attn1.forward(&self.norm1.forward(xs)?, None)? + xs)?;
+        let xs = (self
+            .attn2
+            .forward_with_ip(&self.norm2.forward(&xs)?, context, ip)?
+            + xs)?;
+        self.ff.forward(&self.norm3.forward(&xs)?)? + xs
+    }
+
+    /// The cross-attention (attn2) site, for IP weight
+    /// attachment (Stage 2, D-936).
+    fn attn2_mut(&mut self) -> &mut CrossAttention {
+        &mut self.attn2
     }
 }
 
@@ -425,6 +505,67 @@ impl SpatialTransformer {
                 .transpose(1, 2)?,
         };
         xs + residual
+    }
+
+    /// Forward with optional IP-Adapter conditioning
+    /// threaded to every transformer block (Stage 2, D-936).
+    /// With `ip` None this runs the identical op sequence
+    /// as `forward`.
+    pub fn forward_with_ip(
+        &self,
+        xs: &Tensor,
+        context: Option<&Tensor>,
+        ip: Option<&IpContext>,
+    ) -> Result<Tensor> {
+        let _enter = self.span.enter();
+        let (batch, _channel, height, weight) = xs.dims4()?;
+        let residual = xs;
+        let xs = self.norm.forward(xs)?;
+        let (inner_dim, xs) = match &self.proj_in {
+            Proj::Conv2d(p) => {
+                let xs = p.forward(&xs)?;
+                let inner_dim = xs.dim(1)?;
+                let xs = xs
+                    .transpose(1, 2)?
+                    .t()?
+                    .reshape((batch, height * weight, inner_dim))?;
+                (inner_dim, xs)
+            }
+            Proj::Linear(p) => {
+                let inner_dim = xs.dim(1)?;
+                let xs = xs
+                    .transpose(1, 2)?
+                    .t()?
+                    .reshape((batch, height * weight, inner_dim))?;
+                (inner_dim, p.forward(&xs)?)
+            }
+        };
+        let mut xs = xs;
+        for block in self.transformer_blocks.iter() {
+            xs = block.forward_with_ip(&xs, context, ip)?
+        }
+        let xs = match &self.proj_out {
+            Proj::Conv2d(p) => p.forward(
+                &xs.reshape((batch, height, weight, inner_dim))?
+                    .t()?
+                    .transpose(1, 2)?,
+            )?,
+            Proj::Linear(p) => p
+                .forward(&xs)?
+                .reshape((batch, height, weight, inner_dim))?
+                .t()?
+                .transpose(1, 2)?,
+        };
+        xs + residual
+    }
+
+    /// Every cross-attention site in this transformer, in
+    /// block order (Stage 2, D-936: IP weight attachment).
+    pub(crate) fn ip_sites(&mut self) -> Vec<&mut CrossAttention> {
+        self.transformer_blocks
+            .iter_mut()
+            .map(|b| b.attn2_mut())
+            .collect()
     }
 }
 

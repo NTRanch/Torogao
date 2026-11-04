@@ -13,7 +13,11 @@
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
 
+pub mod clip_vision;
+pub mod conditioning;
+pub mod controlnet;
 pub mod error;
+pub mod ipadapter;
 pub mod limits;
 pub mod pipeline;
 pub mod rng;
@@ -27,5 +31,6 @@ pub mod schedule;
 #[allow(missing_docs)]
 pub mod sd;
 
+pub use conditioning::{CnType, ConditioningSpec, ControlSpec, IpSpec};
 pub use error::{GenError, Result};
-pub use pipeline::{GenParams, GeneratedImage, SdxlModel};
+pub use pipeline::{ConditioningAssets, GenParams, GeneratedImage, SdxlModel};
