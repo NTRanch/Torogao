@@ -1,7 +1,12 @@
-//! The generation-conditioning family (D-822): two verbs over
+//! The generation-conditioning family (D-822): verbs over
 //! the project's generation record, delivered by the
 //! `torogao-gencond` crate behind this crate's
-//! `gen-conditioning` feature.
+//! `gen-conditioning` feature. The LIFT layer (D-838) rides
+//! the same family: `scene_record_set` stores a session
+//! record, `freeze_track` / `freeze_palette` land frozen
+//! artifacts into one, and `conditioning_compile` checks a
+//! regeneration proposal against the named scene's custody
+//! map before it compiles.
 //!
 //! The family has its own manifest, like the AUTH-G game
 //! family: the rig manifest's census (49 verbs) is untouched
@@ -51,11 +56,15 @@ const fn verb(name: &'static str, group: &'static str, mutating: bool) -> Condit
     }
 }
 
-/// The conditioning manifest: two verbs, alphabetical. The
-/// sweep verb is Stage 2 of the seam and is not here.
-pub const CONDITIONING_MANIFEST: [ConditioningVerbSpec; 2] = [
+/// The conditioning manifest: five verbs, alphabetical. The
+/// sweep verb is Stage 2 of the seam and is not here; the
+/// three lift verbs (D-838) are the session-record surface.
+pub const CONDITIONING_MANIFEST: [ConditioningVerbSpec; 5] = [
     verb("conditioning_compile", "generation conditioning", false),
     verb("conditioning_set", "generation conditioning", true),
+    verb("freeze_palette", "media lift", true),
+    verb("freeze_track", "media lift", true),
+    verb("scene_record_set", "media lift", true),
 ];
 
 /// The conditioning-manifest row for a verb name.
@@ -122,11 +131,62 @@ pub struct SamplerInput {
     pub denoise: f64,
 }
 
+/// Inputs of `scene_record_set`: the whole session record,
+/// replaced atomically per scene id (the LIFT layer, D-838).
+#[derive(Clone, Debug, PartialEq, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SceneRecordSetInput {
+    /// The session record, in its JSON wire form.
+    pub record: torogao_gencond::SceneRecord,
+}
+
+/// Inputs of `freeze_track`: a dense parameter track to
+/// freeze into the named scene record. `epsilon` is the
+/// deviation contract; omitted, it is derived from the
+/// track's own sample noise (`track_noise_epsilon`) and the
+/// provenance records which origin supplied it.
+#[derive(Clone, Debug, PartialEq, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FreezeTrackInput {
+    /// The scene record to freeze into.
+    pub scene_id: String,
+    /// The dense track.
+    pub track: torogao_gencond::ParameterTrack,
+    /// The deviation contract value, if the caller states
+    /// one.
+    pub epsilon: Option<f64>,
+}
+
+/// Inputs of `freeze_palette`: a colour set to snap onto a
+/// locked palette inside the named scene record. `tolerance`
+/// is the caller's contract value (Chebyshev distance in
+/// sRGB); omitted, it is 0 — exact membership only, stated
+/// here rather than assumed.
+#[derive(Clone, Debug, PartialEq, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FreezePaletteInput {
+    /// The scene record to freeze into.
+    pub scene_id: String,
+    /// The colours to snap.
+    pub colors: Vec<String>,
+    /// The locked palette.
+    pub palette: Vec<String>,
+    /// The tolerance contract value, if the caller states
+    /// one.
+    pub tolerance: Option<u32>,
+}
+
 /// The conditioning family's mutating ops.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ConditioningOp {
     /// `conditioning_set`.
     Set(ConditioningSetInput),
+    /// `scene_record_set` (D-838).
+    SceneSet(SceneRecordSetInput),
+    /// `freeze_track` (D-838).
+    FreezeTrack(FreezeTrackInput),
+    /// `freeze_palette` (D-838).
+    FreezePalette(FreezePaletteInput),
 }
 
 impl ConditioningOp {
@@ -134,6 +194,9 @@ impl ConditioningOp {
     pub fn verb(&self) -> &'static str {
         match self {
             ConditioningOp::Set(_) => "conditioning_set",
+            ConditioningOp::SceneSet(_) => "scene_record_set",
+            ConditioningOp::FreezeTrack(_) => "freeze_track",
+            ConditioningOp::FreezePalette(_) => "freeze_palette",
         }
     }
 
@@ -141,6 +204,9 @@ impl ConditioningOp {
     pub fn inputs_json(&self) -> Result<Value, Refusal> {
         let result = match self {
             ConditioningOp::Set(inputs) => serde_json::to_value(inputs),
+            ConditioningOp::SceneSet(inputs) => serde_json::to_value(inputs),
+            ConditioningOp::FreezeTrack(inputs) => serde_json::to_value(inputs),
+            ConditioningOp::FreezePalette(inputs) => serde_json::to_value(inputs),
         };
         result.or_else(|err| {
             refuse(
@@ -171,11 +237,190 @@ pub fn parse_conditioning_op(verb: &str, inputs: &Value) -> Result<crate::op::Op
             record_of(&input)?;
             Ok(crate::op::Op::Conditioning(ConditioningOp::Set(input)))
         }
+        "scene_record_set" => {
+            let input: SceneRecordSetInput =
+                serde_json::from_value(inputs.clone()).or_else(|err| {
+                    refuse(
+                        RefusalClass::Malformed,
+                        format!("inputs for '{verb}' do not match its schema: {err}"),
+                    )
+                })?;
+            // Validating the typed record here runs the
+            // gencond rules before the pipeline admits the
+            // op, the setter's same discipline.
+            scene_record_of(&input)?;
+            Ok(crate::op::Op::Conditioning(ConditioningOp::SceneSet(input)))
+        }
+        "freeze_track" => {
+            let input: FreezeTrackInput =
+                serde_json::from_value(inputs.clone()).or_else(|err| {
+                    refuse(
+                        RefusalClass::Malformed,
+                        format!("inputs for '{verb}' do not match its schema: {err}"),
+                    )
+                })?;
+            // Running the freeze here surfaces its typed
+            // refusals before the pipeline admits the op;
+            // decide()/apply() re-run it (it is pure).
+            freeze_track_outcome(&input)?;
+            Ok(crate::op::Op::Conditioning(ConditioningOp::FreezeTrack(
+                input,
+            )))
+        }
+        "freeze_palette" => {
+            let input: FreezePaletteInput =
+                serde_json::from_value(inputs.clone()).or_else(|err| {
+                    refuse(
+                        RefusalClass::Malformed,
+                        format!("inputs for '{verb}' do not match its schema: {err}"),
+                    )
+                })?;
+            freeze_palette_outcome(&input)?;
+            Ok(crate::op::Op::Conditioning(ConditioningOp::FreezePalette(
+                input,
+            )))
+        }
         other => refuse(
             RefusalClass::UnknownKind,
             format!("verb '{other}' is read-only or not a conditioning verb"),
         ),
     }
+}
+
+/// Builds the stored scene record from set inputs, running
+/// the gencond validator: the record is stored as an opaque
+/// tree, but only a valid record is admitted.
+pub fn scene_record_of(input: &SceneRecordSetInput) -> Result<crate::model::SceneRecord, Refusal> {
+    input.record.validate().map_err(map_gencond)?;
+    Ok(crate::model::SceneRecord {
+        id: input.record.id.clone(),
+        record: gencond_tree_to_ron(&input.record.to_ron_tree()),
+    })
+}
+
+/// Parses a stored scene record back to its typed form,
+/// refusing when the project carries no such scene, when
+/// the subtree does not parse, or when the record's own id
+/// disagrees with the id it is filed under.
+pub fn typed_scene(
+    project: &Project,
+    scene_id: &str,
+) -> Result<(usize, torogao_gencond::SceneRecord), Refusal> {
+    let Some(index) = project.scenes.iter().position(|scene| scene.id == scene_id) else {
+        return refuse(
+            RefusalClass::UnknownTarget,
+            format!("the project carries no scene record '{scene_id}'"),
+        );
+    };
+    let typed = torogao_gencond::SceneRecord::from_ron_tree(ron_to_gencond_tree(
+        &project.scenes[index].record,
+    ))
+    .map_err(map_gencond)?;
+    if typed.id != scene_id {
+        return refuse(
+            RefusalClass::Conflict,
+            format!(
+                "scene record is filed under id '{scene_id}' but its record names '{}'",
+                typed.id
+            ),
+        );
+    }
+    Ok((index, typed))
+}
+
+/// Stores a typed scene record back into the project at
+/// `index`, re-emitting its opaque tree.
+fn store_typed_scene(project: &mut Project, index: usize, typed: &torogao_gencond::SceneRecord) {
+    project.scenes[index].record = gencond_tree_to_ron(&typed.to_ron_tree());
+}
+
+/// The outcome of a `freeze_track` input: the frozen track
+/// and its provenance entry. The epsilon is the caller's
+/// contract value when stated, else derived from the
+/// track's own sample noise; the provenance records which.
+pub fn freeze_track_outcome(
+    input: &FreezeTrackInput,
+) -> Result<
+    (
+        torogao_gencond::FrozenTrack,
+        torogao_gencond::FreezeProvenance,
+    ),
+    Refusal,
+> {
+    let (epsilon, origin) = match input.epsilon {
+        Some(value) => (value, torogao_gencond::EpsilonOrigin::Caller),
+        None => (
+            torogao_gencond::track_noise_epsilon(&input.track),
+            torogao_gencond::EpsilonOrigin::TrackNoise,
+        ),
+    };
+    let frozen = torogao_gencond::freeze_track(&input.track, epsilon).map_err(map_gencond)?;
+    let provenance = torogao_gencond::FreezeProvenance {
+        op: torogao_gencond::FreezeOp::FreezeTrack,
+        source_sha256: torogao_gencond::freeze::canonical_sha256(&input.track)
+            .map_err(map_gencond)?,
+        frozen_sha256: torogao_gencond::freeze::canonical_sha256(&frozen).map_err(map_gencond)?,
+        epsilon: Some(epsilon),
+        epsilon_origin: Some(origin),
+        tolerance: None,
+    };
+    Ok((frozen, provenance))
+}
+
+/// The outcome of a `freeze_palette` input: the snap and its
+/// provenance entry. The tolerance is the caller's contract
+/// value when stated, else 0 (exact membership only).
+pub fn freeze_palette_outcome(
+    input: &FreezePaletteInput,
+) -> Result<
+    (
+        torogao_gencond::PaletteSnap,
+        torogao_gencond::FreezeProvenance,
+    ),
+    Refusal,
+> {
+    let tolerance = input.tolerance.unwrap_or(0);
+    let snap = torogao_gencond::freeze_palette(&input.colors, &input.palette, tolerance)
+        .map_err(map_gencond)?;
+    let source = json!({
+        "colors": input.colors,
+        "palette": input.palette,
+        "tolerance": tolerance,
+    });
+    let provenance = torogao_gencond::FreezeProvenance {
+        op: torogao_gencond::FreezeOp::FreezePalette,
+        source_sha256: torogao_gencond::freeze::canonical_sha256(&source).map_err(map_gencond)?,
+        frozen_sha256: torogao_gencond::freeze::canonical_sha256(&snap).map_err(map_gencond)?,
+        epsilon: None,
+        epsilon_origin: None,
+        tolerance: Some(tolerance),
+    };
+    Ok((snap, provenance))
+}
+
+/// Applies a freeze outcome to a typed scene record: the
+/// artifact lands (replacing any earlier freeze of the same
+/// parameter/palette) and provenance appends — unless the
+/// record already carries this exact freeze, in which case
+/// it is returned unchanged, so a repeated freeze is a
+/// no-op, the setter discipline.
+fn land_freeze(
+    record: &torogao_gencond::SceneRecord,
+    frozen: Option<&torogao_gencond::FrozenTrack>,
+    snap: Option<&torogao_gencond::PaletteSnap>,
+    provenance: &torogao_gencond::FreezeProvenance,
+) -> torogao_gencond::SceneRecord {
+    let mut next = record.clone();
+    if let Some(track) = frozen {
+        next.land_frozen_track(track.clone());
+    }
+    if let Some(snap) = snap {
+        next.land_palette_snap(snap.clone());
+    }
+    if !next.provenance.contains(provenance) {
+        next.record_freeze(provenance.clone());
+    }
+    next
 }
 
 /// Builds the stored generation record from set inputs,
@@ -296,6 +541,26 @@ pub fn check_stored_record(record: &GenerationRecord) -> Result<(), Refusal> {
     Ok(())
 }
 
+/// Validates a stored scene record end to end (the
+/// validation sweep's scene check): the typed record parses
+/// and validates, and its own id matches the id it is filed
+/// under.
+pub fn check_stored_scene(scene: &crate::model::SceneRecord) -> Result<(), Refusal> {
+    // typed_scene's checks, against a one-scene view.
+    let typed = torogao_gencond::SceneRecord::from_ron_tree(ron_to_gencond_tree(&scene.record))
+        .map_err(map_gencond)?;
+    if typed.id != scene.id {
+        return refuse(
+            RefusalClass::Conflict,
+            format!(
+                "scene record is filed under id '{}' but its record names '{}'",
+                scene.id, typed.id
+            ),
+        );
+    }
+    Ok(())
+}
+
 /// The decide step for conditioning ops: replacement is a
 /// no-op when the stored record already equals the input's.
 pub fn decide_conditioning(
@@ -311,6 +576,32 @@ pub fn decide_conditioning(
                 Ok(crate::decide::Verdict::Apply)
             }
         }
+        ConditioningOp::SceneSet(input) => {
+            let record = scene_record_of(input)?;
+            if project.scenes.contains(&record) {
+                Ok(crate::decide::Verdict::NoOp)
+            } else {
+                Ok(crate::decide::Verdict::Apply)
+            }
+        }
+        ConditioningOp::FreezeTrack(input) => {
+            let (_, stored) = typed_scene(project, &input.scene_id)?;
+            let (frozen, provenance) = freeze_track_outcome(input)?;
+            if land_freeze(&stored, Some(&frozen), None, &provenance) == stored {
+                Ok(crate::decide::Verdict::NoOp)
+            } else {
+                Ok(crate::decide::Verdict::Apply)
+            }
+        }
+        ConditioningOp::FreezePalette(input) => {
+            let (_, stored) = typed_scene(project, &input.scene_id)?;
+            let (snap, provenance) = freeze_palette_outcome(input)?;
+            if land_freeze(&stored, None, Some(&snap), &provenance) == stored {
+                Ok(crate::decide::Verdict::NoOp)
+            } else {
+                Ok(crate::decide::Verdict::Apply)
+            }
+        }
     }
 }
 
@@ -319,6 +610,35 @@ pub fn apply_conditioning(project: &mut Project, op: &ConditioningOp) -> Result<
     match op {
         ConditioningOp::Set(input) => {
             project.generation = Some(record_of(input)?);
+            Ok(())
+        }
+        ConditioningOp::SceneSet(input) => {
+            let record = scene_record_of(input)?;
+            match project
+                .scenes
+                .iter()
+                .position(|scene| scene.id == record.id)
+            {
+                Some(index) => project.scenes[index] = record,
+                None => {
+                    project.scenes.push(record);
+                    project.scenes.sort_by(|a, b| a.id.cmp(&b.id));
+                }
+            }
+            Ok(())
+        }
+        ConditioningOp::FreezeTrack(input) => {
+            let (index, stored) = typed_scene(project, &input.scene_id)?;
+            let (frozen, provenance) = freeze_track_outcome(input)?;
+            let next = land_freeze(&stored, Some(&frozen), None, &provenance);
+            store_typed_scene(project, index, &next);
+            Ok(())
+        }
+        ConditioningOp::FreezePalette(input) => {
+            let (index, stored) = typed_scene(project, &input.scene_id)?;
+            let (snap, provenance) = freeze_palette_outcome(input)?;
+            let next = land_freeze(&stored, None, Some(&snap), &provenance);
+            store_typed_scene(project, index, &next);
             Ok(())
         }
     }
@@ -340,6 +660,18 @@ pub struct CompileInputs {
     /// rig-projection maps.
     #[serde(default)]
     pub map_files: BTreeMap<String, String>,
+    /// The scene this compile regenerates, if the proposal
+    /// names one (D-838): the proposal's `targets` are
+    /// checked against that scene record's custody map
+    /// before compilation, and a custody-frozen target
+    /// refuses the whole proposal.
+    #[serde(default)]
+    pub scene_id: Option<String>,
+    /// The scene nodes this regeneration proposal targets.
+    /// Meaningful only with `scene_id`; empty names no
+    /// nodes, and no node is custody-checked.
+    #[serde(default)]
+    pub targets: Vec<String>,
 }
 
 /// Runs `conditioning_compile` against the project at `root`.
@@ -397,6 +729,36 @@ pub fn run_compile_query(root: &Path, inputs: &Value) -> Answer {
         Ok(conditioning) => conditioning,
         Err(error) => return gencond_refused(verb, &error),
     };
+    // Custody gate (D-838): a proposal that names a scene is
+    // checked against that scene record's custody map BEFORE
+    // compilation. A custody-frozen target refuses the whole
+    // proposal with the gencond code; nothing compiles, no
+    // partial application. A proposal naming no scene is a
+    // Stage-1 compile, unchanged.
+    if let Some(scene_id) = &parsed.scene_id {
+        let Some(scene) = loaded
+            .project
+            .scenes
+            .iter()
+            .find(|scene| scene.id == *scene_id)
+        else {
+            return crate::session::refused_for(
+                verb,
+                &Refusal::new(
+                    RefusalClass::UnknownTarget,
+                    format!("the project carries no scene record '{scene_id}'"),
+                ),
+            );
+        };
+        let typed =
+            match torogao_gencond::SceneRecord::from_ron_tree(ron_to_gencond_tree(&scene.record)) {
+                Ok(typed) => typed,
+                Err(error) => return gencond_refused(verb, &error),
+            };
+        if let Err(error) = typed.custody.check_targets(&parsed.targets) {
+            return gencond_refused(verb, &error);
+        }
+    }
     let plan = plan_of_record(generation);
     let mut assets = torogao_gencond::AssetBundle::default();
     for source in &conditioning.sources {

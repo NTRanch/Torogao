@@ -20,7 +20,8 @@ pub fn run_gencond(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
     let Some(verb) = args.get(1) else {
         return usage(
             err,
-            "gencond needs a verb (conditioning_compile, conditioning_set)",
+            "gencond needs a verb (conditioning_compile, conditioning_set, \
+             freeze_palette, freeze_track, scene_record_set)",
         );
     };
     let Some(dir) = args.get(2) else {

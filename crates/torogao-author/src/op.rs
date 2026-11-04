@@ -157,6 +157,23 @@ pub fn refuse_unimplemented<T>(name: &str) -> Result<T, Refusal> {
             ),
         );
     }
+    // The LIFT layer's verbs (torogao-gencond, D-838) ride
+    // the same family and the same feature; without it they
+    // refuse here, by name. A saved scene record in a project
+    // is inert data in a build without the feature — present,
+    // preserved, and not interpretable.
+    if matches!(name, "freeze_palette" | "freeze_track" | "scene_record_set") {
+        return refuse(
+            RefusalClass::UnknownKind,
+            format!(
+                "verb '{name}' belongs to the media-lift layer of the \
+                 generation-conditioning family (torogao-gencond, D-838), which is not \
+                 implemented in this build: the layer enters the author surface only \
+                 behind the `gen-conditioning` feature, and a saved scene record is \
+                 inert data without it"
+            ),
+        );
+    }
     if let Some(descope) = descope(name) {
         return refuse(
             RefusalClass::UnknownKind,

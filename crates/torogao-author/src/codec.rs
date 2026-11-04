@@ -17,8 +17,9 @@ use crate::model::{
     HypnosisLayerKind, HypnosisTrackBinding, Keyform, Keyforms, LoopSync, Mesh, MeshForm, Motion,
     MotionCurve, MotionKeyframe, OverlayHookBinding, PROJECT_FORMAT, PROJECT_FORMAT_VERSION,
     Parameter, Part, PhysicsAnchor, PhysicsGroup, PhysicsInput, PhysicsOutput, PhysicsParticle,
-    PhysicsStrand, Point, PoseEntry, Project, Provenance, Rect, Rotation, RotationForm, Stamp,
-    VariantSet, VisualBinding, VisualBindingKind, VisualLoopBinding, VoiceBinding, Warp, WarpForm,
+    PhysicsStrand, Point, PoseEntry, Project, Provenance, Rect, Rotation, RotationForm,
+    SceneRecord, Stamp, VariantSet, VisualBinding, VisualBindingKind, VisualLoopBinding,
+    VoiceBinding, Warp, WarpForm,
 };
 use crate::refusal::{Refusal, RefusalClass, refuse};
 use crate::ron::{Ron, emit_document, parse_document};
@@ -185,6 +186,17 @@ fn project_to_ron(project: &Project) -> Ron {
         "pose",
         Ron::List(project.pose.iter().map(pose_to_ron).collect()),
     ));
+    // The scenes section (D-838) sits between `pose` and
+    // `variant_sets` alphabetically; emitted only when
+    // non-empty, so a project without session records
+    // serializes byte-identically to before the LIFT layer
+    // existed.
+    if !project.scenes.is_empty() {
+        fields.push((
+            "scenes",
+            Ron::List(project.scenes.iter().map(scene_to_ron).collect()),
+        ));
+    }
     fields.push((
         "variant_sets",
         Ron::List(
@@ -1130,6 +1142,7 @@ fn project_from_ron(value: Ron) -> Result<Project, Refusal> {
     let parts = collect(fields.list("parts")?, part_from_ron)?;
     let physics_groups = list_section(&mut fields, "physics_groups", physics_group_from_ron)?;
     let pose = collect(fields.list("pose")?, pose_from_ron)?;
+    let scenes = list_section(&mut fields, "scenes", scene_from_ron)?;
     let variant_sets = collect(fields.list("variant_sets")?, variant_set_from_ron)?;
     let visual_bindings = list_section(&mut fields, "visual_bindings", visual_binding_from_ron)?;
     // The game section is the one optional section: a file
@@ -1182,6 +1195,7 @@ fn project_from_ron(value: Ron) -> Result<Project, Refusal> {
         parts: sorted_unique(parts, "parts", |item| &item.id)?,
         physics_groups: sorted_unique(physics_groups, "physics groups", |item| &item.id)?,
         pose: sorted_unique(pose, "pose entries", |item| &item.parameter)?,
+        scenes: sorted_unique(scenes, "scene records", |item| &item.id)?,
         variant_sets: sorted_unique(variant_sets, "variant sets", |item| &item.id)?,
         visual_bindings: sorted_unique(visual_bindings, "visual bindings", |item| &item.id)?,
         game,
@@ -1283,6 +1297,26 @@ fn generation_from_ron(value: Ron) -> Result<GenerationRecord, Refusal> {
         filename_prefix,
         conditioning,
     })
+}
+
+fn scene_to_ron(scene: &SceneRecord) -> Ron {
+    record(
+        "Scene",
+        vec![("id", text(&scene.id)), ("record", scene.record.clone())],
+    )
+}
+
+fn scene_from_ron(value: Ron) -> Result<SceneRecord, Refusal> {
+    let mut fields = open(value, "Scene")?;
+    let id = fields.string("id")?;
+    // The record subtree is opaque in every build: decoded
+    // as a tree, never interpreted here. In a build without
+    // the `gen-conditioning` feature it is inert data by
+    // design (D-838); the feature build's validation sweep
+    // parses and judges it.
+    let record = fields.take("record")?;
+    fields.done()?;
+    Ok(SceneRecord { id, record })
 }
 
 fn physics_group_from_ron(value: Ron) -> Result<PhysicsGroup, Refusal> {

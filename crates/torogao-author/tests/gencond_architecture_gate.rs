@@ -13,9 +13,10 @@
 //!    at all: the seam is a leaf, so removing it cannot strand
 //!    a dependent inside the estate.
 //! 4. Behaviour matches the build: feature-on exposes the
-//!    two-verb conditioning manifest; feature-off refuses
-//!    both verbs by family name (the inert-data contract,
-//!    DESIGN §3.3.4).
+//!    five-verb conditioning manifest (the two D-822 verbs
+//!    plus the LIFT layer's three, D-838); feature-off
+//!    refuses all five by family name (the inert-data
+//!    contract, DESIGN §3.3.4).
 
 mod common;
 
@@ -146,18 +147,30 @@ fn behaviour_matches_the_build() {
     #[cfg(feature = "gen-conditioning")]
     {
         let manifest = torogao_author::conditioning::CONDITIONING_MANIFEST;
-        assert_eq!(manifest.len(), 2);
+        assert_eq!(manifest.len(), 5);
         assert_eq!(manifest[0].name, "conditioning_compile");
         assert!(!manifest[0].mutating);
         assert_eq!(manifest[1].name, "conditioning_set");
         assert!(manifest[1].mutating);
+        assert_eq!(manifest[2].name, "freeze_palette");
+        assert!(manifest[2].mutating);
+        assert_eq!(manifest[3].name, "freeze_track");
+        assert!(manifest[3].mutating);
+        assert_eq!(manifest[4].name, "scene_record_set");
+        assert!(manifest[4].mutating);
     }
     #[cfg(not(feature = "gen-conditioning"))]
     {
         let root = common::fresh("architecture");
         let resolve =
             |name: &str| -> Result<PathBuf, torogao_author::Refusal> { Ok(PathBuf::from(name)) };
-        for verb_name in ["conditioning_compile", "conditioning_set"] {
+        for verb_name in [
+            "conditioning_compile",
+            "conditioning_set",
+            "freeze_palette",
+            "freeze_track",
+            "scene_record_set",
+        ] {
             let answer = run_verb(&root, &root, verb_name, &serde_json::json!({}), &resolve);
             assert_eq!(
                 answer.status,

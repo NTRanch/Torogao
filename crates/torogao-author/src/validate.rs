@@ -203,6 +203,17 @@ pub fn sweep(project: &Project) -> Result<Project, Refusal> {
         crate::conditioning::check_stored_record(generation)?;
     }
     rebuilt.generation = project.generation.clone();
+    // Session records (D-838) ride the sweep the same way:
+    // ids checked in every build, the typed record parsed
+    // and judged where the feature exists; without it each
+    // record is inert data and there is nothing to judge
+    // it with.
+    for scene in &project.scenes {
+        check_id(&scene.id, "scene record id")?;
+        #[cfg(feature = "gen-conditioning")]
+        crate::conditioning::check_stored_scene(scene)?;
+    }
+    rebuilt.scenes = project.scenes.clone();
     Ok(rebuilt)
 }
 

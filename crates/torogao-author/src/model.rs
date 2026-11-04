@@ -71,6 +71,15 @@ pub struct Project {
     /// is inert data — loaded, round-tripped, and re-emitted
     /// untouched, never interpreted.
     pub generation: Option<GenerationRecord>,
+    /// Session records (D-838, the LIFT layer), sorted by id.
+    /// Absent from the file when empty: a project with no
+    /// session records carries no section. Each record's
+    /// typed form (`torogao-scene-record/1`) lives in
+    /// torogao-gencond behind the `gen-conditioning` feature;
+    /// here the whole record is an opaque RON subtree, carried
+    /// verbatim in every build — inert data without the
+    /// feature, exactly like the conditioning section.
+    pub scenes: Vec<SceneRecord>,
     /// The `content.ron` sidecar's prose entries, sorted by id.
     /// Sidecar state: the store merges them in at load and writes
     /// them back at commit; they are never serialized into
@@ -107,6 +116,24 @@ pub struct GenerationRecord {
     /// (a `Conditioning(...)` record in the gencond schema),
     /// when the record carries one.
     pub conditioning: Option<crate::ron::Ron>,
+}
+
+/// A session record (D-838): one generation session's
+/// product — its render recipe, medium-extension blocks,
+/// custody map, and freeze provenance. The typed form is
+/// `torogao_gencond::SceneRecord`; this is its storage shape:
+/// the scene id in the open (collections sort and index by
+/// it) and the record itself as an opaque RON subtree,
+/// carried verbatim in every build.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneRecord {
+    /// Scene id (matches the typed record's id; the
+    /// validation sweep checks the match in feature builds).
+    pub id: String,
+    /// The `torogao-scene-record/1` record as an opaque RON
+    /// subtree (a `SceneRecord(...)` tree in the gencond
+    /// schema).
+    pub record: crate::ron::Ron,
 }
 
 /// A generation record's latent canvas.
