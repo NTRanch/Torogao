@@ -1,0 +1,30 @@
+[package]
+name = "torogao-gen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Torogao generation core prototype (D-867): diffusion inference behind the generation seam, taking over the NSFW stills lane from the external ComfyUI runtime."
+
+[dependencies]
+# The vendored sd modules address the core crate by its
+# facade name (as candle-transformers does).
+candle = { package = "candle-core", version = "0.11", features = ["cuda"] }
+candle-nn = { version = "0.11", features = ["cuda"] }
+candle-transformers = { version = "0.11", features = ["cuda"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
+tracing = "0.1"
+
+[lib]
+name = "torogao_gen"
+path = "src/lib.rs"
+
+[features]
+# Declared so the vendored sd modules cfg gates resolve;
+# not enabled: candle flash-attn is not wired in Stage 1
+# (ARCH-EVAL records the attention-backend delta).
+flash-attn = []
