@@ -20,6 +20,8 @@
 pub mod error;
 pub mod font;
 pub mod headless;
+pub mod paint;
+pub mod paint_window;
 pub mod persona;
 pub mod player;
 pub mod render;

@@ -15,6 +15,7 @@
 //!   torogao-app --take-export <model.inx> --take <take.json>
 //!       --out <dir> [--force]
 //!   torogao-app --persona-audit
+//!   torogao-app --paint [document.tpaint]
 
 #![forbid(unsafe_code)]
 
@@ -23,6 +24,7 @@ use std::process::ExitCode;
 
 use torogao_app::error::AppError;
 use torogao_app::headless::{HeadlessOptions, run_headless};
+use torogao_app::paint_window::run_paint;
 use torogao_app::scene::NamedAssignment;
 use torogao_app::session_host::run_session_host;
 use torogao_app::windowed::run_windowed;
@@ -31,7 +33,8 @@ const USAGE: &str = "usage: torogao-app [model.inx] \
                      [--session-dir <dir>] [--session-port <port>] [--held-by <name>]\n       torogao-app --headless-eval <model.inx> \
                      [--param name=value ...] [--render out.png] [--state-hash] \
                      [--debug-physics]\n       torogao-app --session-serve <model.inx> --session-dir <dir> \
-                     [--session-port <port>] [--held-by <name>]\n       torogao-app --session-replay <record-dir>\n       torogao-app --play-export <model.inx> --animation <name> --out <dir> [--force]\n       torogao-app --take-export <model.inx> --take <take.json> --out <dir> [--force]";
+                     [--session-port <port>] [--held-by <name>]\n       torogao-app --session-replay <record-dir>\n       torogao-app --play-export <model.inx> --animation <name> --out <dir> [--force]\n       torogao-app --take-export <model.inx> --take <take.json> --out <dir> [--force]
+       torogao-app --paint [document.tpaint]";
 
 fn main() -> ExitCode {
     match run() {
@@ -59,6 +62,8 @@ fn run() -> Result<i32, AppError> {
     let mut take_export = false;
     let mut take_file: Option<PathBuf> = None;
     let mut persona_audit = false;
+    let mut paint = false;
+    let mut paint_path: Option<PathBuf> = None;
     let mut animation: Option<String> = None;
     let mut out_dir: Option<PathBuf> = None;
     let mut force = false;
@@ -102,6 +107,15 @@ fn run() -> Result<i32, AppError> {
             "--state-hash" => options.state_hash = true,
             "--debug-physics" => options.debug_physics = true,
             "--persona-audit" => persona_audit = true,
+            "--paint" => {
+                paint = true;
+                if let Some(next) = args.get(index + 1) {
+                    if !next.starts_with("--") {
+                        index += 1;
+                        paint_path = Some(PathBuf::from(next));
+                    }
+                }
+            }
             "--play-export" => play_export = true,
             "--take-export" => take_export = true,
             "--take" => {
@@ -164,6 +178,9 @@ fn run() -> Result<i32, AppError> {
         let total = report["checks_total"].as_u64().unwrap_or(0);
         println!("{}", torogao_format::jsonfmt::to_d_json(&report));
         return Ok(if passed == total && total > 0 { 0 } else { 3 });
+    }
+    if paint {
+        return run_paint(paint_path.as_deref());
     }
     if let Some(record_dir) = session_replay {
         return match torogao_session::replay_record(&record_dir) {
