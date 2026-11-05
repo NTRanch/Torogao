@@ -20,7 +20,9 @@
 #![deny(missing_docs)]
 
 pub mod app;
+pub mod bakeoff;
 pub mod records;
+pub mod termcap;
 pub mod textbuf;
 pub mod view;
 

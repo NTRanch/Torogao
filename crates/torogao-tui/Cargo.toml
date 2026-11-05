@@ -13,3 +13,4 @@ ratatui = "=0.29.0"
 serde = { workspace = true }
 serde_json = { workspace = true }
 torogao-author = { path = "../torogao-author" }
+torogao-tui-bakeoff-core = { path = "../torogao-tui-bakeoff-core" }
