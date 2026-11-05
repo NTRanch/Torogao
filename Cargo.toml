@@ -11,6 +11,8 @@ members = [
     "crates/torogao-jam-laws",
     "crates/torogao-motion-clip",
     "crates/torogao-osc",
+    "crates/torogao-paint",
+    "crates/torogao-pen",
     "crates/torogao-rig",
     "crates/torogao-session",
     "crates/torogao-tui",

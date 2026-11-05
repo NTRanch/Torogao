@@ -1,0 +1,15 @@
+[package]
+name = "torogao-pen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "The torogao-pen evdev side-channel: pen pressure and position read from the kernel evdev node (capability-matched, reader-only, no grab) for torogao-paint, plus the uinput synthetic pen that exercises it."
+
+[dependencies]
+libc = "0.2"
+torogao-paint = { path = "../torogao-paint", version = "0.4.0" }
+
+[[bin]]
+name = "pen-battery"
+path = "src/bin/pen_battery.rs"
