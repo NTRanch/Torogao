@@ -7,13 +7,17 @@
 //! row 1 the conditional prompt; sampler state stays f32,
 //! UNet compute runs f16 — ComfyUI's own dtype split.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use candle::{DType, Device, IndexOp, Tensor};
 use candle_nn::{Linear, Module, VarBuilder};
 use candle_transformers::models::stable_diffusion as sd;
+use serde::Serialize;
 use tokenizers::Tokenizer;
 
+use crate::checkpoint::{CheckpointMaps, CheckpointReport, load_checkpoint, load_layout_file};
 use crate::clip_vision::ClipVisionH;
 use crate::conditioning::{
     ConditioningRecord, ConditioningSpec, ControlRecord, IpRecord, load_pose, sha256_file,
@@ -22,9 +26,10 @@ use crate::controlnet::ControlNet;
 use crate::error::{GenError, Result};
 use crate::ipadapter::{load_ip_weights, normalize_reference_embed, rms};
 use crate::limits;
+use crate::lora::{LoadedLora, LoraApplyReport, LoraComponent, LoraSpec, load_lora};
 use crate::rng::GaussianStream;
-use crate::sampler::dpmpp_2m;
-use crate::schedule::Schedule;
+use crate::sampler::{SamplerKind, dpmpp_2m, euler_ancestral};
+use crate::schedule::{Schedule, SchedulerKind};
 use crate::sd::attention::IpContext;
 use crate::sd::unet_2d::{
     BlockConfig, ConditioningInputs, UNet2DConditionModel, UNet2DConditionModelConfig,
@@ -32,6 +37,10 @@ use crate::sd::unet_2d::{
 
 /// EOS/pad token id for both CLIP tokenizers.
 const PAD_ID: u32 = 49407;
+/// Seed salt for the Euler-ancestral fresh-noise stream:
+/// the ancestral draws must not replay the initial-noise
+/// stream, so they run off the run seed XOR this salt.
+const ANCESTRAL_NOISE_SALT: u64 = 0xA11C_E570_5EED_0001;
 /// SDXL VAE scaling factor.
 const VAE_SCALE: f64 = 0.18215;
 
@@ -44,8 +53,12 @@ pub struct GenParams {
     pub negative: String,
     /// Seed for the counter-based noise stream.
     pub seed: u64,
-    /// Sampler steps (DPM++ 2M, Karras ladder).
+    /// Sampler steps.
     pub steps: usize,
+    /// Which sampler walks the ladder.
+    pub sampler: SamplerKind,
+    /// Which ladder the sampler walks.
+    pub scheduler: SchedulerKind,
     /// Classifier-free guidance scale.
     pub cfg: f32,
     /// Output width in pixels (multiple of 8).
@@ -246,9 +259,32 @@ impl ConditioningAssets {
     }
 }
 
+/// Where the UNet weights come from at generate time.
+enum UnetSource {
+    /// A converted-layout directory; the UNet file is
+    /// memory-mapped per generate (the Stage 1 path).
+    Dir(PathBuf),
+    /// An in-memory tensor map (single-file checkpoint
+    /// load, or a layout load with LoRAs merged in).
+    Map(Arc<HashMap<String, Tensor>>),
+}
+
+/// Provenance of a map-based load (single-file or
+/// LoRA-merged): what the checkpoint contained and what
+/// each LoRA did. `None` on the Stage 1 directory path.
+#[derive(Debug, Clone, Serialize)]
+pub struct LoadReport {
+    /// `"single_file"` or `"layout_maps"`.
+    pub mode: &'static str,
+    /// Checkpoint consumption record (single-file loads).
+    pub checkpoint: Option<CheckpointReport>,
+    /// One entry per LoRA spec, in spec order.
+    pub loras: Vec<LoraApplyReport>,
+}
+
 /// The loaded SDXL model set.
 pub struct SdxlModel {
-    dir: std::path::PathBuf,
+    unet_source: UnetSource,
     vae: sd::vae::AutoEncoderKL,
     clip: sd::clip::ClipTextTransformer,
     clip2: sd::clip::ClipTextTransformer,
@@ -257,6 +293,8 @@ pub struct SdxlModel {
     tokenizer2: Tokenizer,
     device: Device,
     schedule: Schedule,
+    /// Load provenance for map-based loads.
+    pub load_report: Option<LoadReport>,
 }
 
 /// Repeat a `(1, S, D)` context `times` along the
@@ -332,7 +370,7 @@ impl SdxlModel {
                 detail: e.to_string(),
             })?;
         Ok(Self {
-            dir: dir.to_path_buf(),
+            unet_source: UnetSource::Dir(dir.to_path_buf()),
             vae,
             clip,
             clip2,
@@ -341,6 +379,169 @@ impl SdxlModel {
             tokenizer2,
             device: device.clone(),
             schedule: Schedule::sdxl(),
+            load_report: None,
+        })
+    }
+
+    /// Load all components from ONE single-file SDXL
+    /// checkpoint (the native LDM layout every estate
+    /// checkpoint ships in), with `loras` merged into the
+    /// component maps at their spec strengths. Tokenizers
+    /// are not carried by checkpoints; they are read from
+    /// `tokenizer_dir` (`tokenizer.json` / `tokenizer2.json`).
+    ///
+    /// # Errors
+    /// Returns `gen_weights` on any mapping strictness
+    /// failure, missing tensor, or LoRA refusal, and
+    /// `gen_tokenizer` on missing tokenizer files.
+    pub fn load_single_file(
+        checkpoint: &Path,
+        tokenizer_dir: &Path,
+        device: &Device,
+        loras: &[LoraSpec],
+    ) -> Result<Self> {
+        let maps = load_checkpoint(checkpoint)?;
+        let report = maps.report.clone();
+        let mut model = Self::from_maps(maps, tokenizer_dir, device, loras, "single_file")?;
+        if let Some(load_report) = model.load_report.as_mut() {
+            load_report.checkpoint = Some(report);
+        }
+        Ok(model)
+    }
+
+    /// Load all components from a converted-layout
+    /// directory through tensor maps, with `loras` merged
+    /// in. (Without LoRAs, prefer `load`: the mmap path is
+    /// the Stage 1 regression anchor.)
+    ///
+    /// # Errors
+    /// Returns the same typed errors as `load_single_file`.
+    pub fn load_layout_maps(dir: &Path, device: &Device, loras: &[LoraSpec]) -> Result<Self> {
+        let need = |n: &str| -> Result<HashMap<String, Tensor>> { load_layout_file(&dir.join(n)) };
+        let maps = CheckpointMaps {
+            unet: need("unet.safetensors")?,
+            vae: need("vae.safetensors")?,
+            clip: need("clip.safetensors")?,
+            clip2: need("clip2.safetensors")?,
+            report: CheckpointReport {
+                unet_tensors: 0,
+                vae_tensors: 0,
+                clip_tensors: 0,
+                clip2_tensors: 0,
+                clip_unused: Vec::new(),
+                outside_prefix: Vec::new(),
+            },
+        };
+        Self::from_maps(maps, dir, device, loras, "layout_maps")
+    }
+
+    /// Build the model set from component tensor maps,
+    /// merging `loras` first. Shared by the single-file
+    /// and layout-maps constructors.
+    fn from_maps(
+        mut maps: CheckpointMaps,
+        tokenizer_dir: &Path,
+        device: &Device,
+        loras: &[LoraSpec],
+        mode: &'static str,
+    ) -> Result<Self> {
+        let mut lora_reports: Vec<LoraApplyReport> = Vec::with_capacity(loras.len());
+        for spec in loras {
+            let loaded: LoadedLora = load_lora(&spec.path)?;
+            let mut merged = LoraApplyReport {
+                path: spec.path.display().to_string(),
+                sha256: loaded.sha256.clone(),
+                scale: spec.scale,
+                modules_total: loaded.module_count(),
+                applied: 0,
+                skipped: Vec::new(),
+            };
+            for (component, map) in [
+                (LoraComponent::Unet, &mut maps.unet),
+                (LoraComponent::ClipL, &mut maps.clip),
+                (LoraComponent::ClipG, &mut maps.clip2),
+            ] {
+                let part = loaded.apply(component, map, spec.scale, &spec.path)?;
+                merged.applied += part.applied;
+                merged.skipped.extend(part.skipped);
+            }
+            lora_reports.push(merged);
+        }
+        let cfg = sd::StableDiffusionConfig::sdxl(None, None, None);
+        // The SDXL VAE configuration, as candle's own
+        // `sdxl()` constructor sets it (its `autoencoder`
+        // field is not public, so the values are restated
+        // here; the parity gates judge them).
+        let vae_cfg = sd::vae::AutoEncoderKLConfig {
+            block_out_channels: vec![128, 256, 512, 512],
+            layers_per_block: 2,
+            latent_channels: 4,
+            norm_num_groups: 32,
+            use_quant_conv: true,
+            use_post_quant_conv: true,
+        };
+        let vae = sd::vae::AutoEncoderKL::new(
+            VarBuilder::from_tensors(maps.vae, DType::F32, device),
+            3,
+            3,
+            vae_cfg,
+        )
+        .map_err(GenError::from)?;
+        let cpu = Device::Cpu;
+        let clip = sd::clip::ClipTextTransformer::new(
+            VarBuilder::from_tensors(maps.clip, DType::F32, &cpu),
+            &cfg.clip,
+        )
+        .map_err(GenError::from)?;
+        let clip2_cfg = cfg.clip2.as_ref().ok_or_else(|| GenError::Weights {
+            detail: "sdxl config has no clip2".into(),
+        })?;
+        let text_projection = maps
+            .clip2
+            .get("text_projection.weight")
+            .ok_or_else(|| GenError::Weights {
+                detail: "clip2 map has no text_projection.weight".into(),
+            })?
+            .to_dtype(DType::F32)?;
+        let clip2 = sd::clip::ClipTextTransformer::new(
+            VarBuilder::from_tensors(maps.clip2, DType::F32, &cpu),
+            clip2_cfg,
+        )
+        .map_err(GenError::from)?;
+        let tok_path = |n: &str| -> Result<PathBuf> {
+            let p = tokenizer_dir.join(n);
+            if p.exists() {
+                Ok(p)
+            } else {
+                Err(GenError::Weights {
+                    detail: format!("missing {}", p.display()),
+                })
+            }
+        };
+        let tokenizer =
+            Tokenizer::from_file(tok_path("tokenizer.json")?).map_err(|e| GenError::Tokenizer {
+                detail: e.to_string(),
+            })?;
+        let tokenizer2 = Tokenizer::from_file(tok_path("tokenizer2.json")?).map_err(|e| {
+            GenError::Tokenizer {
+                detail: e.to_string(),
+            }
+        })?;
+        Ok(Self {
+            unet_source: UnetSource::Map(Arc::new(maps.unet)),
+            vae,
+            clip,
+            clip2,
+            text_projection,
+            tokenizer,
+            tokenizer2,
+            device: device.clone(),
+            schedule: Schedule::sdxl(),
+            load_report: Some(LoadReport {
+                mode,
+                checkpoint: None,
+                loras: lora_reports,
+            }),
         })
     }
 
@@ -352,11 +553,19 @@ impl SdxlModel {
     /// other tenants on a shared card.
     fn load_unet(&self) -> Result<(UNet2DConditionModel, (Linear, Linear))> {
         let device = &self.device;
-        let unet_path = self.dir.join("unet.safetensors");
-        // SAFETY: read-only weights mapping, as in `load`.
-        #[allow(unsafe_code)]
-        let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[&unet_path], DType::F16, device) }
-            .map_err(GenError::from)?;
+        let vb = match &self.unet_source {
+            UnetSource::Dir(dir) => {
+                let unet_path = dir.join("unet.safetensors");
+                // SAFETY: read-only weights mapping, as in `load`.
+                #[allow(unsafe_code)]
+                let vb = unsafe {
+                    VarBuilder::from_mmaped_safetensors(&[&unet_path], DType::F16, device)
+                }
+                .map_err(GenError::from)?;
+                vb
+            }
+            UnetSource::Map(map) => VarBuilder::from_tensors((**map).clone(), DType::F16, device),
+        };
         // The UNet is the vendored build (sd module): candle
         // upstream loads the same weights but cannot accept
         // the added conditioning.
@@ -638,7 +847,7 @@ impl SdxlModel {
         }
         let noise_sha256 = format!("{:x}", hasher.finalize());
         let noise_t = Tensor::from_vec(noise, (1, 4, lh, lw), &Device::Cpu)?.to_device(dev)?;
-        let sigmas = self.schedule.karras(params.steps);
+        let sigmas = params.scheduler.ladder(&self.schedule, params.steps);
         let x0_latent = (noise_t * sigmas[0])?;
         let context_ref = &context;
         let added_ref = &added;
@@ -649,7 +858,7 @@ impl SdxlModel {
         let control_ref = &control;
         let joined_ref = &joined_batch;
         let ip_tokens_ref = &ip_tokens_batch;
-        let x = dpmpp_2m(x0_latent, &sigmas, |x_in, sigma| {
+        let denoise = |x_in: &Tensor, sigma: f64| -> Result<Tensor> {
             // EPS preconditioning (ComfyUI model_sampling
             // EPS.calculate_input, sigma_data = 1): the UNet
             // sees x / sqrt(sigma^2 + 1); the denoised
@@ -706,7 +915,25 @@ impl SdxlModel {
             let eps = (eps_uncond.clone() + ((eps_cond - eps_uncond)? * cfg_scale as f64)?)?;
             let x0 = (x_in - (eps.clone() * sigma)?)?;
             Ok(x0)
-        })?;
+        };
+        let x = match params.sampler {
+            SamplerKind::Dpmpp2m => dpmpp_2m(x0_latent, &sigmas, denoise)?,
+            SamplerKind::EulerAncestral => {
+                // Ancestral fresh noise: a dedicated
+                // counter stream off the run seed (named
+                // salt), drawn only on steps whose
+                // sigma_up is positive (the sampler's own
+                // contract), shaped like the latent state.
+                let mut stream = GaussianStream::new(params.seed ^ ANCESTRAL_NOISE_SALT);
+                let noise_device = dev.clone();
+                euler_ancestral(x0_latent, &sigmas, denoise, move || {
+                    let mut buf = vec![0f32; n];
+                    stream.fill_gaussian(&mut buf);
+                    Ok(Tensor::from_vec(buf, (1, 4, lh, lw), &Device::Cpu)?
+                        .to_device(&noise_device)?)
+                })?
+            }
+        };
         // Staged residency: the UNet and its projection are
         // released before the decode phase (see load_unet).
         drop(unet);
@@ -866,6 +1093,8 @@ mod battery {
             negative: PRIMA_NEGATIVE.to_string(),
             seed: 91001,
             steps: 30,
+            sampler: SamplerKind::Dpmpp2m,
+            scheduler: SchedulerKind::Karras,
             cfg: 6.0,
             width: 832,
             height: 1216,

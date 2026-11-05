@@ -13,6 +13,7 @@
 //! exp(-ln(10000) * arange(128) / 128)) used for the added
 //! conditioning vector.
 
+use crate::error::{GenError, Result};
 use crate::limits::SCHEDULE_LEN;
 
 /// Beta at the schedule start (scaled-linear).
@@ -78,6 +79,42 @@ impl Schedule {
         best
     }
 
+    /// Sigma at a fractional timestep: log-space linear
+    /// interpolation between the neighbouring discrete
+    /// sigmas (ComfyUI `ModelSamplingDiscrete.sigma` rule,
+    /// read from the oracle source as spec). Out-of-range
+    /// timesteps clamp to the schedule ends.
+    pub fn sigma_at(&self, timestep: f64) -> f64 {
+        let t = timestep.clamp(0.0, (SCHEDULE_LEN - 1) as f64);
+        let low = t.floor() as usize;
+        let high = t.ceil() as usize;
+        let w = t.fract();
+        ((1.0 - w) * self.log_sigmas[low] + w * self.log_sigmas[high]).exp()
+    }
+
+    /// The "normal" ladder (ComfyUI `normal_scheduler`,
+    /// read from the oracle source as spec): timesteps
+    /// spaced linearly from the timestep of sigma_max down
+    /// to the timestep of sigma_min, each mapped through
+    /// the fractional `sigma_at`, plus a terminal zero.
+    /// For SDXL the endpoints are timesteps 999 and 0.
+    pub fn normal(&self, steps: usize) -> Vec<f64> {
+        assert!(steps >= 1, "a ladder needs at least one step");
+        let start = self.timestep(self.sigma_max()) as f64;
+        let end = self.timestep(self.sigma_min()) as f64;
+        let mut out = Vec::with_capacity(steps + 1);
+        for i in 0..steps {
+            let ramp = if steps == 1 {
+                0.0
+            } else {
+                i as f64 / (steps - 1) as f64
+            };
+            out.push(self.sigma_at(start + ramp * (end - start)));
+        }
+        out.push(0.0);
+        out
+    }
+
     /// The Karras ladder: `steps` sigmas from sigma_max down
     /// to sigma_min at rho, plus a terminal zero.
     pub fn karras(&self, steps: usize) -> Vec<f64> {
@@ -94,6 +131,49 @@ impl Schedule {
         }
         out.push(0.0);
         out
+    }
+}
+
+/// Which sigma ladder a run walks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchedulerKind {
+    /// The Karras ladder (rho 7) — the Stage 1/2 default.
+    Karras,
+    /// ComfyUI's "normal" ladder: linearly spaced
+    /// timesteps mapped through the discrete schedule.
+    Normal,
+}
+
+impl SchedulerKind {
+    /// The stable name used in run records and CLI flags.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Karras => "karras",
+            Self::Normal => "normal",
+        }
+    }
+
+    /// Parse a scheduler name (the CLI/record spelling).
+    ///
+    /// # Errors
+    /// Returns `gen_limit` on an unknown name.
+    pub fn parse(name: &str) -> Result<Self> {
+        match name {
+            "karras" => Ok(Self::Karras),
+            "normal" => Ok(Self::Normal),
+            other => Err(GenError::Limit {
+                field: "scheduler",
+                detail: format!("unknown scheduler {other:?}"),
+            }),
+        }
+    }
+
+    /// Build this scheduler's ladder at `steps` steps.
+    pub fn ladder(self, schedule: &Schedule, steps: usize) -> Vec<f64> {
+        match self {
+            Self::Karras => schedule.karras(steps),
+            Self::Normal => schedule.normal(steps),
+        }
     }
 }
 
@@ -166,6 +246,41 @@ mod tests {
         for w in k.windows(2) {
             assert!(w[0] > w[1], "ladder must descend");
         }
+    }
+
+    #[test]
+    fn normal_ladder_shape() {
+        let s = Schedule::sdxl();
+        let n = s.normal(30);
+        assert_eq!(n.len(), 31);
+        assert_eq!(n[30], 0.0);
+        assert!((n[0] - s.sigma_max()).abs() < 1e-9);
+        assert!((n[29] - s.sigma_min()).abs() < 1e-9);
+        for w in n.windows(2) {
+            assert!(w[0] > w[1], "ladder must descend");
+        }
+        // The normal ladder falls faster at the top than
+        // Karras: linear-in-timestep spacing takes a full
+        // 1/29th of the timestep range in step one, while
+        // the rho-7 Karras curve crowds its resolution at
+        // the low-sigma end and so stays higher early.
+        let k = s.karras(30);
+        assert!(n[1] < k[1], "normal {} vs karras {}", n[1], k[1]);
+    }
+
+    #[test]
+    fn sigma_at_hits_discrete_points_and_midpoints() {
+        let s = Schedule::sdxl();
+        for t in [0usize, 3, 500, 999] {
+            assert!((s.sigma_at(t as f64) - s.sigma(t)).abs() < 1e-12);
+        }
+        // Log-space midpoint: geometric mean of neighbours.
+        let mid = s.sigma_at(500.5);
+        let expect = (s.sigma(500) * s.sigma(501)).sqrt();
+        assert!((mid - expect).abs() / expect < 1e-9, "{mid} vs {expect}");
+        // Clamps at both ends.
+        assert!((s.sigma_at(-5.0) - s.sigma_min()).abs() < 1e-12);
+        assert!((s.sigma_at(5000.0) - s.sigma_max()).abs() < 1e-12);
     }
 
     #[test]

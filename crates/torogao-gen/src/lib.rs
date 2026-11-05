@@ -13,12 +13,14 @@
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
 
+pub mod checkpoint;
 pub mod clip_vision;
 pub mod conditioning;
 pub mod controlnet;
 pub mod error;
 pub mod ipadapter;
 pub mod limits;
+pub mod lora;
 pub mod pipeline;
 pub mod rng;
 pub mod sampler;
@@ -34,4 +36,7 @@ pub mod text;
 
 pub use conditioning::{CnType, ConditioningSpec, ControlSpec, IpSpec};
 pub use error::{GenError, Result};
-pub use pipeline::{ConditioningAssets, GenParams, GeneratedImage, SdxlModel};
+pub use lora::LoraSpec;
+pub use pipeline::{ConditioningAssets, GenParams, GeneratedImage, LoadReport, SdxlModel};
+pub use sampler::SamplerKind;
+pub use schedule::SchedulerKind;

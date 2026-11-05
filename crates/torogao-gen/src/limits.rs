@@ -25,6 +25,12 @@ pub const TEXT_BLOCK_CONTENT: usize = TOKEN_LEN - 2;
 pub const TEXT_BLOCKS_MAX: usize = 16;
 /// Maximum content tokens per prompt (D-980).
 pub const TEXT_CONTENT_MAX: usize = TEXT_BLOCKS_MAX * TEXT_BLOCK_CONTENT;
+/// Maximum LoRA modules per file (the estate's largest
+/// censused LoRA carries 986; the bound leaves headroom
+/// while keeping a hostile file's parse work finite).
+pub const LORA_MODULES_MAX: usize = 4096;
+/// Maximum LoRA rank (estate files run 4..=128).
+pub const LORA_RANK_MAX: usize = 512;
 /// Maximum aligned CFG context length in blocks (D-980):
 /// the bound on the oracle's LCM repeat-alignment of the
 /// conditional and unconditional contexts.

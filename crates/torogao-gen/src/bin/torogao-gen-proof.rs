@@ -11,7 +11,8 @@ use candle::Device;
 use serde::Serialize;
 use torogao_gen::pipeline::write_png;
 use torogao_gen::{
-    CnType, ConditioningAssets, ConditioningSpec, ControlSpec, GenParams, IpSpec, SdxlModel,
+    CnType, ConditioningAssets, ConditioningSpec, ControlSpec, GenParams, IpSpec, LoadReport,
+    LoraSpec, SamplerKind, SchedulerKind, SdxlModel,
 };
 
 /// The D-865 run record written beside every output.
@@ -22,8 +23,8 @@ struct RunRecord {
     prompt: String,
     negative: String,
     seed: u64,
-    sampler: &'static str,
-    scheduler: &'static str,
+    sampler: String,
+    scheduler: String,
     steps: usize,
     cfg: f32,
     width: u32,
@@ -36,6 +37,9 @@ struct RunRecord {
     /// Stage 2 conditioning provenance (D-936); null on
     /// unconditioned (Stage 1) runs.
     conditioning: Option<torogao_gen::conditioning::ConditioningRecord>,
+    /// Map-based load provenance (single-file checkpoint
+    /// or LoRA merge); null on the Stage 1 layout path.
+    load: Option<LoadReport>,
 }
 
 #[derive(Serialize)]
@@ -53,6 +57,14 @@ fn arg(args: &[String], name: &str) -> Option<String> {
     args.windows(2).find(|w| w[0] == name).map(|w| w[1].clone())
 }
 
+/// Every value of a repeatable flag, in argument order.
+fn args_all(args: &[String], name: &str) -> Vec<String> {
+    args.windows(2)
+        .filter(|w| w[0] == name)
+        .map(|w| w[1].clone())
+        .collect()
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let (weights, out, record_path, run_id) = match (
@@ -61,13 +73,62 @@ fn main() -> ExitCode {
         arg(&args, "--record"),
         arg(&args, "--run-id"),
     ) {
-        (Some(w), Some(o), Some(r), Some(i)) => (w, o, r, i),
+        (w, Some(o), Some(r), Some(i)) => (w, o, r, i),
         _ => {
             eprintln!(
-                "usage: torogao-gen-proof --weights DIR --out PNG --record JSON --run-id ID [--prompt S] [--negative S] [--seed N] [--steps N] [--cfg F] [--width N] [--height N] [--controlnet F --pose PNG [--cn-strength F] [--cn-type T] [--cn-start F] [--cn-end F]] [--ipadapter F --clip-vision F --reference PNG [--ip-scale F]]"
+                "usage: torogao-gen-proof (--weights DIR | --checkpoint FILE [--tokenizers DIR]) --out PNG --record JSON --run-id ID [--prompt S] [--negative S] [--seed N] [--steps N] [--sampler dpmpp_2m|euler_ancestral] [--scheduler karras|normal] [--cfg F] [--width N] [--height N] [--lora FILE[@WEIGHT]]... [--controlnet F --pose PNG [--cn-strength F] [--cn-type T] [--cn-start F] [--cn-end F]] [--ipadapter F --clip-vision F --reference PNG [--ip-scale F]]"
             );
             return ExitCode::from(2);
         }
+    };
+    // Native-stack load selection: exactly one weight
+    // source. --checkpoint is the single-file path;
+    // --weights is the converted-layout directory (with
+    // --lora it loads through tensor maps instead).
+    let checkpoint = arg(&args, "--checkpoint");
+    if checkpoint.is_none() && weights.is_none() {
+        eprintln!("one of --weights or --checkpoint is required");
+        return ExitCode::from(2);
+    }
+    if checkpoint.is_some() && weights.is_some() && arg(&args, "--tokenizers").is_none() {
+        eprintln!("--weights with --checkpoint is ambiguous; pass --tokenizers DIR instead");
+        return ExitCode::from(2);
+    }
+    let tokenizers = arg(&args, "--tokenizers").or_else(|| weights.clone());
+    // Repeatable --lora FILE[@WEIGHT] (default weight 1).
+    let mut loras: Vec<LoraSpec> = Vec::new();
+    for raw in args_all(&args, "--lora") {
+        let (path, scale) = match raw.rsplit_once('@') {
+            Some((p, w)) => match w.parse::<f64>() {
+                Ok(v) => (p.to_string(), v),
+                Err(_) => (raw.clone(), 1.0),
+            },
+            None => (raw.clone(), 1.0),
+        };
+        loras.push(LoraSpec {
+            path: PathBuf::from(path),
+            scale,
+        });
+    }
+    let sampler = match arg(&args, "--sampler") {
+        Some(name) => match SamplerKind::parse(&name) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("error [{}]: {e}", e.code());
+                return ExitCode::from(2);
+            }
+        },
+        None => SamplerKind::Dpmpp2m,
+    };
+    let scheduler = match arg(&args, "--scheduler") {
+        Some(name) => match SchedulerKind::parse(&name) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("error [{}]: {e}", e.code());
+                return ExitCode::from(2);
+            }
+        },
+        None => SchedulerKind::Karras,
     };
     // Stage 2 conditioning flags (D-936): each half is
     // all-or-nothing; a partial half is a usage error.
@@ -145,6 +206,8 @@ fn main() -> ExitCode {
         steps: arg(&args, "--steps")
             .and_then(|v| v.parse().ok())
             .unwrap_or(30),
+        sampler,
+        scheduler,
         cfg: arg(&args, "--cfg")
             .and_then(|v| v.parse().ok())
             .unwrap_or(6.0),
@@ -164,7 +227,31 @@ fn main() -> ExitCode {
     };
     let conditioned = spec.is_some();
     let run = || -> torogao_gen::Result<String> {
-        let model = SdxlModel::load(&PathBuf::from(&weights), &device)?;
+        let model = match (&checkpoint, &weights) {
+            (Some(cp), _) => {
+                let tok_dir = tokenizers
+                    .clone()
+                    .ok_or_else(|| torogao_gen::GenError::Weights {
+                        detail: "--checkpoint needs --tokenizers DIR (or --weights as its source)"
+                            .into(),
+                    })?;
+                SdxlModel::load_single_file(
+                    &PathBuf::from(cp),
+                    &PathBuf::from(tok_dir),
+                    &device,
+                    &loras,
+                )?
+            }
+            (None, Some(dir)) if !loras.is_empty() => {
+                SdxlModel::load_layout_maps(&PathBuf::from(dir), &device, &loras)?
+            }
+            (None, Some(dir)) => SdxlModel::load(&PathBuf::from(dir), &device)?,
+            (None, None) => {
+                return Err(torogao_gen::GenError::Weights {
+                    detail: "no weight source".into(),
+                });
+            }
+        };
         let img = match spec {
             Some(spec) => {
                 let assets = ConditioningAssets::load(&spec, params.width, params.height, &device)?;
@@ -193,8 +280,8 @@ fn main() -> ExitCode {
             prompt: params.prompt.clone(),
             negative: params.negative.clone(),
             seed: params.seed,
-            sampler: "dpmpp_2m",
-            scheduler: "karras",
+            sampler: params.sampler.name().to_string(),
+            scheduler: params.scheduler.name().to_string(),
             steps: params.steps,
             cfg: params.cfg,
             width: params.width,
@@ -209,6 +296,7 @@ fn main() -> ExitCode {
             noise_sha256: img.noise_sha256.clone(),
             elapsed_ms: img.elapsed_ms,
             conditioning: img.conditioning.clone(),
+            load: model.load_report.clone(),
         };
         let json =
             serde_json::to_string_pretty(&record).map_err(|e| torogao_gen::GenError::Image {
