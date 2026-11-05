@@ -1,0 +1,18 @@
+[package]
+name = "torogao-tui-bakeoff-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Shared workload core for the Torogao TUI framework bake-off (D-926)."
+publish = false
+
+[dependencies]
+ed25519-dalek = "=2.2.0"
+ml-kem = { version = "=0.3.2", features = ["getrandom"] }
+rmcp = { version = "=3.8.0", default-features = false, features = ["client", "server", "transport-async-rw"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+tokio = { version = "1", features = ["io-util", "macros", "rt-multi-thread", "sync", "time"] }
+torogao-author = { path = "../torogao-author" }

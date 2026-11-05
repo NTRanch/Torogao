@@ -14,6 +14,7 @@ members = [
     "crates/torogao-rig",
     "crates/torogao-session",
     "crates/torogao-tui",
+    "crates/torogao-tui-bakeoff-core",
     "crates/torogao-viseme",
     "crates/torogao-vmc",
     "crates/torogao-voice",
