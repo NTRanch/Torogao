@@ -259,6 +259,17 @@ pub struct SdxlModel {
     schedule: Schedule,
 }
 
+/// Repeat a `(1, S, D)` context `times` along the
+/// sequence axis (the oracle's LCM alignment in
+/// `text::aligned_repeats`); a count of 1 is the identity.
+fn repeat_context(context: &Tensor, times: usize) -> Result<Tensor> {
+    if times == 1 {
+        return Ok(context.clone());
+    }
+    let parts: Vec<&Tensor> = vec![context; times];
+    Ok(Tensor::cat(&parts, 1)?)
+}
+
 fn load_tensor(path: &Path, name: &str, device: &Device) -> Result<Tensor> {
     // SAFETY: read-only mapping of a weights file this
     // process owns for the run's duration; never mutated.
@@ -388,53 +399,109 @@ impl SdxlModel {
         Ok((unet, (add1, add2)))
     }
 
-    fn tokenize(&self, tok: &Tokenizer, text: &str, pad_id: u32) -> Result<Vec<u32>> {
+    /// The content-token stream of one prompt under one
+    /// tokenizer: the HF encoding minus its BOS/EOS frame.
+    /// Batching into encoder blocks is
+    /// `text::batch_blocks`; nothing is dropped here or
+    /// there (D-980).
+    fn content_ids(&self, tok: &Tokenizer, text: &str) -> Result<Vec<u32>> {
         let enc = tok.encode(text, true).map_err(|e| GenError::Tokenizer {
             detail: e.to_string(),
         })?;
-        let mut ids: Vec<u32> = enc.get_ids().to_vec();
-        ids.resize(limits::TOKEN_LEN, pad_id);
-        ids.truncate(limits::TOKEN_LEN);
-        Ok(ids)
+        let ids = enc.get_ids();
+        match (ids.first(), ids.last()) {
+            (Some(&crate::text::BOS_ID), Some(&crate::text::EOS_ID)) if ids.len() >= 2 => {
+                Ok(ids[1..ids.len() - 1].to_vec())
+            }
+            _ => Ok(ids.to_vec()),
+        }
     }
 
     /// Encode one prompt through both CLIPs; returns the
-    /// concatenated sequence embedding (f32) and the pooled
-    /// embedding (f32, 1280).
-    fn encode(&self, text: &str) -> Result<(Tensor, Tensor)> {
-        let ids = self.tokenize(&self.tokenizer, text, PAD_ID)?;
+    /// concatenated sequence embedding (f32), the pooled
+    /// embedding (f32, 1280), and the encoder block count.
+    /// A prompt longer than one block encodes as multiple
+    /// 77-token blocks whose penultimate hidden states
+    /// concatenate along the sequence axis — the oracle's
+    /// chunking (D-980); a prompt past the named content
+    /// cap is refused by `text::batch_blocks`, never cut.
+    fn encode(&self, text: &str) -> Result<(Tensor, Tensor, usize)> {
+        let content = self.content_ids(&self.tokenizer, text)?;
         // ComfyUI's SDXL pair pads asymmetrically: CLIP-L
         // pads with the end token, CLIP-G pads with token 0
         // (sdxl_clip.SDXLClipGTokenizer, pad_with_end=False,
         // special_tokens pad=0). The padding positions are
         // attended by the UNet, so this is load-bearing.
-        let ids2 = self.tokenize(&self.tokenizer2, text, 0)?;
-        // Encoders are CPU-resident (see load).
+        let content2 = self.content_ids(&self.tokenizer2, text)?;
+        let blocks = crate::text::batch_blocks(&content, PAD_ID)?;
+        let blocks2 = crate::text::batch_blocks(&content2, 0)?;
+        if blocks.len() != blocks2.len() {
+            return Err(GenError::Tokenizer {
+                detail: format!(
+                    "CLIP-L/G tokenizers disagree on block count: {} vs {}",
+                    blocks.len(),
+                    blocks2.len()
+                ),
+            });
+        }
+        let n_blocks = blocks.len();
+        // Encoders are CPU-resident (see load). Blocks
+        // are encoded one per forward: candle's CLIP
+        // attention mask is not batch-safe past batch 1
+        // (its (batch, seq, seq) mask cannot broadcast
+        // against (batch, heads, seq, seq) attention
+        // weights — measured, D-980), and blocks never
+        // attend across rows in the oracle's batched run
+        // either, so per-block forwards are the same
+        // encoding. A one-block prompt makes exactly the
+        // pre-D-980 calls, which is what keeps the short
+        // path byte-identical.
         let dev = &Device::Cpu;
-        let t = Tensor::new(ids.clone(), dev)?.reshape((1, limits::TOKEN_LEN))?;
-        let t2 = Tensor::new(ids2.clone(), dev)?.reshape((1, limits::TOKEN_LEN))?;
-        // SDXL consumes the penultimate layer's hidden
-        // states (pre-final-norm) as the sequence context —
-        // the diffusers/ComfyUI convention; the final layer
-        // output serves only the pooled embedding.
-        let (final1, hidden) = self.clip.forward_until_encoder_layer(&t, usize::MAX, -2)?;
-        let _ = final1;
-        let (hidden2_final, hidden2) =
-            self.clip2
-                .forward_until_encoder_layer(&t2, usize::MAX, -2)?;
-        // The first EOS id is the sequence end (padding
-        // after it repeats the same id).
-        let eos = ids
-            .iter()
-            .position(|id| *id == PAD_ID)
-            .unwrap_or(limits::TOKEN_LEN - 1);
-        let pooled_src = hidden2_final.i((0, eos))?;
-        let pooled = pooled_src
-            .unsqueeze(0)?
-            .matmul(&self.text_projection.t()?)?
-            .squeeze(0)?;
+        let mut hidden_parts: Vec<Tensor> = Vec::with_capacity(n_blocks);
+        let mut hidden2_parts: Vec<Tensor> = Vec::with_capacity(n_blocks);
+        let mut pooled: Option<Tensor> = None;
+        for (i, (block, block2)) in blocks.iter().zip(blocks2.iter()).enumerate() {
+            let t = Tensor::new(block.to_vec(), dev)?.reshape((1, limits::TOKEN_LEN))?;
+            let t2 = Tensor::new(block2.to_vec(), dev)?.reshape((1, limits::TOKEN_LEN))?;
+            // SDXL consumes the penultimate layer's hidden
+            // states (pre-final-norm) as the sequence
+            // context — the diffusers/ComfyUI convention;
+            // the final layer output serves only the
+            // pooled embedding.
+            let (final1, hidden) = self.clip.forward_until_encoder_layer(&t, usize::MAX, -2)?;
+            let _ = final1;
+            let (hidden2_final, hidden2) =
+                self.clip2
+                    .forward_until_encoder_layer(&t2, usize::MAX, -2)?;
+            if i == 0 {
+                // The oracle keeps only the FIRST block's
+                // pooled output, read at that block's first
+                // EOS position; every block is EOS-framed
+                // by construction, so the position always
+                // exists (no fallback index).
+                let eos = crate::text::pooled_position(block2);
+                let pooled_src = hidden2_final.i((0, eos))?;
+                pooled = Some(
+                    pooled_src
+                        .unsqueeze(0)?
+                        .matmul(&self.text_projection.t()?)?
+                        .squeeze(0)?,
+                );
+            }
+            hidden_parts.push(hidden);
+            hidden2_parts.push(hidden2);
+        }
+        // Blocks concatenate along the sequence axis in
+        // block order (the oracle's dim -2 concat).
+        let hidden_refs: Vec<&Tensor> = hidden_parts.iter().collect();
+        let hidden2_refs: Vec<&Tensor> = hidden2_parts.iter().collect();
+        let hidden = Tensor::cat(&hidden_refs, 1)?;
+        let hidden2 = Tensor::cat(&hidden2_refs, 1)?;
         let context = Tensor::cat(&[&hidden, &hidden2], 2)?;
-        Ok((context, pooled))
+        let pooled = pooled.ok_or_else(|| GenError::Tokenizer {
+            detail: "no encoder blocks produced".into(),
+        })?;
+        Ok((context, pooled, n_blocks))
     }
 
     /// The joined added-conditioning input (f16, 2816)
@@ -499,8 +566,15 @@ impl SdxlModel {
         params.validate()?;
         let started = std::time::Instant::now();
         let dev = &self.device;
-        let (ctx_uncond, pooled_uncond) = self.encode(&params.negative)?;
-        let (ctx_cond, pooled_cond) = self.encode(&params.prompt)?;
+        let (ctx_uncond, pooled_uncond, blocks_uncond) = self.encode(&params.negative)?;
+        let (ctx_cond, pooled_cond, blocks_cond) = self.encode(&params.prompt)?;
+        // The CFG batch needs one sequence length for both
+        // rows: the oracle aligns by repeating the shorter
+        // context to the LCM of the two lengths (exact for
+        // cross-attention; see text::aligned_repeats).
+        let (rep_uncond, rep_cond) = crate::text::aligned_repeats(blocks_uncond, blocks_cond)?;
+        let ctx_uncond = repeat_context(&ctx_uncond, rep_uncond)?;
+        let ctx_cond = repeat_context(&ctx_cond, rep_cond)?;
         let context = Tensor::cat(&[&ctx_uncond, &ctx_cond], 0)?
             .to_dtype(DType::F16)?
             .to_device(dev)?;
@@ -667,4 +741,168 @@ pub fn write_png(img: &GeneratedImage, path: &Path) -> Result<()> {
         detail: e.to_string(),
     })?;
     Ok(())
+}
+
+#[cfg(test)]
+mod battery {
+    //! The long-prompt battery item (D-980): the regression
+    //! gate for the D-976 truncation defect at generation
+    //! level. The CPU half of the gate is the token
+    //! preservation suite in `text::tests`, which runs in
+    //! the default `cargo test`; this item is the GPU half,
+    //! in the Stage 1/2 battery's own shape — it generates
+    //! Prima's keeper prompt verbatim (111 tokens with
+    //! frame; 109 content, 2 encoder blocks) at the battery
+    //! settings and holds the plate to the figuration
+    //! health floor the D-976 audit measured. GPU-gated
+    //! like the rest of the battery: run it with
+    //! `cargo test -p torogao-gen --release -- --ignored`
+    //! and `TOROGAO_GEN_TEST_WEIGHTS` /
+    //! `TOROGAO_GEN_TEST_OUT` set.
+    use super::*;
+
+    /// Prima's keeper prompt, verbatim from the round-tg
+    /// record TG-P1.json (the D-976 specimen).
+    const PRIMA_PROMPT: &str = "solo, 1girl, adult woman, full body, standing, neutral pose, front view, arms at sides, arms slightly away from body, hands visible, legs slightly apart, head to toe in frame, plain white background, simple background, flat cel shading, bold outlines, anime style, silver hair, long wavy hair, hair to waist, red eyes, heart-shaped pupils, soft oval face, calm neutral expression, slight smile, average build, medium breasts, tailored black vest, white blouse, black pencil skirt, black high heels";
+    /// Prima's keeper negative, verbatim from TG-P1.json
+    /// (129 content tokens, 2 encoder blocks).
+    const PRIMA_NEGATIVE: &str = "worst quality, low quality, blurry, deformed hands, extra fingers, missing fingers, extra limbs, missing limbs, crossed arms, hands on hips, hands in pockets, cropped, out of frame, feet cropped, head cropped, watermark, text, logo, emblem, heart logo, heart symbol on clothing, floating hearts, multiple girls, multiple views, character sheet, collage, chibi, child, loli, young, 3d, realistic, photo, flat salmon skin, pink skin patches, unshaded skin blocks, dark background, gradient background, patterned background, blue hair, dark hair, two-tone hair, short hair";
+
+    /// Figuration health floor, min per-channel std.
+    /// Derived from the audit's plate-stats.json, Prima
+    /// plates at the keeper recipe: every collapsed
+    /// (truncated-text) plate measures std_min at most
+    /// 28.57 and every full-text plate at least 29.64 —
+    /// std_min is the one statistic that separates the
+    /// two measured sets, so it carries the floor. The
+    /// margin is thin (~0.5 a side) and specimen-specific
+    /// (this prompt, this seed family); per D-221 the
+    /// numbers support the gate, they do not rule alone.
+    const STD_FLOOR: f64 = 29.0;
+    /// Figuration health floor, mean gradient: catches
+    /// the flat-collapse regime (the round plates measured
+    /// 0.71–1.27). Grad does NOT separate the sets on its
+    /// own (collapsed reaches 2.30, healthy dips to 1.87),
+    /// so this floor sits below every healthy plate
+    /// measured (min 1.87) and only excludes flat plates.
+    const GRAD_FLOOR: f64 = 1.5;
+
+    /// Plate statistics exactly as the audit's
+    /// plate_stats.py: per-channel population std, and
+    /// grad = (mean |d/dw| + mean |d/dh|) / 2 over the RGB
+    /// array.
+    fn plate_stats(img: &GeneratedImage) -> ([f64; 3], f64) {
+        let (w, h) = (img.width as usize, img.height as usize);
+        let px = |x: usize, y: usize, c: usize| f64::from(img.rgb[(y * w + x) * 3 + c]);
+        let mut stds = [0.0; 3];
+        for (c, std) in stds.iter_mut().enumerate() {
+            let n = (w * h) as f64;
+            let mean = (0..h)
+                .flat_map(|y| (0..w).map(move |x| (x, y)))
+                .map(|(x, y)| px(x, y, c))
+                .sum::<f64>()
+                / n;
+            let var = (0..h)
+                .flat_map(|y| (0..w).map(move |x| (x, y)))
+                .map(|(x, y)| (px(x, y, c) - mean).powi(2))
+                .sum::<f64>()
+                / n;
+            *std = var.sqrt();
+        }
+        let mut dx = 0.0;
+        for y in 0..h {
+            for x in 0..w - 1 {
+                for c in 0..3 {
+                    dx += (px(x + 1, y, c) - px(x, y, c)).abs();
+                }
+            }
+        }
+        dx /= (h * (w - 1) * 3) as f64;
+        let mut dy = 0.0;
+        for y in 0..h - 1 {
+            for x in 0..w {
+                for c in 0..3 {
+                    dy += (px(x, y + 1, c) - px(x, y, c)).abs();
+                }
+            }
+        }
+        dy /= ((h - 1) * w * 3) as f64;
+        (stds, (dx + dy) / 2.0)
+    }
+
+    #[test]
+    #[ignore = "GPU battery: needs the A6000 lane and TOROGAO_GEN_TEST_WEIGHTS/OUT"]
+    fn battery_long_prompt_prima_keeper() {
+        let weights = std::env::var("TOROGAO_GEN_TEST_WEIGHTS")
+            .expect("TOROGAO_GEN_TEST_WEIGHTS must name the converted SDXL weights dir");
+        let out_dir = std::env::var("TOROGAO_GEN_TEST_OUT")
+            .expect("TOROGAO_GEN_TEST_OUT must name the record output dir");
+        let out_dir = PathBuf::from(out_dir);
+        std::fs::create_dir_all(&out_dir).expect("create out dir");
+        let device = Device::new_cuda(0).expect("CUDA device 0");
+        let model = SdxlModel::load(Path::new(&weights), &device).expect("load weights");
+        // The record's token facts, from the crate's own
+        // path: content streams and block counts.
+        let prompt_content = model
+            .content_ids(&model.tokenizer, PRIMA_PROMPT)
+            .expect("tokenize prompt");
+        let negative_content = model
+            .content_ids(&model.tokenizer, PRIMA_NEGATIVE)
+            .expect("tokenize negative");
+        let prompt_blocks = crate::text::batch_blocks(&prompt_content, PAD_ID)
+            .expect("batch prompt")
+            .len();
+        let negative_blocks = crate::text::batch_blocks(&negative_content, PAD_ID)
+            .expect("batch negative")
+            .len();
+        assert_eq!(prompt_content.len(), 109);
+        assert_eq!(prompt_blocks, 2);
+        assert_eq!(negative_blocks, 2);
+        // Battery settings (the Stage 2 WAI items' shape):
+        // 832x1216, 30 steps, CFG 6.0; seed is the keeper
+        // seed so the plate is comparable to the round.
+        let params = GenParams {
+            prompt: PRIMA_PROMPT.to_string(),
+            negative: PRIMA_NEGATIVE.to_string(),
+            seed: 91001,
+            steps: 30,
+            cfg: 6.0,
+            width: 832,
+            height: 1216,
+        };
+        let img = model.generate(&params).expect("generate");
+        let png_path = out_dir.join("battery-long-prima.png");
+        write_png(&img, &png_path).expect("write png");
+        let (stds, grad) = plate_stats(&img);
+        let std_min = stds.iter().copied().fold(f64::INFINITY, f64::min);
+        let record = format!(
+            "{{\n  \"run_id\": \"d980-battery-long-prima\",\n  \"prompt_content_tokens\": {},\n  \"prompt_blocks\": {},\n  \"negative_content_tokens\": {},\n  \"negative_blocks\": {},\n  \"seed\": {},\n  \"steps\": {},\n  \"cfg\": {},\n  \"width\": {},\n  \"height\": {},\n  \"noise_sha256\": \"{}\",\n  \"elapsed_ms\": {},\n  \"channel_std\": [{:.3}, {:.3}, {:.3}],\n  \"std_min\": {:.3},\n  \"grad\": {:.4},\n  \"std_floor\": {},\n  \"grad_floor\": {},\n  \"png\": \"battery-long-prima.png\"\n}}\n",
+            prompt_content.len(),
+            prompt_blocks,
+            negative_content.len(),
+            negative_blocks,
+            params.seed,
+            params.steps,
+            params.cfg,
+            params.width,
+            params.height,
+            img.noise_sha256,
+            img.elapsed_ms,
+            stds[0],
+            stds[1],
+            stds[2],
+            std_min,
+            grad,
+            STD_FLOOR,
+            GRAD_FLOOR,
+        );
+        std::fs::write(out_dir.join("battery-long-prima.json"), record).expect("write record");
+        assert!(
+            std_min >= STD_FLOOR && grad >= GRAD_FLOOR,
+            "figuration health floor missed: std_min {std_min:.2} (floor {STD_FLOOR}), \
+             grad {grad:.3} (floor {GRAD_FLOOR}) — the D-976 collapsed Prima plates \
+             measured std_min <= 28.57; a miss here means long-prompt conditioning \
+             regressed"
+        );
+    }
 }

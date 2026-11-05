@@ -30,6 +30,7 @@ pub mod schedule;
 /// only; every torogao-gen module carries the crate deny.
 #[allow(missing_docs)]
 pub mod sd;
+pub mod text;
 
 pub use conditioning::{CnType, ConditioningSpec, ControlSpec, IpSpec};
 pub use error::{GenError, Result};
