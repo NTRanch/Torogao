@@ -1,7 +1,7 @@
 //! Session validation and session-to-recipe compilation,
 //! ported from the D `torogao.cli.sessionbuild` module.
 
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 use crate::audioproc::validate_recipe;
 use crate::criteria::Finding;
@@ -168,6 +168,20 @@ pub fn validate_session(session: &Value) -> Vec<Finding> {
                         TG_SESSION_PHASE,
                         format!("phase {i}: beatHz must be in [0, 100]"),
                     ));
+                }
+                // The phase's beat may glide to an endpoint
+                // across the phase (the measured session
+                // shape: a beat that descends as the block
+                // deepens, instead of stepping at the next
+                // block). Optional; same range law as beatHz.
+                if phase.get("beatHzEnd").is_some() {
+                    let beat_end = num(phase, "beatHzEnd", -1.0);
+                    if !(0.0..=100.0).contains(&beat_end) {
+                        findings.push(finding(
+                            TG_SESSION_PHASE,
+                            format!("phase {i}: beatHzEnd must be in [0, 100]"),
+                        ));
+                    }
                 }
             }
         }
@@ -349,7 +363,11 @@ fn validate_v2(session: &Value, is_v2: bool, findings: &mut Vec<Finding>) {
             let name = jstr(phase, "name");
             let kind = {
                 let raw = jstr(phase, "kind");
-                if raw.is_empty() { "plateau" } else { raw }
+                if raw.is_empty() {
+                    "plateau"
+                } else {
+                    raw
+                }
             };
             if !BLOCK_KINDS.contains(&kind) {
                 findings.push(finding(
@@ -524,6 +542,9 @@ pub fn build_session_recipe(session: &Value) -> Result<Value, String> {
         stem.insert("type".to_string(), json!("binaural"));
         stem.insert("baseHz".to_string(), json!(base_hz));
         stem.insert("beatHz".to_string(), json!(num(phase, "beatHz", 0.0)));
+        if phase.get("beatHzEnd").is_some() {
+            stem.insert("beatHzEnd".to_string(), json!(num(phase, "beatHzEnd", 0.0)));
+        }
         stem.insert("gain".to_string(), json!(carrier_gain));
         stem.insert("startSeconds".to_string(), json!(t));
         stem.insert(
@@ -830,5 +851,35 @@ mod tests {
             .remove("countFrom");
         let codes = error_codes(&doc);
         assert!(codes.iter().any(|c| c == TG_SESSION_KIND), "{codes:?}");
+    }
+
+    #[test]
+    fn phase_beat_glide_compiles_into_the_stem() {
+        let mut doc = fixture();
+        doc["phases"][0]["beatHzEnd"] = json!(2.0);
+        assert_eq!(error_codes(&doc), Vec::<String>::new());
+        let recipe = build_session_recipe(&doc).expect("compiles");
+        let stems = recipe["stems"].as_array().expect("stems");
+        let carrier = stems
+            .iter()
+            .find(|s| s["type"] == json!("binaural"))
+            .expect("a binaural stem");
+        assert_eq!(carrier["beatHzEnd"], json!(2.0));
+        // A phase without the key compiles exactly as before:
+        // no glide key appears on its stem.
+        let plain = build_session_recipe(&fixture()).expect("compiles");
+        let plain_stems = plain["stems"].as_array().expect("stems");
+        assert!(plain_stems
+            .iter()
+            .filter(|s| s["type"] == json!("binaural"))
+            .all(|s| s.get("beatHzEnd").is_none()));
+    }
+
+    #[test]
+    fn phase_beat_glide_out_of_range_fails_typed() {
+        let mut doc = fixture();
+        doc["phases"][0]["beatHzEnd"] = json!(150.0);
+        let codes = error_codes(&doc);
+        assert!(codes.iter().any(|c| c == TG_SESSION_PHASE), "{codes:?}");
     }
 }

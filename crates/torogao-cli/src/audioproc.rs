@@ -2,7 +2,7 @@
 //! BS.1770 loudness and true-peak measurement, rendering —
 //! ported from the D `torogao.audio.proc` module.
 
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 use crate::criteria::Finding;
 use crate::util::{jget, jstr};
@@ -185,6 +185,19 @@ pub fn validate_recipe(recipe: &Value) -> Vec<Finding> {
                         &mut findings,
                     );
                 }
+                // The glide endpoint (frequency-glide stems):
+                // optional; when present it carries the same
+                // range law as the start frequency.
+                if stem.get("freqHzEnd").is_some() {
+                    let f_end = get_d(stem, "freqHzEnd", 0.0);
+                    if f_end <= 0.0 || f_end > 20000.0 {
+                        add(
+                            TG_AUDIO_FREQ,
+                            format!("{prefix}freqHzEnd must be in (0, 20000]"),
+                            &mut findings,
+                        );
+                    }
+                }
             }
             "binaural" => {
                 let f = get_d(stem, "baseHz", 0.0);
@@ -202,6 +215,30 @@ pub fn validate_recipe(recipe: &Value) -> Vec<Finding> {
                         format!("{prefix}beatHz must be in [0, 100]"),
                         &mut findings,
                     );
+                }
+                // Glide endpoints for the carrier pair: the
+                // base and/or the beat may travel across the
+                // stem's window (the measured sweep-program
+                // shape). Same range laws as the start values.
+                if stem.get("baseHzEnd").is_some() {
+                    let f_end = get_d(stem, "baseHzEnd", 0.0);
+                    if f_end <= 0.0 || f_end > 20000.0 {
+                        add(
+                            TG_AUDIO_FREQ,
+                            format!("{prefix}baseHzEnd must be in (0, 20000]"),
+                            &mut findings,
+                        );
+                    }
+                }
+                if stem.get("beatHzEnd").is_some() {
+                    let beat_end = get_d(stem, "beatHzEnd", -1.0);
+                    if !(0.0..=100.0).contains(&beat_end) {
+                        add(
+                            TG_AUDIO_FREQ,
+                            format!("{prefix}beatHzEnd must be in [0, 100]"),
+                            &mut findings,
+                        );
+                    }
                 }
             }
             "noise" => {
@@ -533,6 +570,19 @@ pub struct SubliminalCensus {
     pub band_fraction: f64,
 }
 
+/// The phase, in cycles, of a tone whose frequency glides
+/// linearly from `f0` to `f1` across `dur` seconds of local
+/// stem time: the integral of the frequency line, so the
+/// glide is phase-continuous by construction (no clicks at
+/// any sample). At `f0 == f1` it reduces to the constant
+/// tone's phase. Deterministic in its arguments.
+fn glide_phase_cycles(f0: f64, f1: f64, tau: f64, dur: f64) -> f64 {
+    if dur <= 0.0 {
+        return f0 * tau;
+    }
+    f0 * tau + (f1 - f0) * tau * tau / (2.0 * dur)
+}
+
 /// Renders one non-subliminal stem into its own stereo
 /// buffer. The per-type math is the renderer's standing
 /// math; rendering per stem (instead of straight into the
@@ -550,25 +600,70 @@ fn synthesize_stem(stem: &Value, seed: u64, duration: f64, frames: usize) -> [Ve
     match ty {
         "sine" | "tone" => {
             let f = get_d(stem, "freqHz", 0.0);
-            for n in n0..n1 {
-                let t = n as f64 / rate;
-                let v = gain
-                    * (2.0 * std::f64::consts::PI * f * t).sin()
-                    * envelope_at(stem, t, stem_dur);
-                channels[0][n] += v;
-                channels[1][n] += v;
+            let f_end = get_d(stem, "freqHzEnd", f);
+            if f_end == f {
+                for n in n0..n1 {
+                    let t = n as f64 / rate;
+                    let v = gain
+                        * (2.0 * std::f64::consts::PI * f * t).sin()
+                        * envelope_at(stem, t, stem_dur);
+                    channels[0][n] += v;
+                    channels[1][n] += v;
+                }
+            } else {
+                // Frequency glide: phase is the integral of
+                // the frequency line over local stem time.
+                for n in n0..n1 {
+                    let t = n as f64 / rate;
+                    let tau = t - start;
+                    let v = gain
+                        * (2.0
+                            * std::f64::consts::PI
+                            * glide_phase_cycles(f, f_end, tau, stem_dur))
+                        .sin()
+                        * envelope_at(stem, t, stem_dur);
+                    channels[0][n] += v;
+                    channels[1][n] += v;
+                }
             }
         }
         "binaural" => {
             let base = get_d(stem, "baseHz", 0.0);
             let beat = get_d(stem, "beatHz", 0.0);
+            let base_end = get_d(stem, "baseHzEnd", base);
+            let beat_end = get_d(stem, "beatHzEnd", beat);
             let fl = base - beat / 2.0;
             let fr = base + beat / 2.0;
-            for n in n0..n1 {
-                let t = n as f64 / rate;
-                let e = envelope_at(stem, t, stem_dur);
-                channels[0][n] += gain * (2.0 * std::f64::consts::PI * fl * t).sin() * e;
-                channels[1][n] += gain * (2.0 * std::f64::consts::PI * fr * t).sin() * e;
+            if base_end == base && beat_end == beat {
+                for n in n0..n1 {
+                    let t = n as f64 / rate;
+                    let e = envelope_at(stem, t, stem_dur);
+                    channels[0][n] += gain * (2.0 * std::f64::consts::PI * fl * t).sin() * e;
+                    channels[1][n] += gain * (2.0 * std::f64::consts::PI * fr * t).sin() * e;
+                }
+            } else {
+                // Carrier glide: each ear's frequency travels
+                // its own line (base and beat both glide), and
+                // each ear's phase is that line's integral.
+                let fl_end = base_end - beat_end / 2.0;
+                let fr_end = base_end + beat_end / 2.0;
+                for n in n0..n1 {
+                    let t = n as f64 / rate;
+                    let tau = t - start;
+                    let e = envelope_at(stem, t, stem_dur);
+                    channels[0][n] += gain
+                        * (2.0
+                            * std::f64::consts::PI
+                            * glide_phase_cycles(fl, fl_end, tau, stem_dur))
+                        .sin()
+                        * e;
+                    channels[1][n] += gain
+                        * (2.0
+                            * std::f64::consts::PI
+                            * glide_phase_cycles(fr, fr_end, tau, stem_dur))
+                        .sin()
+                        * e;
+                }
             }
         }
         "noise" => {
@@ -837,5 +932,301 @@ pub fn render_recipe(recipe: &Value, recipe_text: &str, out_dir: &str) -> Render
     RenderResult {
         manifest: manifest_doc,
         error: String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn recipe(stems: Vec<Value>) -> Value {
+        json!({
+            "format": "torogao-audio-recipe/1",
+            "name": "glide-test",
+            "seed": 11,
+            "durationSeconds": 4.0,
+            "targetLufs": -16.0,
+            "truePeakDb": -1.0,
+            "stems": stems,
+        })
+    }
+
+    fn error_codes(recipe: &Value) -> Vec<String> {
+        validate_recipe(recipe)
+            .iter()
+            .filter(|f| f.severity == "error")
+            .map(|f| f.code.to_string())
+            .collect()
+    }
+
+    fn frames(seconds: f64) -> usize {
+        (seconds * AUDIO_SAMPLE_RATE as f64) as usize
+    }
+
+    /// Crude but honest frequency estimate for a pure tone:
+    /// sign changes per second, halved.
+    fn zero_crossing_freq(samples: &[f64]) -> f64 {
+        let mut crossings = 0usize;
+        for pair in samples.windows(2) {
+            if (pair[0] < 0.0) != (pair[1] < 0.0) {
+                crossings += 1;
+            }
+        }
+        crossings as f64 / 2.0 / (samples.len() as f64 / AUDIO_SAMPLE_RATE as f64)
+    }
+
+    // -- validation half ------------------------------------
+
+    #[test]
+    fn glide_stems_validate_clean() {
+        let doc = recipe(vec![
+            json!({"type": "sine", "freqHz": 100.0, "freqHzEnd": 200.0, "gain": 0.4}),
+            json!({"type": "binaural", "baseHz": 200.0, "baseHzEnd": 180.0,
+                   "beatHz": 10.0, "beatHzEnd": 2.0, "gain": 0.4}),
+        ]);
+        assert_eq!(error_codes(&doc), Vec::<String>::new());
+    }
+
+    #[test]
+    fn glide_tone_travels_from_start_to_end_frequency() {
+        let doc = recipe(vec![
+            json!({"type": "sine", "freqHz": 100.0, "freqHzEnd": 200.0, "gain": 0.8}),
+        ]);
+        let (channels, _) = synthesize_mix(&doc, frames(4.0));
+        let ch = &channels[0];
+        let head = &ch[0..frames(0.25)];
+        let tail = &ch[frames(3.75)..frames(4.0)];
+        let head_low =
+            crate::subliminal::band_energy_fraction(head, AUDIO_SAMPLE_RATE, 90.0, 110.0);
+        let tail_high =
+            crate::subliminal::band_energy_fraction(tail, AUDIO_SAMPLE_RATE, 190.0, 210.0);
+        assert!(head_low > 0.9, "head energy near 100 Hz: {head_low}");
+        assert!(tail_high > 0.9, "tail energy near 200 Hz: {tail_high}");
+        let head_high =
+            crate::subliminal::band_energy_fraction(head, AUDIO_SAMPLE_RATE, 190.0, 210.0);
+        assert!(
+            head_high < 0.1,
+            "head must not start at the end frequency: {head_high}"
+        );
+    }
+
+    #[test]
+    fn descending_glide_travels_down() {
+        // The measured sweep-program shape (video 89-zjkL7AFI):
+        // the gliding pair spends its life descending.
+        let doc = recipe(vec![
+            json!({"type": "sine", "freqHz": 250.0, "freqHzEnd": 90.0, "gain": 0.8}),
+        ]);
+        let (channels, _) = synthesize_mix(&doc, frames(4.0));
+        let tail = &channels[0][frames(3.75)..frames(4.0)];
+        let near_end =
+            crate::subliminal::band_energy_fraction(tail, AUDIO_SAMPLE_RATE, 85.0, 105.0);
+        assert!(near_end > 0.9, "tail energy near 90 Hz: {near_end}");
+    }
+
+    #[test]
+    fn binaural_beat_glide_descends() {
+        // The measured session shape (video GU9k6JrAYyc):
+        // carrier anchored, beat descending 10 -> 2 Hz.
+        let doc = recipe(vec![
+            json!({"type": "binaural", "baseHz": 200.0, "beatHz": 10.0,
+                   "beatHzEnd": 2.0, "gain": 0.8}),
+        ]);
+        let (channels, _) = synthesize_mix(&doc, frames(4.0));
+        let head_l = zero_crossing_freq(&channels[0][0..frames(0.5)]);
+        let head_r = zero_crossing_freq(&channels[1][0..frames(0.5)]);
+        assert!(
+            (7.0..=13.0).contains(&(head_r - head_l)),
+            "head beat {}",
+            head_r - head_l
+        );
+        let tail_l = zero_crossing_freq(&channels[0][frames(3.5)..frames(4.0)]);
+        let tail_r = zero_crossing_freq(&channels[1][frames(3.5)..frames(4.0)]);
+        assert!(
+            (0.5..=4.5).contains(&(tail_r - tail_l)),
+            "tail beat {}",
+            tail_r - tail_l
+        );
+    }
+
+    #[test]
+    fn glide_is_phase_continuous() {
+        let doc = recipe(vec![
+            json!({"type": "sine", "freqHz": 100.0, "freqHzEnd": 250.0, "gain": 1.0}),
+        ]);
+        let (channels, _) = synthesize_mix(&doc, frames(4.0));
+        let max_step = channels[0]
+            .windows(2)
+            .map(|pair| (pair[1] - pair[0]).abs())
+            .fold(0.0f64, f64::max);
+        // A phase-continuous sine at <= 250 Hz / 48 kHz steps
+        // at most ~2*pi*250/48000 = 0.0327 per sample; a phase
+        // break would step by up to twice the amplitude.
+        assert!(
+            max_step < 0.04,
+            "max sample step {max_step} betrays a phase break"
+        );
+    }
+
+    #[test]
+    fn glide_render_is_deterministic() {
+        let doc = recipe(vec![
+            json!({"type": "binaural", "baseHz": 220.0, "baseHzEnd": 160.0,
+                   "beatHz": 8.0, "beatHzEnd": 3.0, "gain": 0.5}),
+        ]);
+        let (a, _) = synthesize_mix(&doc, frames(4.0));
+        let (b, _) = synthesize_mix(&doc, frames(4.0));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn constant_tone_keeps_its_standing_values() {
+        // Regression anchor: without glide keys the tone path
+        // is the standing math. 480 Hz at 48 kHz has a
+        // 100-sample period; sample 25 sits at sin(pi/2) = 1.
+        let doc = recipe(vec![json!({"type": "sine", "freqHz": 480.0, "gain": 0.5})]);
+        let (channels, _) = synthesize_mix(&doc, frames(4.0));
+        assert!(channels[0][0].abs() < 1e-12);
+        assert!((channels[0][25] - 0.5).abs() < 1e-9, "{}", channels[0][25]);
+        assert!((channels[0][50]).abs() < 1e-9, "{}", channels[0][50]);
+    }
+
+    // -- adversarial half -----------------------------------
+
+    #[test]
+    fn glide_endpoints_carry_the_range_law() {
+        for (stem, what) in [
+            (
+                json!({"type": "sine", "freqHz": 100.0, "freqHzEnd": 0.0, "gain": 0.4}),
+                "freqHzEnd 0",
+            ),
+            (
+                json!({"type": "sine", "freqHz": 100.0, "freqHzEnd": 20001.0, "gain": 0.4}),
+                "freqHzEnd over",
+            ),
+            (
+                json!({"type": "binaural", "baseHz": 200.0, "baseHzEnd": -5.0, "beatHz": 4.0, "gain": 0.4}),
+                "baseHzEnd negative",
+            ),
+            (
+                json!({"type": "binaural", "baseHz": 200.0, "beatHz": 4.0, "beatHzEnd": 101.0, "gain": 0.4}),
+                "beatHzEnd over",
+            ),
+            (
+                json!({"type": "binaural", "baseHz": 200.0, "beatHz": 4.0, "beatHzEnd": -1.0, "gain": 0.4}),
+                "beatHzEnd negative",
+            ),
+        ] {
+            let doc = recipe(vec![stem]);
+            assert!(
+                error_codes(&doc).iter().any(|c| c == TG_AUDIO_FREQ),
+                "{what} must refuse with TG_AUDIO_FREQ: {:?}",
+                error_codes(&doc)
+            );
+        }
+    }
+
+    #[test]
+    fn glide_stem_stays_inside_its_window() {
+        let doc = recipe(vec![
+            json!({"type": "sine", "freqHz": 100.0, "freqHzEnd": 200.0, "gain": 0.8,
+                   "startSeconds": 2.0, "durationSeconds": 1.0}),
+        ]);
+        let (channels, _) = synthesize_mix(&doc, frames(4.0));
+        assert!(channels[0][0..frames(2.0)].iter().all(|&s| s == 0.0));
+        assert!(channels[0][frames(3.0)..].iter().all(|&s| s == 0.0));
+        assert!(channels[0][frames(2.0)..frames(3.0)]
+            .iter()
+            .any(|&s| s != 0.0));
+    }
+
+    // -- the layer stack: edit / add / remove ---------------
+
+    fn base_recipe() -> Value {
+        recipe(vec![
+            json!({"type": "noise", "cutoffHz": 800.0, "gain": 0.3}),
+            json!({"type": "binaural", "baseHz": 200.0, "beatHz": 6.0, "gain": 0.4}),
+        ])
+    }
+
+    fn glide_layer(freq_end: f64) -> Value {
+        json!({"type": "sine", "freqHz": 250.0, "freqHzEnd": freq_end, "gain": 0.35})
+    }
+
+    #[test]
+    fn adding_a_layer_changes_only_that_layer() {
+        let base = base_recipe();
+        let mut plus = base_recipe();
+        plus["stems"]
+            .as_array_mut()
+            .expect("stems")
+            .push(glide_layer(90.0));
+        let solo = recipe(vec![glide_layer(90.0)]);
+        let n = frames(4.0);
+        let (mix_base, _) = synthesize_mix(&base, n);
+        let (mix_plus, _) = synthesize_mix(&plus, n);
+        let (mix_solo, _) = synthesize_mix(&solo, n);
+        let mut max_dev = 0.0f64;
+        for ch in 0..2 {
+            for i in 0..n {
+                let dev = ((mix_plus[ch][i] - mix_base[ch][i]) - mix_solo[ch][i]).abs();
+                max_dev = max_dev.max(dev);
+            }
+        }
+        assert!(max_dev < 1e-9, "layer contribution deviates by {max_dev}");
+    }
+
+    #[test]
+    fn editing_the_layer_leaves_the_other_layers_untouched() {
+        let mut plus_a = base_recipe();
+        plus_a["stems"]
+            .as_array_mut()
+            .expect("stems")
+            .push(glide_layer(90.0));
+        let mut plus_b = base_recipe();
+        plus_b["stems"]
+            .as_array_mut()
+            .expect("stems")
+            .push(glide_layer(140.0));
+        let solo_a = recipe(vec![glide_layer(90.0)]);
+        let solo_b = recipe(vec![glide_layer(140.0)]);
+        let n = frames(4.0);
+        let (mix_a, _) = synthesize_mix(&plus_a, n);
+        let (mix_b, _) = synthesize_mix(&plus_b, n);
+        let (sa, _) = synthesize_mix(&solo_a, n);
+        let (sb, _) = synthesize_mix(&solo_b, n);
+        assert_ne!(sa, sb, "the edit must change the layer itself");
+        let mut max_dev = 0.0f64;
+        for ch in 0..2 {
+            for i in 0..n {
+                let rest_a = mix_a[ch][i] - sa[ch][i];
+                let rest_b = mix_b[ch][i] - sb[ch][i];
+                max_dev = max_dev.max((rest_a - rest_b).abs());
+            }
+        }
+        assert!(max_dev < 1e-9, "the untouched layers moved by {max_dev}");
+    }
+
+    #[test]
+    fn removing_the_layer_restores_the_base_exactly() {
+        let base = base_recipe();
+        let text = torogao_format::jsonfmt::to_d_json(&base);
+        let root = std::env::temp_dir().join(format!("torogao-glide-{}", std::process::id()));
+        let a = root.join("a");
+        let b = root.join("b");
+        std::fs::create_dir_all(&a).expect("dir a");
+        std::fs::create_dir_all(&b).expect("dir b");
+        let ra = render_recipe(&base, &text, a.to_str().expect("utf8"));
+        let rb = render_recipe(&base, &text, b.to_str().expect("utf8"));
+        assert!(ra.error.is_empty(), "{}", ra.error);
+        assert!(rb.error.is_empty(), "{}", rb.error);
+        let wav_a = std::fs::read(a.join("glide-test.wav")).expect("wav a");
+        let wav_b = std::fs::read(b.join("glide-test.wav")).expect("wav b");
+        assert_eq!(
+            wav_a, wav_b,
+            "base renders byte-identically with the layer absent"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
