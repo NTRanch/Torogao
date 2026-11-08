@@ -1,0 +1,15 @@
+[package]
+name = "torogao-coin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Clean-room coin-dynamic systems for the Torogao remake programme: the timed amplitude swing, three-stat preparation economy, and level-scaled resistance measured from RJ318915 (COIN-DYNAMIC.md), rebuilt as Torogao data + systems. No studied-game assets, text, or code."
+
+[dependencies]
+ron = "0.8"
+serde = { workspace = true }
+
+[[bin]]
+name = "coin-smoke"
+path = "src/main.rs"

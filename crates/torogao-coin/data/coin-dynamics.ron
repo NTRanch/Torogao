@@ -1,0 +1,91 @@
+// torogao-coin-dynamics/1 — measured tuning constants for the coin
+// dynamic, transcribed from the clean-room RE record
+// (~/workspace/jam-entries-20261104/COIN-DYNAMIC.md §5; extraction:
+// Azoth's ikdasm report, primo ~/grok-reports/
+// magic-coin-constants-20261107-unblocked.md, gate-verified by an
+// independent byte-identical IL export, 2026-11-08).
+//
+// Every value below is a static-IL measurement, not a runtime
+// calibration. Fields whose source semantics are not established
+// carry an explicit note in the schema docs (dynamics.rs).
+(
+    // Gauge maxima by level index 0..=4 (UICtl/SliderCtrl::.ctor).
+    // The source readme speaks of 6 levels; a sixth maximum is
+    // UNKNOWN and deliberately absent — indexing past this table
+    // is a typed refusal, never an extrapolation.
+    gauge_maxima: [0.5, 4.8, 15.0, 30.0, 70.0],
+    // Attempt timer: starts at 1.0, decremented by dt / 20.0 per
+    // frame (GameMode.MainGameMode::run IL_20dd); failure at <= 0.
+    // Derived nominal full-range window: 20 s. No per-level divisor
+    // exists in the source.
+    timer_start: 1.0,
+    timer_divisor: 20.0,
+    // Attempt setup wait (seconds) before the timer runs
+    // (run IL_1fb1). Setup, not attempt duration.
+    setup_wait_seconds: 2.0,
+    // Swing accumulation (goenScr::Update): on a direction-sign
+    // crossing of the pointer's relative x displacement, bank
+    // (max displacement since last crossing)^2 * swing_gain.
+    swing_gain: 1.5,
+    // Conditional bonus: multiplier applied to a banked stroke
+    // whose max displacement reached bonus_threshold
+    // (field SaveData::ashinamesaseConv; its in-fiction meaning
+    // is not established — the literal rule is what is measured).
+    bonus_threshold: 8.0,
+    bonus_multiplier: 1.15,
+    // Pointer-to-animation scale (run IL_20c1). Presentation only;
+    // NOT a calibrated world-distance scale.
+    pointer_animation_scale: 1.2,
+    // Preparation economy (gmpara::addStatus): each action's base
+    // tuple is scaled by prep_scale and by the per-stat saved gain
+    // (status_up, default 1.0 each) before application.
+    prep_scale: 0.35,
+    // Second, message-driven stat path (UICtl::showMessage):
+    // parsed values are divided by message_divisor, then scaled
+    // by message_scale.
+    message_divisor: 100.0,
+    message_scale: 0.65,
+    // Gauge composition is a product: accumulated swing points *
+    // (hp + 1) * (mp + 1) * (sp + 1) * gauge_coefficient
+    // (run IL_20f3-2137; offsets +1 per stat measured).
+    gauge_coefficient: 1.0,
+    // Preparation actions by switch index: ((hp, mp, sp), minutes).
+    // Field order hp/mp/sp is the assembly's; the mapping to the
+    // record's Fatigue / Spirit-Submission / Arousal labels is
+    // UNVERIFIED (COIN-DYNAMIC.md §5) and no label is asserted here.
+    prep_actions: [
+        ((0.15, 0.0, 0.0), 20),
+        ((0.0, 0.0, 0.1), 20),
+        ((0.1, 0.05, 0.0), 15),
+        ((0.0, 0.05, 0.02), 20),
+        ((0.0, 0.02, 0.0), 15),
+        ((0.0, 0.07, 0.0), 20),
+        ((0.05, 0.12, 0.08), 20),
+        ((0.0, 0.08, 0.11), 25),
+        ((0.1, 0.12, 0.12), 35),
+        ((0.05, 0.09, 0.02), 20),
+        ((0.0, 0.14, 0.08), 20),
+        ((0.0, 0.08, 0.0), 30),
+        ((0.0, 0.05, 0.0), 20),
+        ((0.2, 0.02, 0.16), 20),
+        ((0.0, 0.3, 0.0), 20),
+    ],
+    // Direct tuple call sites in MainGameMode::run (via
+    // statusUIScr::addValue). Action labels UNKNOWN; kept as data
+    // so a later study rung can bind them.
+    direct_tuples: [
+        (0.08, 0.08, 0.18),
+        (0.08, 0.08, 0.18),
+        (0.04, 0.08, 0.16),
+        (0.0, 0.0, 0.08),
+        (0.0, 0.0, 0.08),
+        (0.0, 0.05, 0.0),
+        (0.0, 0.05, 0.0),
+        (0.0, 0.15, 0.0),
+        (0.0, 0.2, 0.0),
+    ],
+    // Day frame: sessions run against a leaving time of 18:00;
+    // saving is possible only at the end of the day
+    // (COIN-DYNAMIC.md §2.5). Clock unit: minutes since midnight.
+    leaving_minute: 1080,
+)
