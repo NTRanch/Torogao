@@ -4356,6 +4356,14 @@ name = "torogao-jam-laws"
 version = "0.4.0"
 
 [[package]]
+name = "torogao-modapp"
+version = "0.4.0"
+dependencies = [
+ "ron",
+ "serde",
+]
+
+[[package]]
 name = "torogao-motion-clip"
 version = "0.4.0"
 dependencies = [

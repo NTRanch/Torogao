@@ -1,0 +1,239 @@
+// torogao-modapp-dynamics/1 — measured tables for the Modification
+// App remake systems, transcribed from the clean-room RE record
+// (~/workspace/nsfw-remakes-20261108/games/modification-app-dynamics.md;
+// evidence: primo ~/.local/share/pax/modapp-20261108/ — plaintext PCK
+// tables Story_StoryFlow.json / Features_MiaStates.json /
+// Features_Items_Items.json, and 112 GDScript sources decompiled from
+// the shipped bytecode with GDRE Tools v2.7.4, 2026-11-08).
+//
+// Every value below is a measurement from the 0.12.3 build (Godot
+// 4.7.1), not a design choice. Fields whose source semantics are not
+// established are called out in the spec's REVIEW register and are
+// absent here rather than invented. Node/state/item identifiers are
+// structural table keys from the measured data; all shipped text in
+// the remake is estate-original placeholder data authored at the
+// Owner-gated content pass — none of the original's text is carried.
+(
+    // The day is exactly four slots (TimeOfDay Morning/Afternoon/
+    // Evening/Night = 0..=3). AddTime wraps slot 3 into day+1 slot 0;
+    // a completed node sets time 0 of the next day.
+    slots_per_day: 4,
+    // Minigame difficulty at or above this value is a teleport
+    // (express) run. Constants.TeleportDifficulty.
+    teleport_difficulty: 800,
+    // Quick-travel price: 20 TP per node on the route (PathsMap).
+    // NOTE: no deduction for this price exists in the 0.12.3 sources
+    // (spec REVIEW #2); the crate enforces affordability only.
+    teleport_price_per_node: 20,
+    // First-view bonus for a new event (AddPointsNewEvent default).
+    new_event_points: 100,
+    // The store unlocks once this many "level >= 4 node-enter"
+    // events have been seen (TIGHTLY_STORE create condition).
+    store_unlock_min_high_events: 2,
+    store_unlock_min_level_digit: 4,
+    // Retroactive grant at store unlock: seen nodes * this value
+    // (TIGHTLY_STORE.UnlockPreviousPoints).
+    store_catchup_per_seen_node: 105,
+    // Points assigned by the cafe-unlock branch (_Other dialogue).
+    cafe_unlock_points: 50,
+    // Subject room per time slot (RoomIds Kitchen, LivingRoom,
+    // Bathroom, MiaBedroom). MiaStates Default SCHEDULE, cross-
+    // verified against GameData's default schedule.
+    schedule: [5, 4, 2, 1],
+    // Named flags -> the SeenEvents string that satisfies them
+    // (Constants.Flags; event names are "<Resource>-<title>").
+    flags: {
+        "ASS_UNLOCKED": "AssExpansion-1-enter",
+        "SHRINK_UNLOCKED": "Shrink-1-enter",
+        "STORE": "Default-tightlyStoreUnlock",
+        "CAFE": "cafeUnlock",
+    },
+    // The story graph (StoryFlow). time_gate is the single day-slot
+    // at which the node may start (None = ungated); req_flag names a
+    // flags entry that must be seen or the node is hidden from the
+    // menu; minigame is (class, level); branch_add_time_total is the
+    // file-wide count of AddTime calls across all branches of the
+    // node's dialogue (one playthrough takes one branch).
+    nodes: [
+        (id: "INTRO", path: "", time_gate: None, req_flag: None, minigame_class: None, minigame_level: 0, children: ["Default"], branch_add_time_total: 15),
+        (id: "Default", path: "", time_gate: None, req_flag: None, minigame_class: Some("Setup"), minigame_level: 0, children: ["AssExpansion-1", "BreastExpansion-1", "MindControl-1"], branch_add_time_total: 0),
+        (id: "AssExpansion-1", path: "Ass Expansion", time_gate: Some(0), req_flag: Some("ASS_UNLOCKED"), minigame_class: Some("AE"), minigame_level: 1, children: ["AssExpansion-2"], branch_add_time_total: 2),
+        (id: "AssExpansion-2", path: "Ass Expansion", time_gate: Some(0), req_flag: None, minigame_class: Some("AE"), minigame_level: 2, children: ["AssExpansion-3"], branch_add_time_total: 4),
+        (id: "AssExpansion-3", path: "Ass Expansion", time_gate: Some(0), req_flag: None, minigame_class: Some("AE"), minigame_level: 3, children: ["AssExpansion-4"], branch_add_time_total: 6),
+        (id: "AssExpansion-4", path: "Ass Expansion", time_gate: Some(0), req_flag: None, minigame_class: Some("AE"), minigame_level: 4, children: [], branch_add_time_total: 4),
+        (id: "BreastExpansion-1", path: "Breast Expansion", time_gate: Some(0), req_flag: None, minigame_class: Some("BE"), minigame_level: 1, children: ["BreastExpansion-2", "Growth-1", "Shrink-1"], branch_add_time_total: 3),
+        (id: "BreastExpansion-2", path: "Breast Expansion", time_gate: Some(0), req_flag: None, minigame_class: Some("BE"), minigame_level: 2, children: ["BreastExpansion-3"], branch_add_time_total: 2),
+        (id: "BreastExpansion-3", path: "Breast Expansion", time_gate: Some(0), req_flag: None, minigame_class: Some("BE"), minigame_level: 3, children: ["BreastExpansion-4", "Milk-1"], branch_add_time_total: 2),
+        (id: "BreastExpansion-4", path: "Breast Expansion", time_gate: Some(0), req_flag: None, minigame_class: Some("BE"), minigame_level: 4, children: ["Bimbo-1"], branch_add_time_total: 2),
+        (id: "MindControl-1", path: "Mind Control", time_gate: Some(1), req_flag: None, minigame_class: Some("MindControl"), minigame_level: 1, children: ["MindControl-2"], branch_add_time_total: 2),
+        (id: "MindControl-2", path: "Mind Control", time_gate: Some(1), req_flag: None, minigame_class: Some("MindControl"), minigame_level: 2, children: ["MindControl-3", "Pet-1"], branch_add_time_total: 4),
+        (id: "MindControl-3", path: "Mind Control", time_gate: Some(1), req_flag: None, minigame_class: Some("MindControl"), minigame_level: 3, children: ["Goth-1", "MindControl-4"], branch_add_time_total: 4),
+        (id: "MindControl-4", path: "Mind Control", time_gate: Some(1), req_flag: None, minigame_class: Some("MindControl"), minigame_level: 4, children: [], branch_add_time_total: 5),
+        (id: "Bimbo-1", path: "Bimbo", time_gate: Some(1), req_flag: None, minigame_class: Some("Bimbo"), minigame_level: 1, children: ["Bimbo-2"], branch_add_time_total: 2),
+        (id: "Bimbo-2", path: "Bimbo", time_gate: Some(1), req_flag: None, minigame_class: Some("Bimbo"), minigame_level: 2, children: ["Bimbo-3"], branch_add_time_total: 4),
+        (id: "Bimbo-3", path: "Bimbo", time_gate: Some(1), req_flag: None, minigame_class: Some("Bimbo"), minigame_level: 3, children: ["Bimbo-4"], branch_add_time_total: 2),
+        (id: "Bimbo-4", path: "Bimbo", time_gate: Some(1), req_flag: None, minigame_class: Some("Bimbo"), minigame_level: 4, children: [], branch_add_time_total: 2),
+        (id: "Goth-1", path: "Goth", time_gate: Some(0), req_flag: None, minigame_class: Some("Goth"), minigame_level: 1, children: ["Goth-2"], branch_add_time_total: 2),
+        (id: "Goth-2", path: "Goth", time_gate: Some(0), req_flag: None, minigame_class: Some("Goth"), minigame_level: 2, children: ["Goth-3"], branch_add_time_total: 6),
+        (id: "Goth-3", path: "Goth", time_gate: Some(0), req_flag: None, minigame_class: Some("Goth"), minigame_level: 3, children: [], branch_add_time_total: 4),
+        (id: "Growth-1", path: "Growth", time_gate: Some(1), req_flag: None, minigame_class: Some("Growth"), minigame_level: 1, children: ["Growth-2"], branch_add_time_total: 5),
+        (id: "Growth-2", path: "Growth", time_gate: Some(1), req_flag: None, minigame_class: Some("Growth"), minigame_level: 2, children: ["Growth-3"], branch_add_time_total: 2),
+        (id: "Growth-3", path: "Growth", time_gate: Some(1), req_flag: None, minigame_class: Some("Growth"), minigame_level: 3, children: ["Growth-4"], branch_add_time_total: 2),
+        (id: "Growth-4", path: "Growth", time_gate: Some(1), req_flag: None, minigame_class: Some("Growth"), minigame_level: 4, children: ["Growth-5"], branch_add_time_total: 3),
+        (id: "Growth-5", path: "Growth", time_gate: Some(1), req_flag: None, minigame_class: Some("Growth"), minigame_level: 5, children: [], branch_add_time_total: 2),
+        (id: "Milk-1", path: "Milk", time_gate: Some(1), req_flag: None, minigame_class: Some("Milk"), minigame_level: 1, children: ["Milk-2"], branch_add_time_total: 2),
+        (id: "Milk-2", path: "Milk", time_gate: Some(1), req_flag: None, minigame_class: Some("Milk"), minigame_level: 2, children: ["Milk-3"], branch_add_time_total: 6),
+        (id: "Milk-3", path: "Milk", time_gate: Some(1), req_flag: None, minigame_class: Some("Milk"), minigame_level: 3, children: ["Milk-4"], branch_add_time_total: 5),
+        (id: "Milk-4", path: "Milk", time_gate: Some(1), req_flag: None, minigame_class: Some("Milk"), minigame_level: 4, children: [], branch_add_time_total: 5),
+        (id: "Pet-1", path: "Pet", time_gate: Some(0), req_flag: None, minigame_class: Some("Pet"), minigame_level: 1, children: ["Pet-2"], branch_add_time_total: 2),
+        (id: "Pet-2", path: "Pet", time_gate: Some(0), req_flag: None, minigame_class: Some("Pet"), minigame_level: 2, children: ["Pet-3"], branch_add_time_total: 4),
+        (id: "Pet-3", path: "Pet", time_gate: Some(0), req_flag: None, minigame_class: Some("Pet"), minigame_level: 3, children: ["Pet-4"], branch_add_time_total: 2),
+        (id: "Pet-4", path: "Pet", time_gate: Some(0), req_flag: None, minigame_class: Some("Pet"), minigame_level: 4, children: [], branch_add_time_total: 2),
+        (id: "Shrink-1", path: "Shrink", time_gate: Some(1), req_flag: Some("SHRINK_UNLOCKED"), minigame_class: Some("Shrink"), minigame_level: 1, children: ["Shrink-2"], branch_add_time_total: 2),
+        (id: "Shrink-2", path: "Shrink", time_gate: Some(1), req_flag: None, minigame_class: Some("Shrink"), minigame_level: 2, children: ["Shrink-3"], branch_add_time_total: 2),
+        (id: "Shrink-3", path: "Shrink", time_gate: Some(1), req_flag: None, minigame_class: Some("Shrink"), minigame_level: 3, children: ["Shrink-4"], branch_add_time_total: 4),
+        (id: "Shrink-4", path: "Shrink", time_gate: Some(1), req_flag: None, minigame_class: Some("Shrink"), minigame_level: 4, children: ["Shrink-5"], branch_add_time_total: 2),
+        (id: "Shrink-5", path: "Shrink", time_gate: Some(1), req_flag: None, minigame_class: Some("Shrink"), minigame_level: 5, children: [], branch_add_time_total: 2),
+    ],
+    // The state table (MiaStates). The Default row is complete;
+    // every other row is a delta merged over Default at resolve
+    // time (DialogueAction.GetMiaState). None = key not specified
+    // by the node, inheriting Default. MindControl rows are empty
+    // deltas in the source: no visual change.
+    states: [
+        (id: "Default", body: Some("DEFAULT"), face: Some("DEFAULT;DEFAULT;SMILE"), extras: Some(""), position: Some((0.0, 0.0)), scale: Some(1.0), face_position: Some((position: (-10.125, -482.343), rotation: 0.0, scale: 0.4))),
+        (id: "AssExpansion-1", body: Some("AE1"), face: None, extras: None, position: None, scale: None, face_position: None),
+        (id: "AssExpansion-2", body: Some("AE2"), face: None, extras: None, position: None, scale: None, face_position: None),
+        (id: "AssExpansion-3", body: Some("AE3"), face: None, extras: None, position: None, scale: None, face_position: None),
+        (id: "AssExpansion-4", body: Some("AE4"), face: None, extras: None, position: None, scale: None, face_position: None),
+        (id: "BreastExpansion-1", body: Some("BE1"), face: None, extras: None, position: None, scale: None, face_position: None),
+        (id: "BreastExpansion-2", body: Some("BE2"), face: None, extras: None, position: None, scale: None, face_position: None),
+        (id: "BreastExpansion-3", body: Some("BE2"), face: None, extras: None, position: None, scale: None, face_position: None),
+        (id: "BreastExpansion-4", body: Some("BE3"), face: None, extras: None, position: None, scale: None, face_position: None),
+        (id: "Bimbo-1", body: Some("BIMBO1"), face: None, extras: None, position: None, scale: None, face_position: None),
+        (id: "Bimbo-2", body: Some("BIMBO2"), face: Some("SQUINT;CONFUSED;BIMBO_SMILE"), extras: None, position: None, scale: None, face_position: None),
+        (id: "Bimbo-3", body: Some("BIMBO2"), face: Some("SQUINT;CONFUSED;BIMBO_SMILE"), extras: None, position: None, scale: None, face_position: None),
+        (id: "Bimbo-4", body: Some("BIMBO2"), face: Some("SQUINT;CONFUSED;BIMBO_SMILE"), extras: None, position: None, scale: None, face_position: None),
+        (id: "Goth-1", body: Some("GOTH1"), face: None, extras: None, position: None, scale: None, face_position: None),
+        (id: "Goth-2", body: Some("GOTH2"), face: Some("GOTH_DEFAULT;SERIOUS2;GOTH_DEFAULT"), extras: Some("GOTH_BANGS"), position: None, scale: None, face_position: None),
+        (id: "Goth-3", body: Some("GOTH3"), face: Some("GOTH_DEFAULT;SERIOUS2;GOTH_DEFAULT"), extras: Some("GOTH_BANGS"), position: None, scale: None, face_position: None),
+        (id: "Growth-1", body: None, face: None, extras: None, position: Some((0.0, -5.0)), scale: None, face_position: None),
+        (id: "Growth-2", body: Some("GROWTH2"), face: None, extras: None, position: Some((0.0, -5.0)), scale: Some(1.02), face_position: None),
+        (id: "Growth-3", body: Some("GROWTH3"), face: None, extras: None, position: Some((0.0, -13.0)), scale: Some(1.05), face_position: None),
+        (id: "Growth-4", body: Some("GROWTH3"), face: None, extras: None, position: Some((0.0, -26.0)), scale: Some(1.075), face_position: None),
+        (id: "Growth-5", body: Some("GROWTH5"), face: None, extras: None, position: Some((0.0, -38.0)), scale: Some(1.1), face_position: None),
+        (id: "Milk-1", body: Some("MILK1"), face: None, extras: None, position: None, scale: None, face_position: None),
+        (id: "Milk-2", body: Some("MILK2"), face: None, extras: None, position: None, scale: None, face_position: None),
+        (id: "Milk-3", body: Some("MILK3"), face: None, extras: None, position: None, scale: None, face_position: None),
+        (id: "Milk-4", body: Some("MILK4"), face: None, extras: None, position: None, scale: None, face_position: None),
+        (id: "MindControl-1", body: None, face: None, extras: None, position: None, scale: None, face_position: None),
+        (id: "MindControl-2", body: None, face: None, extras: None, position: None, scale: None, face_position: None),
+        (id: "MindControl-3", body: None, face: None, extras: None, position: None, scale: None, face_position: None),
+        (id: "MindControl-4", body: None, face: None, extras: None, position: None, scale: None, face_position: None),
+        (id: "Pet-1", body: Some("PET1"), face: None, extras: Some("PET_TAIL"), position: None, scale: None, face_position: None),
+        (id: "Pet-2", body: Some("PET2"), face: None, extras: Some("PET_TAIL"), position: None, scale: None, face_position: None),
+        (id: "Pet-3", body: Some("PET3"), face: None, extras: Some("PET_TAIL"), position: None, scale: None, face_position: None),
+        (id: "Pet-4", body: Some("PET3"), face: None, extras: Some("PET_TAIL"), position: None, scale: None, face_position: None),
+        (id: "Shrink-1", body: Some("BE1"), face: None, extras: None, position: Some((0.0, 13.684)), scale: Some(0.985), face_position: None),
+        (id: "Shrink-2", body: Some("SHRINK2"), face: None, extras: None, position: Some((2.86, 37.798)), scale: Some(0.945), face_position: None),
+        (id: "Shrink-3", body: Some("SHRINK3"), face: None, extras: None, position: Some((5.526, 94.874)), scale: Some(0.96), face_position: Some((position: (-10.125, -483.188), rotation: -0.2, scale: 0.4))),
+        (id: "Shrink-4", body: Some("SHRINK4"), face: None, extras: None, position: Some((8.27, 121.809)), scale: Some(0.95), face_position: Some((position: (-5.261, -477.928), rotation: 1.0, scale: 0.4))),
+        (id: "Shrink-5", body: Some("SHRINK5"), face: None, extras: None, position: Some((10.473, 149.359)), scale: Some(0.93), face_position: Some((position: (-4.601, -477.598), rotation: 1.5, scale: 0.4))),
+    ],
+    // The store table (Items). Names and descriptions are original
+    // text and are deliberately absent; ids, prices, and rule flags
+    // are the measured mechanics.
+    items: [
+        (id: "bat-plush", price: 600, unique: true, consumable: true, use_immediately: false, gift: true),
+        (id: "console", price: 150, unique: true, consumable: false, use_immediately: true, gift: false),
+        (id: "name-changer", price: 50, unique: false, consumable: true, use_immediately: true, gift: false),
+        (id: "path-tp", price: 500, unique: true, consumable: false, use_immediately: false, gift: false),
+    ],
+    // Minigame win rewards in TP: base + span * performance_ratio,
+    // ratio in [0, 1] supplied per class semantics (spec section 7).
+    // Setup pays nothing and is absent. Grants are suppressed on
+    // teleport runs and while the store is locked.
+    rewards: [
+        (class: "AE", base: 50, span: 50),
+        (class: "BE", base: 50, span: 50),
+        (class: "Bimbo", base: 50, span: 50),
+        (class: "Goth", base: 50, span: 50),
+        (class: "Growth", base: 75, span: 25),
+        (class: "Milk", base: 50, span: 50),
+        (class: "MindControl", base: 100, span: 0),
+        (class: "Pet", base: 50, span: 50),
+        (class: "Shrink", base: 50, span: 50),
+        (class: "Vampire", base: 66, span: 0),
+    ],
+    // Console-game payouts (flat TP on win, by difficulty tier).
+    console_payouts: [
+        (game: "minesweeper", tier: "easy", payout: 125, setup: [9.0, 10.0]),
+        (game: "minesweeper", tier: "normal", payout: 250, setup: [10.0, 14.0]),
+        (game: "minesweeper", tier: "hard", payout: 400, setup: [11.0, 17.0]),
+        (game: "sliding-blocks", tier: "easy", payout: 50, setup: [3.0]),
+        (game: "sliding-blocks", tier: "normal", payout: 250, setup: [4.0]),
+        (game: "sliding-blocks", tier: "hard", payout: 500, setup: [5.0]),
+    ],
+    // Per-class minigame tuning (spec section 8). A row carries the
+    // values its _Setup assigns at that level; level 0 is the
+    // class's declared defaults row and merges under every other
+    // row at lookup. teleport rows are the difficulty-800 variants.
+    // The Growth teleport row is unreachable in 0.12.3 (its _Setup
+    // forces difficulty 1 after parsing); it is carried as measured
+    // data, flagged here and in the spec.
+    tuning: [
+        (class: "Setup", level: 0, teleport: false, params: {"cycle": 6.0, "margin": 0.2, "goal_step": 0.2, "goal_target": 1.0, "speed_start": 1.0, "speed_step": 0.3, "timer_rate": 3.0, "start_wait": 0.25}),
+        (class: "AE", level: 1, teleport: false, params: {"spawn_min": 2.0, "spawn_max": 3.0, "required": 6.0, "bomb_pct": 0.0, "total_time": 80.0}),
+        (class: "AE", level: 2, teleport: false, params: {"spawn_min": 1.0, "spawn_max": 2.0, "required": 7.0, "bomb_pct": 25.0, "total_time": 100.0}),
+        (class: "AE", level: 3, teleport: false, params: {"spawn_min": 0.75, "spawn_max": 1.5, "required": 8.0, "bomb_pct": 50.0, "total_time": 90.0}),
+        (class: "AE", level: 4, teleport: false, params: {"spawn_min": 0.6, "spawn_max": 1.0, "required": 10.0, "bomb_pct": 50.0, "total_time": 90.0}),
+        (class: "AE", level: 0, teleport: true, params: {"spawn_min": 0.4, "spawn_max": 0.8, "required": 12.0, "bomb_pct": 50.0, "total_time": 80.0}),
+        (class: "BE", level: 0, teleport: false, params: {"speed_min": 0.4, "speed_max": 0.8, "sequence": 3.0, "rounds": 3.0}),
+        (class: "BE", level: 1, teleport: false, params: {"speed_min": 0.4, "speed_max": 0.8, "sequence": 3.0, "rounds": 3.0}),
+        (class: "BE", level: 2, teleport: false, params: {"speed_min": 0.1, "speed_max": 0.6, "sequence": 4.0, "rounds": 3.0}),
+        (class: "BE", level: 3, teleport: false, params: {"speed_min": 0.1, "speed_max": 0.6, "sequence": 4.0, "rounds": 3.0}),
+        (class: "BE", level: 4, teleport: false, params: {"speed_min": 0.0, "speed_max": 0.3, "sequence": 4.0, "rounds": 5.0}),
+        (class: "BE", level: 0, teleport: true, params: {"speed_min": 0.0, "speed_max": 0.2, "sequence": 4.0, "rounds": 5.0}),
+        (class: "Bimbo", level: 0, teleport: false, params: {"rows": 12.0, "columns": 4.0, "max_shoot": 12.0, "time_to_shoot": 3.0, "max_failed": 3.0, "qty_to_shoot": 5.0, "cooldown": 0.2}),
+        (class: "Bimbo", level: 1, teleport: false, params: {"rows": 9.0, "columns": 3.0, "max_shoot": 3.0}),
+        (class: "Bimbo", level: 2, teleport: false, params: {"max_shoot": 6.0, "time_to_shoot": 5.0}),
+        (class: "Bimbo", level: 3, teleport: false, params: {"max_shoot": 8.0, "time_to_shoot": 4.0}),
+        (class: "Bimbo", level: 4, teleport: false, params: {"time_to_shoot": 4.0}),
+        (class: "Bimbo", level: 0, teleport: true, params: {"rows": 16.0, "time_to_shoot": 4.0}),
+        (class: "Goth", level: 1, teleport: false, params: {"wins": 5.0, "time": 30.0, "candle_min": 7.0, "candle_max": 8.0, "marker_time": 0.3, "char_timer": 0.3}),
+        (class: "Goth", level: 2, teleport: false, params: {"wins": 7.0, "time": 20.0, "candle_min": 5.0, "candle_max": 7.0, "marker_time": 0.2, "char_timer": 0.2}),
+        (class: "Goth", level: 3, teleport: false, params: {"wins": 7.0, "time": 20.0, "candle_min": 4.0, "candle_max": 7.0, "marker_time": 0.2, "char_timer": 0.1}),
+        (class: "Goth", level: 0, teleport: true, params: {"wins": 10.0, "time": 20.0, "candle_min": 3.0, "candle_max": 6.0, "marker_time": 0.2, "char_timer": 0.1}),
+        (class: "Growth", level: 0, teleport: false, params: {"speed_scale": 1.2, "quantity_to_top": 3.0, "max_spawn": 3.0, "max_deaths": 3.0, "breakable": 10.0, "time_between_falls": 1.0}),
+        (class: "Growth", level: 1, teleport: false, params: {"quantity_to_top": 3.0, "breakable": 0.0, "max_spawn": 1.0}),
+        (class: "Growth", level: 2, teleport: false, params: {"speed_scale": 1.2, "quantity_to_top": 3.0, "time_between_falls": 0.8, "breakable": 3.0, "max_spawn": 1.0}),
+        (class: "Growth", level: 3, teleport: false, params: {"speed_scale": 1.3, "quantity_to_top": 3.0, "time_between_falls": 0.9, "breakable": 4.0, "max_spawn": 2.0}),
+        (class: "Growth", level: 4, teleport: false, params: {"speed_scale": 1.4, "quantity_to_top": 3.0, "time_between_falls": 0.9, "breakable": 4.0, "max_spawn": 3.0}),
+        (class: "Growth", level: 5, teleport: false, params: {"speed_scale": 1.4, "quantity_to_top": 5.0, "time_between_falls": 0.75, "breakable": 4.0, "max_spawn": 3.0}),
+        (class: "Growth", level: 0, teleport: true, params: {"speed_scale": 1.7, "quantity_to_top": 5.0, "time_between_falls": 0.7, "breakable": 3.0, "max_spawn": 3.0}),
+        (class: "Milk", level: 0, teleport: false, params: {"rounds": 100.0, "win_ratio": 0.5, "bpm": 120.0, "bpb_x": 1.0, "bpb_y": 5.0}),
+        (class: "Milk", level: 1, teleport: false, params: {"rounds": 12.0, "win_ratio": 0.5, "bpm": 100.0, "prob0": 0.0, "prob1": 0.0, "prob2": 1.0}),
+        (class: "Milk", level: 2, teleport: false, params: {"rounds": 12.0, "win_ratio": 0.6, "bpm": 100.0, "bpb_x": 5.0, "bpb_y": 5.0, "prob0": 1.0, "prob1": 1.0, "prob2": 1.0}),
+        (class: "Milk", level: 3, teleport: false, params: {"rounds": 14.0, "win_ratio": 0.6, "bpm": 120.0, "bpb_x": 5.0, "bpb_y": 5.0, "prob0": 1.0, "prob1": 1.0, "prob2": 1.0}),
+        (class: "Milk", level: 4, teleport: false, params: {"rounds": 16.0, "win_ratio": 0.6, "bpm": 120.0, "bpb_x": 3.0, "bpb_y": 5.0, "prob0": 47.0, "prob1": 47.0, "prob2": 6.0}),
+        (class: "Milk", level: 0, teleport: true, params: {"rounds": 16.0, "win_ratio": 0.75, "bpm": 120.0, "bpb_x": 1.0, "bpb_y": 5.0}),
+        (class: "MindControl", level: 0, teleport: false, params: {"max_in_play": 5.0, "spawn_at_once": 3.0, "amount_to_match": 20.0, "time_speed": 0.025, "end_check_timer": 2.5}),
+        (class: "MindControl", level: 1, teleport: false, params: {"max_in_play": 3.0, "spawn_at_once": 1.0, "amount_to_match": 5.0, "time_speed": 0.02}),
+        (class: "MindControl", level: 2, teleport: false, params: {"max_in_play": 6.0, "spawn_at_once": 2.0, "amount_to_match": 13.0}),
+        (class: "MindControl", level: 3, teleport: false, params: {"max_in_play": 5.0, "spawn_at_once": 3.0, "amount_to_match": 20.0}),
+        (class: "MindControl", level: 4, teleport: false, params: {"max_in_play": 5.0, "spawn_at_once": 3.0, "amount_to_match": 20.0}),
+        (class: "MindControl", level: 0, teleport: true, params: {"max_in_play": 6.0, "spawn_at_once": 4.0, "amount_to_match": 20.0}),
+        (class: "Pet", level: 0, teleport: false, params: {"rounds": 10.0, "min_ratio": 0.5, "speed_scale": 1.0, "warn_min": 2.0, "warn_max": 3.0, "stabbing_pct": 50.0, "countdown": 4.5}),
+        (class: "Pet", level: 1, teleport: false, params: {"rounds": 5.0, "speed_scale": 1.2, "warn_min": 1.0, "warn_max": 1.5}),
+        (class: "Pet", level: 2, teleport: false, params: {"rounds": 8.0, "speed_min": 1.5, "speed_max": 2.5, "warning_disabled": 1.0}),
+        (class: "Pet", level: 3, teleport: false, params: {"rounds": 12.0, "min_ratio": 0.6, "speed_min": 2.0, "speed_max": 3.3, "warning_disabled": 1.0}),
+        (class: "Pet", level: 4, teleport: false, params: {"rounds": 14.0, "min_ratio": 0.66, "speed_min": 3.0, "speed_max": 4.0, "warning_disabled": 1.0}),
+        (class: "Pet", level: 0, teleport: true, params: {"rounds": 10.0, "min_ratio": 0.75, "speed_min": 3.0, "speed_max": 4.2, "warning_disabled": 1.0}),
+        (class: "Shrink", level: 1, teleport: false, params: {"prob0": 1.0, "prob_len": 1.0, "required_passes": 6.0, "max_fails": 5.0, "fall_speed": 0.5, "spawn_interval": 1.5}),
+        (class: "Shrink", level: 2, teleport: false, params: {"prob0": 1.0, "prob_len": 1.0, "required_passes": 6.0, "max_fails": 5.0, "fall_speed": 0.5, "spawn_interval": 1.5}),
+        (class: "Shrink", level: 3, teleport: false, params: {"prob0": 1.0, "prob_len": 1.0, "required_passes": 12.0, "max_fails": 3.0, "fall_speed": 1.2, "spawn_interval": 1.0}),
+        (class: "Shrink", level: 4, teleport: false, params: {"prob0": 0.0, "prob1": 0.0, "prob2": 1.0, "prob_len": 3.0, "required_passes": 9.0, "max_fails": 3.0, "fall_speed": 0.75, "spawn_interval": 1.25}),
+        (class: "Shrink", level: 5, teleport: false, params: {"prob0": 0.0, "prob_len": 1.0, "required_passes": 15.0, "max_fails": 3.0, "fall_speed": 0.9, "spawn_interval": 0.85}),
+        (class: "Shrink", level: 0, teleport: true, params: {"prob0": 0.0, "prob_len": 1.0, "required_passes": 15.0, "max_fails": 3.0, "fall_speed": 1.1, "spawn_interval": 0.85}),
+    ],
+)

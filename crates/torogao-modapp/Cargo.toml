@@ -1,0 +1,15 @@
+[package]
+name = "torogao-modapp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Clean-room Modification App systems for the Torogao remake programme: a phone-hub story DAG with level/time/flag-gated menus, a per-node state-table resolver, a four-slot day clock, and the gated TP economy measured from the 0.12.3 build (games/modification-app-dynamics.md). No studied-game assets, text, or code."
+
+[dependencies]
+ron = "0.8"
+serde = { workspace = true }
+
+[[bin]]
+name = "modapp-smoke"
+path = "src/main.rs"

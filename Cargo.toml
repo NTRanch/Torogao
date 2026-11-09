@@ -10,6 +10,7 @@ members = [
     "crates/torogao-gen",
     "crates/torogao-gencond",
     "crates/torogao-jam-laws",
+    "crates/torogao-modapp",
     "crates/torogao-motion-clip",
     "crates/torogao-osc",
     "crates/torogao-paint",
