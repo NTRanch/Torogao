@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Torogao Coin spike manifest (Gradle-free packaging; see build-apk.sh).
+     Package id ai.ntranch.torogaocoin.spike — a spike id, deliberately not
+     a product id (ANDROID-SPIKE-BRIEF.md Scope 5). NativeActivity hosts
+     the winit shell; the Rust library name is libtorogao_coin_android.so
+     (crate torogao-coin-android). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="ai.ntranch.torogaocoin.spike"
+    android:versionCode="1"
+    android:versionName="0.1.0">
+
+    <uses-sdk
+        android:minSdkVersion="26"
+        android:targetSdkVersion="34" />
+
+    <application
+        android:label="Torogao Coin Spike"
+        android:icon="@mipmap/ic_launcher"
+        android:theme="@android:style/Theme.DeviceDefault"
+        android:extractNativeLibs="true"
+        android:hasCode="false">
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="true"
+            android:configChanges="orientation|keyboardHidden|screenSize">
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="torogao_coin_android" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

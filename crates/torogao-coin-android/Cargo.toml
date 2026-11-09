@@ -1,0 +1,32 @@
+[package]
+name = "torogao-coin-android"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Lane D S6b spike shell: the torogao-coin fixture running inside a winit NativeActivity window on Android (Route 1 proof). Not the Torogao app; no rendering beyond a success-colour fill. See ANDROID-SPIKE-BRIEF.md in the remake programme tree."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+log = "0.4"
+softbuffer = "0.4"
+torogao-coin = { path = "../torogao-coin" }
+# Desktop (host) winit keeps its full default set — the
+# Hands-On posture: platform features are only narrowed
+# where the platform stack cannot provide them.
+winit = "0.30"
+
+# The Hands-On configuration, from the start (layer 1): the
+# Android declaration selects the android-native-activity
+# backend — android-activity 0.6.1 has NO default backend,
+# and the manifest declares android.app.NativeActivity with
+# no GameActivity AAR in this Gradle-free pipeline. Layer 2
+# (accesskit exclusion) needs no surgery here: this shell's
+# graph contains no accesskit path at all (no egui/eframe);
+# the spike report's cargo-tree evidence proves it.
+[target.'cfg(target_os = "android")'.dependencies]
+android-activity = { version = "0.6", features = ["native-activity"] }
+android_logger = "0.15"
+winit = { version = "0.30", features = ["android-native-activity"] }

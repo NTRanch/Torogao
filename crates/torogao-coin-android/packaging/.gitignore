@@ -1,0 +1,5 @@
+# Build products of build-apk.sh — never committed: the output
+# tree and the DEBUG keystore (a signing key, even a debug one,
+# does not travel in git).
+out/
+debug.keystore
