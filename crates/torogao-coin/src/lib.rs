@@ -22,7 +22,9 @@
 pub mod dynamics;
 pub mod session;
 pub mod swing;
+pub mod trajectory;
 
 pub use dynamics::{CoinError, DYNAMICS_RON, Dynamics, PrepAction, StatTriple, measured_dynamics};
 pub use session::{AttemptOutcome, Session};
 pub use swing::SwingAccumulator;
+pub use trajectory::{FixtureRun, run_fixture, run_measured_fixture};

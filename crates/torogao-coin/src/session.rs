@@ -141,6 +141,33 @@ impl Session {
         samples: &[f64],
         dt_seconds: f64,
     ) -> Result<AttemptOutcome, CoinError> {
+        self.attempt(samples, dt_seconds, None)
+    }
+
+    /// `run_attempt` with a per-step trajectory trace: after
+    /// each executed sample step, one record is appended to
+    /// `trace` — the accumulator's banked points and the gauge
+    /// they make (points x the attempt's preparation
+    /// multiplier, constant within an attempt), each as an
+    /// f64 bit pattern. The traced and untraced runs are the
+    /// same loop, so their outcomes agree by construction;
+    /// the trace is the canonical record the cross-platform
+    /// trajectory hash (`trajectory` module) digests.
+    pub fn run_attempt_traced(
+        &mut self,
+        samples: &[f64],
+        dt_seconds: f64,
+        trace: &mut Vec<(u64, u64)>,
+    ) -> Result<AttemptOutcome, CoinError> {
+        self.attempt(samples, dt_seconds, Some(trace))
+    }
+
+    fn attempt(
+        &mut self,
+        samples: &[f64],
+        dt_seconds: f64,
+        mut trace: Option<&mut Vec<(u64, u64)>>,
+    ) -> Result<AttemptOutcome, CoinError> {
         if !dt_seconds.is_finite() || dt_seconds <= 0.0 || dt_seconds > DT_SECONDS_MAX {
             return Err(CoinError::InvalidStep {
                 reason: "dt outside (0, 1] seconds",
@@ -159,6 +186,10 @@ impl Session {
         let mut success = false;
         for &x in samples {
             swing.feed(x, &self.dynamics)?;
+            if let Some(trace) = &mut trace {
+                let points = swing.points();
+                trace.push((points.to_bits(), (points * self.gauge_multiplier()).to_bits()));
+            }
             elapsed += dt_seconds;
             if swing.points() * self.gauge_multiplier() >= target {
                 success = true;
