@@ -1,0 +1,33 @@
+[package]
+name = "torogao-render3d"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Torogao's native 3D renderer (D-1216/D-1217): deterministic Vulkan-offscreen pipeline for skinned, morph-target characters. Scene evaluation, pose/morph data flow and shader sources stay API-agnostic above an internal backend boundary; the Vulkan backend (ash) sits below it."
+
+[dependencies]
+ash = "0.38"
+bytemuck = { version = "1", features = ["derive"] }
+gltf = { version = "1", features = ["extras"] }
+png = "0.18"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+torogao-motion-clip = { path = "../torogao-motion-clip" }
+
+[lib]
+name = "torogao_render3d"
+path = "src/lib.rs"
+
+[[bin]]
+name = "render3d-arc"
+path = "src/bin/render_arc.rs"
+
+[[bin]]
+name = "render3d-crosscheck"
+path = "src/bin/crosscheck.rs"
+
+[[bin]]
+name = "render3d-compare"
+path = "src/bin/compare.rs"

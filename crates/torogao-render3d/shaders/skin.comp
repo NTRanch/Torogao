@@ -1,0 +1,64 @@
+#version 460
+// Cross-check compute shader: runs the shared morph+skin
+// path for every vertex of one mesh and writes the skinned
+// positions/normals to output buffers for readback. The
+// CPU reference (reference.rs) computes the same vertices
+// from the same packed inputs in f64; the cross-check tool
+// states its agreement bound before running.
+
+layout(local_size_x = 256) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer JointMatrices {
+    mat4 in_joint_matrices[];
+};
+layout(std430, set = 0, binding = 1) readonly buffer Positions {
+    vec4 in_positions[];
+};
+layout(std430, set = 0, binding = 2) readonly buffer Normals {
+    vec4 in_normals[];
+};
+layout(std430, set = 0, binding = 3) readonly buffer Joints {
+    uvec4 in_joints[];
+};
+layout(std430, set = 0, binding = 4) readonly buffer Weights {
+    vec4 in_weights[];
+};
+layout(std430, set = 0, binding = 5) readonly buffer MorphRanges {
+    uvec2 in_ranges[];
+};
+layout(std430, set = 0, binding = 6) readonly buffer MorphDpos {
+    vec4 in_entry_dpos[];
+};
+layout(std430, set = 0, binding = 7) readonly buffer MorphDnrm {
+    vec4 in_entry_dnrm[];
+};
+layout(std430, set = 0, binding = 8) readonly buffer MorphTarget {
+    uint in_entry_target[];
+};
+layout(std430, set = 0, binding = 9) readonly buffer MorphWeights {
+    float in_morph_weights[];
+};
+layout(std430, set = 0, binding = 10) buffer OutPositions {
+    vec4 out_positions[];
+};
+layout(std430, set = 0, binding = 11) buffer OutNormals {
+    vec4 out_normals[];
+};
+
+layout(push_constant) uniform Push {
+    uint vertex_count;
+} push;
+
+#include "skin.glsl"
+
+void main() {
+    uint v = gl_GlobalInvocationID.x;
+    if (v >= push.vertex_count) {
+        return;
+    }
+    vec3 pos;
+    vec3 nrm;
+    skin_vertex(v, pos, nrm);
+    out_positions[v] = vec4(pos, 1.0);
+    out_normals[v] = vec4(nrm, 0.0);
+}
