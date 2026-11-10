@@ -479,8 +479,8 @@ fixed-step puppet physics (2D; gap §1.1) — posture to follow,
 not code to port. JinkakuHaisetsu's measured soft-body
 constants are being extracted by bundle-reader rung 2 **now**
 (§5 F1) — they are this module's calibration target, and the
-module does not invent its own constants while that extraction
-is in flight.
+module does not invent its own constants — that extraction is complete
+(bundle rung 2, D-1222; report at `docs/bundle-reader/RUNG2-REPORT.md`).
 
 **Build.** In **`torogao-softbody`**:
 1. **XPBD core.** Particles + constraints at fixed step with
@@ -937,14 +937,14 @@ what you actually opened (§0):
 | Need | Call | Notes |
 |---|---|---|
 | LSP validation of touched files | **theodolite** (primo `~/.local/bin/theodolite`, bridge `~/.local/share/theodolite/bridge.toml`) | The clause below binds every pickup. |
-| Plate / witness renders, rig measurements | **blender connector** (`~/workspace/custom-connectors/custom.blender/CONNECTOR.md`) | Official build for rigging work, `-Y` always, `-y` never; headless, silent. |
+| Plate / witness renders, rig measurements | **Blender** (official build on this machine, headless) | Official build for rigging work, `-Y` always, `-y` never; headless, silent. |
 | Clean-room RE on held titles | **fathom** + skills `local-fathom-game-extract`, `local-bundle-native-reader`, `local-assetripper-rung` | §5 commissions; clean-room law binds. |
-| Bundle/SerializedFile reading | **bundle-native** crate + its skill | Rung-1 report is the capability statement; rung 2 (F1) is in flight — check state before assuming a capability. |
+| Bundle/SerializedFile reading | **bundle-native** crate + its skill | Rung-1 and rung-2 reports are the capability statement (vendored at `docs/bundle-reader/`); rung 2 is complete (D-1222). |
 | Prior art / papers | **arXiv connector**, browser search/open | §6 order; cite what you opened. |
 | Reference assets | **HuggingFace connector** (`custom.huggingface-ntranch`) | Read its CONNECTOR.md before calling. |
 | Repo state (studio account) | **github-ntranch connector** | Read-only for this brief's work; pushes are not authorized (§9). |
 | Lessons learned | **bloch** | The clause below binds. |
-| Skill outcomes at finish | `~/workspace/bin/skill-trust.py record` | The step below binds. |
+| Skill outcomes at finish | `skill-trust record` (Pax-side: report outcomes in the module report; Pax logs them) | The step below binds. |
 
 **THE THEODOLITE CLAUSE (binds every pickup).** Validate
 every touched file through theodolite (primo
@@ -987,8 +987,8 @@ callers. Unclassified defaults to the restrictive label.
 
 **SKILL-TRUST RECORDING.** At finish, record outcomes for
 any custom skill materially used:
-`~/workspace/bin/skill-trust.py record` (schema and counting
-rules in `~/workspace/custom-skills/local-skill-trust/SKILL.md`).
+`skill-trust record` (Pax-side: report outcomes in the module report; Pax logs them) (schema and counting
+rules in `~/.claude/skills/local-skill-trust/SKILL.md`).
 
 ---
 

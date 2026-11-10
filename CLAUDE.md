@@ -36,9 +36,11 @@ frame reproducible from a replay hash.
 | Bundle reader reports + rung-2 tools (F1) | `docs/bundle-reader/` |
 | Cast records (canon, per girl) | `docs/cast-records/` |
 | Reference images (sheets, keepers, plates) | `docs/REFERENCE-IMAGES.md` |
+| Estate skills cited by the brief | Installed for this session at `~/.claude/skills/` (local-tiger-style-rust, local-bundle-native-reader, local-assetripper-rung, local-fathom-game-extract, local-animation-grammar-atlas, local-hypno-technique, local-kinetic-ui, local-skill-trust) |
+| Session tree state | One pre-existing uncommitted file: `crates/torogao-cli/src/registry_data.rs` — a two-line schema regen from the MCP stand-up, NOT session work. Leave it; land it only on the Owner's word. |
 | Feature-gap register (D-1242) | `FEATURE-GAPS.md` (this worktree, same directory) |
 | Plate spec v2 (D-1224) | `docs/PLATE-SPEC.md` |
-| Cast GLBs of record | `~/workspace/torogao-models-20261104/<girl>/<girl>.glb` |
+| Cast GLBs of record | `~/.local/share/pax/nsfix-stage/fleet/<girl>/<girl>.glb` (smoothed keeper fleet, all six); rung-1's consumed Prima copy: `~/.local/share/pax/torogao-renderer-rung1-20261110/inputs-v2/prima.glb` |
 | Prima design template (held title) | primo `~/.local/share/ntranch-game-re/JinkakuHaisetsu/` |
 
 ## Hard boundaries
@@ -76,7 +78,7 @@ frame reproducible from a replay hash.
    for every number (D-713); anything unverifiable is marked
    REVIEW, never asserted.
 6. Record skill outcomes at finish:
-   `~/workspace/bin/skill-trust.py record` for each custom skill
+   `skill-trust record` (Pax-side: report outcomes in the module report; Pax logs them) for each custom skill
    materially used (brief §7).
 
 ## Style and discipline
