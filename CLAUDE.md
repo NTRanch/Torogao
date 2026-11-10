@@ -35,6 +35,9 @@ frame reproducible from a replay hash.
 | Prima gap analysis (A/B/C registers) | `docs/PRIMA-TOROGAO-GAP-ANALYSIS.md` |
 | Bundle reader reports + rung-2 tools (F1) | `docs/bundle-reader/` |
 | Cast records (canon, per girl) | `docs/cast-records/` |
+| Arc shows (per-girl clips) | `~/.local/share/pax/torogao-cast-reference/arc-shows/<girl>/` — `<girl>.clip.json` + channels + skeleton + anim_gate + replay-proof, all six girls |
+| D-1206 verdict pack (Vivienne) | `~/.local/share/pax/torogao-cast-reference/verdict-pack-d1206/` (VERDICT.md + her sheets); the per-girl working evidence is at `~/.local/share/pax/strobe-smoothing-20261110/vivienne/evidence/` |
+| Item-5 analysis scripts | `~/.local/share/pax/torogao-item5-fix-20261110/` (analyze_frames.py, test_gen_clip_frames.py, residual_table.md; dump_bone_data.py under probe/) |
 | Reference images (sheets, keepers, plates) | `docs/REFERENCE-IMAGES.md` |
 | Estate skills cited by the brief | Installed for this session at `~/.claude/skills/` (local-tiger-style-rust, local-bundle-native-reader, local-assetripper-rung, local-fathom-game-extract, local-animation-grammar-atlas, local-hypno-technique, local-kinetic-ui, local-skill-trust) |
 | Session tree state | One pre-existing uncommitted file: `crates/torogao-cli/src/registry_data.rs` — a two-line schema regen from the MCP stand-up, NOT session work. Leave it; land it only on the Owner's word. |
