@@ -29,11 +29,14 @@ frame reproducible from a replay hash.
 | Branch | `pax/renderer-rung2-20261110` (base: rung-1 tip `63896dd`) |
 | Renderer crate | `crates/torogao-render3d` |
 | Pose evaluation (never reimplement) | `crates/torogao-motion-clip` |
-| Rung-1 verdict pack | `~/workspace/torogao-renderer-rung1-20261110/verdict-pack/VERDICT.md` |
-| Item-5 addendum (limb parity) | `~/workspace/torogao-renderer-rung1-20261110/verdict-pack/ADDENDUM-ITEM5.md` |
-| Gap analysis (requirements R1–R8, gaps G1–G10) | `~/workspace/torogao-3d-renderer-gap-20261110/GAP-ANALYSIS.md` |
+| Rung-1 verdict pack | `docs/rung1-verdict/VERDICT.md` |
+| Item-5 addendum (limb parity) | `docs/rung1-verdict/ADDENDUM-ITEM5.md` |
+| Gap analysis (requirements R1–R8, gaps G1–G10) | `docs/GAP-ANALYSIS.md` |
+| Prima gap analysis (A/B/C registers) | `docs/PRIMA-TOROGAO-GAP-ANALYSIS.md` |
+| Bundle reader reports + rung-2 tools (F1) | `docs/bundle-reader/` |
+| Cast records (canon, per girl) | `docs/cast-records/` |
 | Feature-gap register (D-1242) | `FEATURE-GAPS.md` (this worktree, same directory) |
-| Plate spec v2 (D-1224) | `~/workspace/torogao-renderer-rung1-20261110/PLATE-SPEC.md` |
+| Plate spec v2 (D-1224) | `docs/PLATE-SPEC.md` |
 | Cast GLBs of record | `~/workspace/torogao-models-20261104/<girl>/<girl>.glb` |
 | Prima design template (held title) | primo `~/.local/share/ntranch-game-re/JinkakuHaisetsu/` |
 

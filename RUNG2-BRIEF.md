@@ -8,7 +8,7 @@ torogao repo checkout (primo
 
 **Reading order for a fresh agent:** `CLAUDE.md` (this tree's root)
 → this brief → the rung-1 verdict pack
-(`~/workspace/torogao-renderer-rung1-20261110/verdict-pack/VERDICT.md`)
+(`docs/rung1-verdict/VERDICT.md`)
 → the module you are picking up.
 
 ---
@@ -93,7 +93,7 @@ analysis, preamble).
   Excretion Simulator (JinkakuHaisetsu, held at primo
   `~/.local/share/ntranch-game-re/JinkakuHaisetsu/`), Prima's
   design template (Prima gap analysis,
-  `~/workspace/nsfw-remakes-20261108/games/personality-excretion/PRIMA-TOROGAO-GAP-ANALYSIS.md`):
+  `docs/PRIMA-TOROGAO-GAP-ANALYSIS.md`):
   staged solo and duo scenes with emission/fluid beats, reactive
   staging, and runtime camera selection — the capabilities the
   gap analysis §4(d) priced as unimplementable on the plate route.
@@ -802,7 +802,7 @@ renderer yet (gap rung 6); export is PNG frame sequences.
 
 Fathom is the estate's clean-room reverse-engineering MCP.
 The law, from the bundle reader's report of record
-(`~/workspace/bundle-native-20261110/REPORT.md`): extraction is
+(`docs/bundle-reader/RUNG1-REPORT.md`): extraction is
 built **only** from public format documentation and observed
 bytes of held titles; other implementations' outputs may serve
 as test *fixtures* (data), never as source. What transfers into
@@ -823,7 +823,7 @@ proved the reader: 212/212 TextAssets byte-identical vs the
 AssetRipper cross-check; stripped files route MonoBehaviours
 to REVIEW by design, which rung 2 exists to close — REPORT.md
 +"What parses today"; tooling state in
-`~/workspace/bundle-native-20261110/rung2-tools/`). Extract:
+`docs/bundle-reader/tools/`). Extract:
 soft-body constants, emission/fluid parameters, stage/scene
 configuration values. Feeds: **M4** (calibration), **M5**
 (Prima-class parameters), **M2** (scene configuration shape).

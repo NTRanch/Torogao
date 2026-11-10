@@ -601,7 +601,7 @@ register is complete without duplicating M6/M7.
   rung 1 shadows from the Sun only (2048², 3×3 PCF); the
   plates shadow from both lights. Plate spec v2 (D-1224,
   6144×7680, TAA 256 samples) is the target of record
-  (`~/workspace/torogao-renderer-rung1-20261110/PLATE-SPEC.md`).
+  (`docs/PLATE-SPEC.md`).
 - **TAA vs MSAA** for the Vulkan path: no estate
   measurement yet chooses between them against the plates.
   The plates' own reference is Blender TAA at 256 samples
@@ -923,7 +923,7 @@ work the gap analysis already names.
     compiler into torogao-gen-graph/1, structural-off
     semantics, typed uniform-map refusal.
   - Cast records of record:
-    `~/workspace/torogao-models-20261104/<girl>/RECORD.md`.
+    `docs/cast-records/<girl>.md`.
     The six-girl rig programme is complete: 54 joints,
     39 morph target sets per girl (36 `Fac_*` + bust sets;
     POSITION+NORMAL deltas, sparse — `Fac_Eye_Close` moves
@@ -1001,7 +1001,7 @@ new emitters.
 ## 11. Prima-class game systems (the C-lane)
 
 Requirements of record:
-`~/workspace/nsfw-remakes-20261108/games/personality-excretion/PRIMA-TOROGAO-GAP-ANALYSIS.md`.
+`docs/PRIMA-TOROGAO-GAP-ANALYSIS.md`.
 This register records the lane; its design decisions belong
 to the C2 spec, not here.
 
@@ -1111,12 +1111,12 @@ never as wall-clock reactions.
 - `RUNG2-BRIEF.md` (this worktree) — M1–M7, §2 rung-1
   state, §5 fathom commissions, §6 research routes,
   Appendix B proposed bounds.
-- `~/workspace/torogao-3d-renderer-gap-20261110/GAP-ANALYSIS.md`
+- `docs/GAP-ANALYSIS.md`
   (D-1213) — requirements R1–R8, gaps G1–G10, §6 Owner
   calls.
-- `~/workspace/nsfw-remakes-20261108/games/personality-excretion/PRIMA-TOROGAO-GAP-ANALYSIS.md`
+- `docs/PRIMA-TOROGAO-GAP-ANALYSIS.md`
   — needs A1–A16, haves B1–B12, build order C1–C11.
-- `~/workspace/torogao-renderer-rung1-20261110/verdict-pack/VERDICT.md`
+- `docs/rung1-verdict/VERDICT.md`
   and `ADDENDUM-ITEM5.md`; `PLATE-SPEC.md` (D-1224).
 - `~/workspace/rhythm-sync-spike-20261110/` — `REPORT.md`,
   `PIPEWIRE-ADDENDUM.md`, `REQUIREMENT.md` (D-1203 /
