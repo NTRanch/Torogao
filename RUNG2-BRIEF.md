@@ -2,8 +2,8 @@
 
 **Status:** commissioned by the Owner, 2026-11-10. This brief
 governs all work on branch `pax/renderer-rung2-20261110` in the
-rung-2 worktree (primo
-`~/.local/share/pax/torogao-renderer-rung2-wt`, base = rung-1 tip
+torogao repo checkout (primo
+`~/.GH/NTRanch/torogao`, base = rung-1 tip
 `63896dd`, off torogao main `6ffbffb`). Local commits only.
 
 **Reading order for a fresh agent:** `CLAUDE.md` (this tree's root)

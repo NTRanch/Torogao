@@ -25,7 +25,7 @@ frame reproducible from a replay hash.
 
 | Thing | Path |
 |---|---|
-| This worktree (work ONLY here) | primo `~/.local/share/pax/torogao-renderer-rung2-wt` |
+| This repo checkout (work ONLY here) | primo `~/.GH/NTRanch/torogao` |
 | Branch | `pax/renderer-rung2-20261110` (base: rung-1 tip `63896dd`) |
 | Renderer crate | `crates/torogao-render3d` |
 | Pose evaluation (never reimplement) | `crates/torogao-motion-clip` |
