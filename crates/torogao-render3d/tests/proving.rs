@@ -381,3 +381,280 @@ fn gpu_smoke_determinism_and_skin() {
     println!("gpu vs cpu max position delta: {max_delta:.3e} m");
     assert!(max_delta <= 1e-4, "cross-check bound 1e-4 m");
 }
+
+// ---------------------------------------------------------
+// Rung 2, M1: cast-generic proving tests. They need the
+// staged per-girl inputs:
+//   TOROGAO_RENDER3D_CAST_INPUTS=<dir holding <girl>/inputs/>
+// Half validation, half adversarial.
+// ---------------------------------------------------------
+
+use torogao_render3d::RenderError;
+use torogao_render3d::cast::{CastInputs, CastOptions, OutfitPlan, load_cast_inputs};
+
+/// Per girl: slug, her show's outfit plan, Body vertex
+/// count (the fleet census), and the replay hash of her
+/// D-1223 clip of record.
+const CAST: [(&str, &str, usize, &str); 5] = [
+    (
+        "alma",
+        "0:1",
+        13_931,
+        "263d6ced318a6319e80dafb8df4ae809f7a1ae34c39a63609dec2fe1afb54bc7",
+    ),
+    (
+        "lux",
+        "0:1,90:2",
+        13_904,
+        "ce0d20ed5f66672dd830fa62835de73f9d290022ddaf8a92d51ee0128949d3aa",
+    ),
+    (
+        "piper",
+        "0:2",
+        14_192,
+        "add3a87df5404180fbbc881345947294c2032539a6637180fdea3abdcd154e22",
+    ),
+    (
+        "sloane",
+        "0:2",
+        13_921,
+        "df8cc71c5610fab7bf694693e1ab1caa3b319dc93d429e5123605b82e6e113a1",
+    ),
+    (
+        "yui",
+        "0:2",
+        13_894,
+        "e3ff8bbe9b163a5d22f01a16f4c1ed1977b37af7b831de8a88a9e62b107c9886",
+    ),
+];
+
+fn cast_dir(slug: &str) -> PathBuf {
+    let root = std::env::var("TOROGAO_RENDER3D_CAST_INPUTS")
+        .expect("set TOROGAO_RENDER3D_CAST_INPUTS to the dir holding <girl>/inputs/");
+    PathBuf::from(root).join(slug).join("inputs")
+}
+
+fn cast_options(slug: &str, plan: &str) -> CastOptions {
+    CastOptions {
+        slug: slug.to_string(),
+        outfit_plan: OutfitPlan::parse(plan).expect("plan"),
+        bust_weight: None,
+    }
+}
+
+fn load_cast(slug: &str, plan: &str) -> CastInputs {
+    load_cast_inputs(&cast_dir(slug), &cast_options(slug, plan)).expect("cast inputs load")
+}
+
+/// A scratch copy of one girl's inputs under another slug,
+/// with an optional edit to her def bytes. Removed on drop.
+struct ScratchInputs {
+    dir: PathBuf,
+}
+
+impl ScratchInputs {
+    fn copy_of(source_slug: &str, as_slug: &str, tag: &str, def_suffix: &[u8]) -> ScratchInputs {
+        let dir = std::env::temp_dir().join(format!(
+            "torogao-render3d-cast-{tag}-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let source = cast_dir(source_slug);
+        for (from, to) in [
+            (format!("{source_slug}.glb"), format!("{as_slug}.glb")),
+            (
+                format!("{source_slug}.clip.json"),
+                format!("{as_slug}.clip.json"),
+            ),
+            (
+                format!("{source_slug}-channels.json"),
+                format!("{as_slug}-channels.json"),
+            ),
+            (
+                "plate-camera.json".to_string(),
+                "plate-camera.json".to_string(),
+            ),
+        ] {
+            std::fs::copy(source.join(from), dir.join(to)).expect("scratch copy");
+        }
+        let mut def =
+            std::fs::read(source.join(format!("{source_slug}-skeleton.json"))).expect("def read");
+        def.extend_from_slice(def_suffix);
+        std::fs::write(dir.join(format!("{as_slug}-skeleton.json")), def).expect("def write");
+        ScratchInputs { dir }
+    }
+}
+
+impl Drop for ScratchInputs {
+    fn drop(&mut self) {
+        // Best-effort cleanup of this test's own scratch dir.
+        if let Err(error) = std::fs::remove_dir_all(&self.dir) {
+            eprintln!("scratch cleanup {}: {error}", self.dir.display());
+        }
+    }
+}
+
+/// Validation: the loader's census equals the fleet census
+/// for every girl (54 joints, 59 nodes, Body 37 targets, one
+/// bust target per outfit mesh, Body vertex count).
+#[test]
+#[ignore = "needs staged cast inputs"]
+fn cast_census_matches_fleet() {
+    for (slug, plan, body_vertices, _) in CAST {
+        let cast = load_cast(slug, plan);
+        let census = cast.census();
+        assert_eq!(census.joints, 54, "{slug} joints");
+        assert_eq!(census.nodes, 59, "{slug} nodes");
+        let body = cast.model.mesh_named("_Body").expect("body");
+        assert_eq!(body.vertex_count(), body_vertices, "{slug} body verts");
+        assert_eq!(body.targets.len(), 37, "{slug} body targets");
+        assert_eq!(cast.model.mesh_named("_Outfit").unwrap().targets.len(), 1);
+        assert_eq!(
+            cast.model.mesh_named("_OutfitEnd").unwrap().targets.len(),
+            1
+        );
+        assert!(
+            body.default_weights.iter().all(|w| *w == 0.0),
+            "{slug} saved"
+        );
+    }
+}
+
+/// Validation: GLB joint-node rest TRS == def rest TRS for
+/// every def bone of every girl.
+#[test]
+#[ignore = "needs staged cast inputs"]
+fn cast_def_rest_matches_glb_nodes() {
+    use torogao_motion_clip::SkeletonDef;
+    for (slug, plan, _, _) in CAST {
+        let cast = load_cast(slug, plan);
+        assert_eq!(cast.skeleton.bones().len(), 54, "{slug} def bones");
+        for (bone, glb_name) in cast.skeleton.bones().iter().zip(&cast.skeleton.glb_names) {
+            let node = &cast.model.nodes[cast.model.node_named(glb_name).expect("node")];
+            for i in 0..3 {
+                assert!((node.translation[i] - bone.rest_translation[i]).abs() < 1e-9);
+                assert!((node.scale[i] - bone.rest_scale[i]).abs() < 1e-9);
+            }
+            for i in 0..4 {
+                assert!((node.rotation[i] - bone.rest_rotation[i]).abs() < 1e-9);
+            }
+        }
+    }
+}
+
+/// Validation: each girl's clip of record replays to her
+/// recorded hash.
+#[test]
+#[ignore = "needs staged cast inputs"]
+fn cast_replay_hashes_match_record() {
+    for (slug, plan, _, replay_hash) in CAST {
+        let cast = load_cast(slug, plan);
+        let bound = cast.bind().expect("bind");
+        assert_eq!(cast.clip.frames, 900, "{slug} clip frames");
+        assert_eq!(bound.replay_hash(), replay_hash, "{slug} replay hash");
+    }
+}
+
+/// Validation (GPU): frame-0 twin hashes identical and the
+/// GPU skin readback inside the cross-check bound, per girl.
+#[test]
+#[ignore = "needs staged cast inputs and a Vulkan device"]
+fn cast_gpu_smoke_determinism_and_skin() {
+    use torogao_render3d::backend::RenderBackend;
+    use torogao_render3d::backend::vulkan::VulkanBackend;
+    use torogao_render3d::compare::sha256_hex;
+    use torogao_render3d::setscene::{PLATE_HEIGHT, PLATE_WIDTH};
+
+    for (slug, plan, _, _) in CAST {
+        let cast = load_cast(slug, plan);
+        let bound = cast.bind().expect("bind");
+        let mut backend = VulkanBackend::new().expect("backend");
+        backend
+            .upload_scene(&cast.packed_scene(), PLATE_WIDTH, PLATE_HEIGHT)
+            .expect("upload");
+        let draw = cast.draw_frame(&bound, 0).expect("draw");
+        let a = backend.render_frame(&draw).expect("render a");
+        let b = backend.render_frame(&draw).expect("render b");
+        assert_eq!(sha256_hex(&a.rgba), sha256_hex(&b.rgba), "{slug} twins");
+
+        let body_index = cast.body_index().expect("body");
+        let weights = cast.frame_weights(&bound, 0).expect("weights")[body_index].clone();
+        let evaluated = cast.pose.evaluate_plate_frame(&bound, 0).expect("eval");
+        let joint64 = cast.pose.joint_matrices(&cast.model, &evaluated);
+        let joint32: Vec<[f32; 16]> = joint64.iter().map(|m| m.to_f32_cols()).collect();
+        let (gpu_pos, _) = backend
+            .skin_positions(body_index, &joint32, &weights)
+            .expect("skin readback");
+        let packed = PackedMorphs::pack(&cast.model.meshes[body_index]);
+        let (cpu_pos, _) = torogao_render3d::reference::skin_mesh(
+            &cast.model,
+            body_index,
+            &packed,
+            &joint64,
+            &weights,
+        );
+        let mut max_delta = 0.0_f64;
+        for v in 0..cpu_pos.len() {
+            let d = V3::from_f32(gpu_pos[v]).minus(V3::from_f32(cpu_pos[v]));
+            max_delta = max_delta.max(d.x.abs().max(d.y.abs()).max(d.z.abs()));
+        }
+        assert!(max_delta <= 1e-4, "{slug} cross-check bound 1e-4 m");
+    }
+}
+
+/// Adversarial: a slug with no files in the directory is a
+/// typed I/O failure naming the path, never a panic.
+#[test]
+#[ignore = "needs staged cast inputs"]
+fn cast_missing_files_fail_typed() {
+    let result = load_cast_inputs(&cast_dir("alma"), &cast_options("lux", "0:1"));
+    match result {
+        Err(RenderError::Io { path, .. }) => assert!(path.ends_with("lux.glb"), "{path}"),
+        Err(other) => panic!("expected Io, got {other}"),
+        Ok(_) => panic!("loaded a girl whose files are absent"),
+    }
+}
+
+/// Adversarial: one girl's files renamed to another slug
+/// are refused at load — the def token names the rig.
+#[test]
+#[ignore = "needs staged cast inputs"]
+fn cast_slug_def_mismatch_is_refused() {
+    let scratch = ScratchInputs::copy_of("alma", "lux", "slug", b"");
+    let result = load_cast_inputs(&scratch.dir, &cast_options("lux", "0:1"));
+    match result {
+        Err(RenderError::Document(detail)) => assert!(detail.contains("lux-rig/1"), "{detail}"),
+        Err(other) => panic!("expected Document, got {other}"),
+        Ok(_) => panic!("accepted alma's rig under the slug lux"),
+    }
+}
+
+/// Adversarial: a def whose bytes differ from the ones the
+/// clip was exported against (same token, different
+/// SHA-256) loads but refuses to bind.
+#[test]
+#[ignore = "needs staged cast inputs"]
+fn cast_altered_def_refuses_to_bind() {
+    let scratch = ScratchInputs::copy_of("alma", "alma", "sha", b" ");
+    let cast = load_cast_inputs(&scratch.dir, &cast_options("alma", "0:1")).expect("loads");
+    assert!(
+        cast.bind().is_err(),
+        "bound a clip to a def it was not made for"
+    );
+}
+
+/// Adversarial: frames outside the arc are typed errors on
+/// every per-frame entry point.
+#[test]
+#[ignore = "needs staged cast inputs"]
+fn cast_frames_outside_the_arc_are_refused() {
+    let cast = load_cast("alma", "0:1");
+    let bound = cast.bind().expect("bind");
+    for frame in [PLATE_FRAMES, PLATE_FRAMES + 1, u32::MAX] {
+        assert!(matches!(
+            cast.draw_frame(&bound, frame),
+            Err(RenderError::FrameOutOfRange { .. })
+        ));
+        assert!(cast.frame_weights(&bound, frame).is_err());
+    }
+}

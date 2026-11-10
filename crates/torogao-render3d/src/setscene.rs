@@ -295,6 +295,21 @@ fn convert_geometry(
 /// transcribed from anim.py and held against the probe by
 /// the crate's tests.
 pub fn prima_arc_scene(probe: &ProbeData) -> ArcScene {
+    arc_scene_with(probe.camera_world, probe.toy_matrices[0])
+}
+
+/// The plate rig for a character-only render of any cast
+/// girl (rung 2, M1): the plate camera, Sun, Fill and world
+/// of [`prima_arc_scene`], with the camera's world matrix
+/// (glTF space) supplied as data. The arc's set pieces are
+/// still carried so the packed scene keeps the shape the
+/// backend uploads; a cast draw sets `include_set = false`,
+/// so none of them is drawn or casts a shadow.
+pub fn plate_rig_scene(camera_world: Mat4) -> ArcScene {
+    arc_scene_with(camera_world, Mat4::IDENTITY)
+}
+
+fn arc_scene_with(camera_world: Mat4, toy_model: Mat4) -> ArcScene {
     let deg = std::f64::consts::PI / 180.0;
     let mut pieces = Vec::new();
     let all = (0, PLATE_FRAMES - 1);
@@ -388,7 +403,7 @@ pub fn prima_arc_scene(probe: &ProbeData) -> ArcScene {
         normals: n,
         indices: idx,
         material: MAT_PINK,
-        model: probe.toy_matrices[0],
+        model: toy_model,
         is_toy: true,
         visible_from: all.0,
         visible_until: all.1,
@@ -398,7 +413,7 @@ pub fn prima_arc_scene(probe: &ProbeData) -> ArcScene {
         world: [0.16, 0.15, 0.19],
         sun: sun_light([55.0 * deg, 0.0, -25.0 * deg], 3.0),
         fill: sun_light([70.0 * deg, 0.0, 140.0 * deg], 1.1),
-        view: probe.camera_world.inverse(),
+        view: camera_world.inverse(),
         tan_half_x: 0.4 / 1.444_444_417_953_491_2,
         tan_half_y: 0.5 / 1.444_444_417_953_491_2,
         near: 0.1,

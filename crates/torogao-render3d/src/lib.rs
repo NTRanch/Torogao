@@ -28,6 +28,8 @@ pub mod arc;
 // safety obligations stated in place).
 pub mod backend;
 #[forbid(unsafe_code)]
+pub mod cast;
+#[forbid(unsafe_code)]
 pub mod compare;
 #[forbid(unsafe_code)]
 pub mod error;

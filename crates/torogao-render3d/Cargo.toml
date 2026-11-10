@@ -31,3 +31,7 @@ path = "src/bin/crosscheck.rs"
 [[bin]]
 name = "render3d-compare"
 path = "src/bin/compare.rs"
+
+[[bin]]
+name = "render3d-cast"
+path = "src/bin/cast.rs"
