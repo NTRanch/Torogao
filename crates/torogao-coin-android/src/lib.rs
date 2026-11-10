@@ -5,20 +5,31 @@
 //! (Route 1, Hands-On configuration), which on startup runs
 //! the canonical coin fixture from `torogao_coin::trajectory`
 //! exactly once, reports the outcome line to logcat, and
-//! fills the window green on success / red on refusal. No
+//! fills the window green on success / red on refusal. Since
+//! the S5 binding it also runs the TF Jam skeleton sessions
+//! through `torogao_coin::shell` and logs their combined
+//! line (`bound_line`) beside the fixture line. No
 //! wgpu, no egui, no text rendering — rendering is the
 //! BRIEF-A1 commission's scope; a created window and an
 //! event loop that survives pause/resume are this spike's
 //! route evidence.
 //!
-//! Safety discipline: `#![forbid(unsafe_code)]` holds for
+//! Safety discipline: `#![deny(unsafe_code)]` holds for
 //! everything this crate writes. The single exception point
 //! is the `android_main` entry below: the symbol export the
 //! android-activity runtime calls by name, written with the
-//! edition-2024 `#[unsafe(no_mangle)]` attribute. No unsafe
+//! edition-2024 `#[unsafe(no_mangle)]` attribute under one
+//! item-level `#[allow(unsafe_code)]`. The crate originally
+//! carried `forbid` here; the pinned toolchain
+//! (nightly-2026-10-30) scopes `forbid(unsafe_code)` over
+//! unsafe attributes themselves, which no item may
+//! override, so the forbid + no_mangle shape cannot
+//! compile for the Android target — `deny` plus the
+//! item-level allow is the shape the estate's android
+//! crates proved (fall, timestop, milkfactory). No unsafe
 //! block, function, or impl exists in this crate.
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 use torogao_coin::run_measured_fixture;
 
@@ -28,6 +39,39 @@ use torogao_coin::run_measured_fixture;
 /// after.
 pub fn spike_line() -> String {
     spike_report().0
+}
+
+/// The bound-crate line: the TF Jam skeleton sessions run
+/// through `torogao_coin::shell` (the S5 shell binding) on
+/// this host, summarised as one logcat line. The combined
+/// hash is the FNV-1a digest of the sessions' state hashes,
+/// in script order — the same values the Linux shell host
+/// (`torogao-app --coin-sessions`) prints per session, so
+/// the two platforms' bound runs compare directly.
+pub fn bound_line() -> String {
+    match torogao_coin::measured_dynamics().and_then(torogao_coin::shell::run_skeleton_sessions) {
+        Ok(sessions) => {
+            // FNV-1a 64 over the sessions' state hashes (the
+            // estate's hash discipline; see torogao-coin's
+            // trajectory module).
+            let mut state: u64 = 0xcbf2_9ce4_8422_2325;
+            for session in &sessions {
+                for byte in session.state_hash.to_le_bytes() {
+                    state ^= u64::from(byte);
+                    state = state.wrapping_mul(0x0000_0100_0000_01b3);
+                }
+            }
+            format!(
+                "coin-android-bound: sessions={} fixture_win={} timeout_win={} save={} hash={:016x}",
+                sessions.len(),
+                sessions[0].win.unwrap_or(false),
+                sessions[1].win.unwrap_or(true),
+                sessions[2].can_save,
+                state
+            )
+        }
+        Err(e) => format!("coin-android-bound: error={e}"),
+    }
 }
 
 /// Run the fixture once and render the report: the logcat
@@ -62,6 +106,7 @@ use winit::platform::android::activity::AndroidApp;
 /// calls this symbol by name; it is the crate's single
 /// `#[unsafe(no_mangle)]` point (see the crate docs).
 #[cfg(target_os = "android")]
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 fn android_main(app: AndroidApp) {
     use winit::platform::android::EventLoopBuilderExtAndroid;
@@ -85,21 +130,23 @@ fn android_main(app: AndroidApp) {
 /// run, one fill colour. On suspend the window and surface
 /// are dropped (the native window is gone); on resume they
 /// are recreated and the fill re-presented — the fixture
-/// itself runs exactly once per process.
+/// itself runs exactly once per process. Android-only: it
+/// is constructed solely by `android_main`, so host builds
+/// (which compile this crate for its tests) cfg it out
+/// rather than carry it as dead code.
+#[cfg(target_os = "android")]
 #[derive(Default)]
 struct SpikeApp {
     context: Option<softbuffer::Context<std::rc::Rc<winit::window::Window>>>,
     surface: Option<
-        softbuffer::Surface<
-            std::rc::Rc<winit::window::Window>,
-            std::rc::Rc<winit::window::Window>,
-        >,
+        softbuffer::Surface<std::rc::Rc<winit::window::Window>, std::rc::Rc<winit::window::Window>>,
     >,
     window: Option<std::rc::Rc<winit::window::Window>>,
     success: bool,
     ran: bool,
 }
 
+#[cfg(target_os = "android")]
 impl winit::application::ApplicationHandler for SpikeApp {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         if self.window.is_some() {
@@ -115,6 +162,7 @@ impl winit::application::ApplicationHandler for SpikeApp {
             let (line, success) = spike_report();
             self.success = success;
             log::info!("{line}");
+            log::info!("{}", bound_line());
         }
         let context = softbuffer::Context::new(window.clone()).expect("softbuffer context");
         let surface =
@@ -155,7 +203,11 @@ impl winit::application::ApplicationHandler for SpikeApp {
                 }
                 if let Ok(mut buffer) = surface.buffer_mut() {
                     // softbuffer's pixel word is 0x00RRGGBB.
-                    let colour: u32 = if self.success { 0x0022_cc66 } else { 0x00cc_2222 };
+                    let colour: u32 = if self.success {
+                        0x0022_cc66
+                    } else {
+                        0x00cc_2222
+                    };
                     buffer.fill(colour);
                     let _ = buffer.present();
                 }
@@ -178,5 +230,17 @@ mod tests {
         assert!(line.contains("points=172.5000"), "{line}");
         assert!(line.contains("level=1"), "{line}");
         assert!(line.contains("clock=595"), "{line}");
+    }
+
+    #[test]
+    fn bound_line_names_the_skeleton_sessions() {
+        // Host-side proof of the bound run the Android shell
+        // logs on startup: the three skeleton sessions
+        // through torogao-coin's shell binding.
+        let line = super::bound_line();
+        assert!(line.starts_with("coin-android-bound: sessions=3"), "{line}");
+        assert!(line.contains("fixture_win=true"), "{line}");
+        assert!(line.contains("timeout_win=false"), "{line}");
+        assert!(line.contains("save=true"), "{line}");
     }
 }
