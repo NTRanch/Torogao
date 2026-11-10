@@ -312,8 +312,8 @@ fn morph_spot_fixtures() {
         .find(|(v, _, _)| *v == 4525)
         .expect("vert 4525 in Fac_Eye_Close");
     let want = [0.0, -0.023936, 0.002298];
-    for i in 0..3 {
-        assert!((entry.1[i] - want[i]).abs() < 1e-6, "eye close delta");
+    for (got, want) in entry.1.iter().zip(want) {
+        assert!((got - want).abs() < 1e-6, "eye close delta");
     }
     let bust = &body.targets[body.target_index("Body_Bust_Size").unwrap()];
     let entry = bust
