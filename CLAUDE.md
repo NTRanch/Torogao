@@ -35,6 +35,7 @@ frame reproducible from a replay hash.
 | Prima gap analysis (A/B/C registers) | `docs/PRIMA-TOROGAO-GAP-ANALYSIS.md` |
 | Bundle reader reports + rung-2 tools (F1) | `docs/bundle-reader/` |
 | Cast records (canon, per girl) | `docs/cast-records/` |
+| Reference images (sheets, keepers, plates) | `docs/REFERENCE-IMAGES.md` |
 | Feature-gap register (D-1242) | `FEATURE-GAPS.md` (this worktree, same directory) |
 | Plate spec v2 (D-1224) | `docs/PLATE-SPEC.md` |
 | Cast GLBs of record | `~/workspace/torogao-models-20261104/<girl>/<girl>.glb` |
