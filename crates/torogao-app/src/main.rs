@@ -16,6 +16,7 @@
 //!       --out <dir> [--force]
 //!   torogao-app --persona-audit
 //!   torogao-app --paint [document.tpaint]
+//!   torogao-app --coin-sessions
 
 #![forbid(unsafe_code)]
 
@@ -62,6 +63,7 @@ fn run() -> Result<i32, AppError> {
     let mut take_export = false;
     let mut take_file: Option<PathBuf> = None;
     let mut persona_audit = false;
+    let mut coin_sessions = false;
     let mut paint = false;
     let mut paint_path: Option<PathBuf> = None;
     let mut animation: Option<String> = None;
@@ -107,6 +109,7 @@ fn run() -> Result<i32, AppError> {
             "--state-hash" => options.state_hash = true,
             "--debug-physics" => options.debug_physics = true,
             "--persona-audit" => persona_audit = true,
+            "--coin-sessions" => coin_sessions = true,
             "--paint" => {
                 paint = true;
                 if let Some(next) = args.get(index + 1) {
@@ -178,6 +181,12 @@ fn run() -> Result<i32, AppError> {
         let total = report["checks_total"].as_u64().unwrap_or(0);
         println!("{}", torogao_format::jsonfmt::to_d_json(&report));
         return Ok(if passed == total && total > 0 { 0 } else { 3 });
+    }
+    if coin_sessions {
+        // The Lane D coin binding's smoke surface: the TF
+        // Jam skeleton sessions run on the bound torogao-coin
+        // crate, headless, with state hashes.
+        return torogao_app::coin_host::run_coin_sessions();
     }
     if paint {
         return run_paint(paint_path.as_deref());
