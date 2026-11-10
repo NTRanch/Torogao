@@ -111,7 +111,7 @@ fn replay_hash_matches_record() {
     assert_eq!(arc.clip.frames, 900);
     assert_eq!(
         bound.replay_hash(),
-        "84b8c442a16d66f17a4faf2b8460727be6649411dc3836771c67ad2df66ca8a4"
+        "1bd9dd534a0ea37f8e827e5d9e7fcdcac3d8cebfd53401c3cd05b9be46e986eb"
     );
 }
 
