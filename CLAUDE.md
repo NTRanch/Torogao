@@ -2,7 +2,11 @@
 
 You are working in the **rung-2 worktree** of Torogao's native 3D
 renderer. Read this file, then `RUNG2-BRIEF.md` (same directory) —
-the brief is the contract; this file is the map.
+the brief is the contract; this file is the map. Then read
+`FEATURE-GAPS.md` (same directory) — the register of everything
+the programme still lacks beyond the brief's M1–M7, with
+researched best approaches. Required reading; it authorizes
+nothing by itself.
 
 ## Mission in one paragraph
 
@@ -28,6 +32,7 @@ frame reproducible from a replay hash.
 | Rung-1 verdict pack | `~/workspace/torogao-renderer-rung1-20261110/verdict-pack/VERDICT.md` |
 | Item-5 addendum (limb parity) | `~/workspace/torogao-renderer-rung1-20261110/verdict-pack/ADDENDUM-ITEM5.md` |
 | Gap analysis (requirements R1–R8, gaps G1–G10) | `~/workspace/torogao-3d-renderer-gap-20261110/GAP-ANALYSIS.md` |
+| Feature-gap register (D-1242) | `FEATURE-GAPS.md` (this worktree, same directory) |
 | Plate spec v2 (D-1224) | `~/workspace/torogao-renderer-rung1-20261110/PLATE-SPEC.md` |
 | Cast GLBs of record | `~/workspace/torogao-models-20261104/<girl>/<girl>.glb` |
 | Prima design template (held title) | primo `~/.local/share/ntranch-game-re/JinkakuHaisetsu/` |
