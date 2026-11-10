@@ -35,3 +35,5 @@ not show — is documented in
 - [Convert](docs/previews/preview-convert.mp4)
 - [Tutorials](docs/previews/preview-tutorials.mp4)
 - [Settings](docs/previews/preview-settings.mp4)
+
+- Night School references (D-1 demonstrator, scene/prop records): docs/night-school-references.md
