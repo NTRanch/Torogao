@@ -231,7 +231,7 @@ pub const TOOL_META: &[ToolMeta] = &[
         description: "Lists the rig templates and physics-chain presets available for instantiation (base puppets, the six physics presets, and any lane-pack templates).",
         posture: "read-only",
         gate: "",
-        input_schema_json: "{\"additionalProperties\":false,\"properties\":null,\"type\":\"object\"}",
+        input_schema_json: "{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}",
     },
     ToolMeta {
         name: "pack-info",
@@ -375,7 +375,7 @@ pub const TOOL_META: &[ToolMeta] = &[
         description: "Lists the SFX library index: named entries authored as deterministic audio recipes, attachable as cue points in scene data.",
         posture: "read-only",
         gate: "",
-        input_schema_json: "{\"additionalProperties\":false,\"properties\":null,\"required\":[],\"type\":\"object\"}",
+        input_schema_json: "{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}",
     },
     ToolMeta {
         name: "tracking-bake",
