@@ -1,7 +1,7 @@
 # NTRanch-lane style and effects plan (D-1257, D-1258)
 
 **Status: DRAFT for gate review. Nothing here is built.** Written
-2026-11-10. Every gate number is a proposal until ratified at the
+2026-11-10; amended 2026-11-11 under D-1295 (planning only). Every gate number is a proposal until ratified at the
 module's first gate. A plan may propose gates; it never declares a
 keeper, and no Owner PASS is declared here. This file is Markdown:
 not-LSP-validated.
@@ -264,6 +264,258 @@ disclosure record is refused. Lane: ntranch.
 
 ---
 
+### Families added under D-1295 (D-1283 to D-1288, D-1276) — the adult-specific half
+
+*In one line:* the lumen plan defines the machinery — seven
+channels frozen once and drawn by every medium; this section
+holds what is specific to this lane: what the channels carry
+here, each woman's reaction signature, the doujin devices, and
+the three videos.
+
+Mechanism, ids and gates are in lumen `docs/CROSS-MEDIUM-PLAN.md`
+§2.7 and families U, C, V and module M8; they are not repeated.
+Everyone named below is an adult character of the estate's own
+casts (six Torogao, ten Strobe). **Canon sourcing:** every kink
+attribution in this section is taken from the Owner's addendum
+D-1287, which cites D-273 (Torogao sets) and the D-798 fold
+(Strobe). This lane did **not** read the D-273 or D-798 records
+themselves, so each row is REVIEW against those records until
+someone checks it; no kink is invented here. Planning only.
+
+**HV1 — Which channels separate bar from sub-bar (the run behind
+lumen U4).** The Owner's hypothesis: the flagship and `samart`
+precision comes from the eyes. Run: all seven channels' curves
+across the bar library (17 clips per the inquiry: flagship
+family 7, `samart` 2, and the rest; the library manifest on disk
+is the count of record), against a ratified sub-bar set. Report
+which channels separate, with clip counts, and say plainly if
+the eyes do not. Also answers, as a by-product, whether the
+library contains any multi-peak scene (needed by PG1). Blocked
+on the instrument's runner and a region-channel stage. Tier A
+law: measurement and grammar only.
+
+**CH1 — Channel 4 here: nipple state, breast secondary motion,
+and lactation as an event channel (D-1285).** Three parts.
+(a) Nipple state — a scalar track; control: a morph pair, absent
+today (build item, with lumen C8). (b) Breast secondary motion —
+amplitude and phase lag against body motion; parameters are R5's;
+the bar's bound is lag ≤ 17 ms at 60 fps with no fitted spring
+constants, so amplitude is the measurable part. (c) Lactation —
+**events**, not a curve: each event has a time, a side, a
+duration and an intensity, timed to stimulation cycles. The
+cycle model is drawn from the estate's own records, not
+invented: the Strobe-lane lactation canon (D-798 fold), the
+Torogao lactation demonstrator led by Alma (D-1055), and the
+Milk Factory study's automatic cycle and harvest verb. **None of
+those three records was read for this amendment** — the model is
+a staged prerequisite: read them, write the cycle as a table,
+then author. Render side: events drive R6 fluid descriptors (3D)
+and a drawn device (DJ1). Gates: event-to-stimulation-peak
+offset within tolerance, measured on frames; an event with no
+stimulation cycle in the record is refused; fluid volume per
+event deterministic across twin runs.
+
+**CH2 — The threshold ladder here (D-1285 channel 6).** Named
+thresholds for this lane's scenes, as beats with channel
+bundles, starting from the solo-sheet vocabulary in the cast
+records (BUILD frames 0–89, BUILD II 90–179, then PEAK and
+AFTERGLOW). Per threshold: which channels move, order, rate.
+The orgasm beat: all seven channels reach peak targets inside
+one window, plus a contraction pattern on channel 5 (a short
+train at a stated rate — rate **estate-authored** until HV1
+measures one), then per-channel decay to afterglow values. The
+flagship's measured shape is the reference for one build:
+anticipation ≈ 3.5 s, rise 1.9 s, hold 6.4 s, return 2.0 s, body
+cycle 2.31 Hz with humanized spacing. Gates: lumen C3's.
+
+**PG1 — Progressive mode, Prima as first consumer (D-1286).**
+Lumen C4's parameters, instantiated. Her three-stage fall mapped
+onto the ladder:
+
+| Stage | Cycles | Composure channels (gaze focus, mouth closure, voice coherence) | Arousal channels |
+|---|---|---|---|
+| composed | first build | held near baseline; decay starts only at the first peak | single-build shape |
+| cracking | middle cycles | each afterglow returns less far (recovery fraction < 1, falling) | thresholds arrive sooner (drift), peaks grow, blush and tremor floors ratchet |
+| gone | terminal regime | absent — held at zero, not spiking | held peak-band values; quiver is the resting state; eye roll held with partial return only |
+
+Her record already carries the state names this needs
+(`arousal`, `bliss`, `desire` resolve on her rig) and solid heart
+pupils as a state, never baked. Her hypnosis pairing adds two
+things to her signature (K1): a trance-eye state and
+suggestion-triggered **step** responses. Her self-rewatch loop
+(D-1193) is the same ratchet at story scale: each rewatch is one
+more cycle that does not reset. Parameter sourcing: every one of
+the five parameters is **estate-authored until HV1 finds a
+multi-peak bar scene**; the record says which. Safety, by
+reference: flashing or strobing in any trance-eye device stays
+under the seizure-risk holds. Gates: lumen C4's monotonicity
+gates on her rendered scene; composure channels non-increasing
+across cycles; the terminal regime held for its whole interval.
+
+**K1 — Signature tables, sixteen women (D-1287).** One parameter
+set each, in lumen C5's modifier vocabulary (gain, onset shift,
+envelope shape, gate, step, suppress-then-release). Summary — the
+data files are the deliverable, this table is their index:
+
+| Woman (cast) | Signature kink, per D-1287 | Eyes | Mouth / voice (ch. 2, 7) | Body (ch. 3–5) | Staging (ch. 6) |
+|---|---|---|---|---|---|
+| Prima (T) | overstimulation; hypnosis | trance-eye state; roll holds longer each cycle | coherence decays per cycle | tremor floor ratchets | **progressive** (PG1); steps on suggestion cues |
+| Alma (T) | lactation lead; service, breeding, medical play as stimulus classes | soft, lowered | breath-led | **channel 4 drives the curve** (CH1 events lead) | builds follow milk cycles |
+| Lux (T) | exhibitionism / recorded | seeks the observer | praise produces a spike of its own shape | all gains scaled by an **observed** variable | amplified when watched or recorded |
+| Sloane (T) | tantric | flutter and soft focus, not a roll | breath and mantra fragments | slow full-body waves; tactile-object class has its own skin response | plateau, then successive **waves**, no spike |
+| Piper (T) | protocol, punishment, orgasm control | attentive, waiting | formal address that degrades at thresholds | flinch / brace mixed in on punishment events | **gated**: channels rise only on permission events; held plateaus |
+| Yui (T) | edging / denial, begging; shibari, suspension | pleading | the begging escalation is the voice curve | tremor suppressed then leaking; rope-strain and suspended-body channels | long suppressed build; disproportionate release |
+| Zuzana (S) | chastity / denial | pleading | suppressed, then breaking | blush high and sustained; tremor suppressed then leaking | as Yui's staging; denial cycles feed the ratchet |
+| Kaisa (S) | enslavement | gaze-down patterns | compliance speech | spikes on commands and on displayed compliance | display is itself a stimulus; baseline moves along her route |
+| Vivienne (S) | pet | — | nonverbal-heavy | animalistic posture and nuzzle channels | — |
+| Valentina (S) | discipline | composure held | held against protocol; cracking measured against adherence | infraction → punishment events | composure vs adherence |
+| Maren (S) | lactation lead | as Alma, Strobe register | as Alma | channel 4 leads | milk cycles |
+| Katya (S) | free use | relaxed | unforced | low-resistance body; **no tension build** | arousal without a tension ramp |
+| Cordelia (S) | corruption | — | — | her tattoo (D-799) is a **visible channel state** | progressive mode native |
+| Sadie (S) | behaviour modification | — | cue-bound | **step functions** on named trained cues | immediate, not gradual |
+| Yuna (S) | shibari + sensory deprivation | covered / returning | quiet, then heightened | stillness under restraint | heightened response when senses return |
+| Manon (S) | bimboification | vacant, pleasure-forward | simple and eager | inhibition channels absent | early saturation |
+
+A dash means the addendum gives no modifier for that channel;
+the cell is **to be derived from canon and marked derived**, not
+left generic — a signature with an empty channel is the likeliest
+way to fail the separation gate. Gates: every modifier row cites
+its canon decision; lumen C6 over all pairs sharing a stimulus
+class. Known near-pairs to check first, because the text gives
+them almost the same words: **Alma / Maren** and **Yui / Zuzana**.
+If measurement cannot separate them, the fix is in the data
+(register, voice, staging differences drawn from each woman's own
+canon), exactly as the addendum rules.
+
+**K2 — Woman × stimulus matrix.** The Owner's five worked classes
+against the women they apply to; other cells by the derivation
+rule (character modifiers first, then the class's; marked
+*derived*).
+
+| Stimulus class | Worked for | What the class itself contributes |
+|---|---|---|
+| tantric / tactile object | Sloane | slow onset, wave envelope, a skin-channel response to drag |
+| permission / plugs | Piper | a gate: no rise without a granted event; hold while waiting |
+| chastity / denial | Zuzana, Yui | suppression with stored release; feeds PG1's ratchet |
+| punishment | Piper, Valentina | a flinch / brace transient braided into the arousal channels |
+| obedience / display | Kaisa (and Lux through the observed variable) | spikes on command and on being seen complying |
+
+**K3 — Composition with the progressive mode.** Rule, stated
+once: a signature may set the progressive parameters and nothing
+else of that mode. Denial and overstimulation signatures
+**ratchet** (positive drift, rising floors); the tantric
+signature **rides waves** (no floor ratchet, growing wave
+amplitude instead); corruption runs the mode at route scale
+(baseline moves between scenes, not only within one). Gate: for
+each composed pair, the mode's monotonicity gates hold or the
+signature states why they do not apply.
+
+**DJ1 — Doujin device catalogue, calibrated from the bar
+(D-1288).** Catalogue every device in the bar library — `samart`
+first, as the register's exemplar — with occurrence correlated
+to measured channel values, so calibrations come from the bar,
+not from taste. Lane-specific device classes beyond lumen M8's
+list: heart, star and spiral pupils and highlight states (heart
+pupils at mid / low gaze are already face-state canon); heart
+marks and sparkle bursts at the peak band; drawn tears and drool
+with their own quantity curves (tears as pleasure-overflow is
+canon); milk as a drawn device driven by CH1's events; effect
+glyphs. Out: a device table — class, driving channel, threshold,
+parameter curve, bar evidence by motion-record hash. Gates: each
+device row has a driving channel and a threshold; a device seen
+in the bar with no measurable channel correlate is listed as
+*uncalibrated*, not given a made-up curve. Blocked on the
+instrument (layer decomposition is its stage for effects).
+
+**DJ2 — Per-woman device priorities.** The projection of K1 into
+the register: her signature selects which devices dominate.
+From the addendum: denial — sweat, pleading-eye devices,
+suppressed tremor lines; tantric — steam, soft wave lines, few
+heart marks until late peaks; pet — posture marks standing in
+for ear and tail language; Cordelia — her tattoo as a drawn
+device whose state is her corruption channel; Manon —
+heart-saturated early, inhibition devices absent. The other
+eleven are derived from K1 and marked so. The estate's Strobe
+kink sheet is the per-woman expression reference of record for
+this register — **not located on this machine by this lane**
+(staged prerequisite: its path). Gate: the priority table is
+generated from the signature data, never hand-kept beside it.
+
+**DJ3 — Internal (x-ray) inset.** A doujin-native device class
+the bar uses heavily (`samart`, and the x-ray clips in the
+`marciana` set). Planned as an **optional** inset driven by the
+contact channel data of R2, with its own legibility rules: inset
+size against frame, what is drawn at what contact depth, and
+that it never contradicts the outer view's timing. Gates: inset
+events coincide with contact events within one frame; with
+contact data absent the inset cannot fire. Needs: R2; renderer
+M3.
+
+**VS1 — Strobe video (first, D-1276).**
+(1) *Art sources of record:* the ten keepers' builds under primo
+`~/.local/share/pax/strobe-smoothing-20261110/<name>/` (all ten
+directories present: cured and textured `.blend`, `.glb`, twin
+GLB, measurement JSON); the D-1206 verdict pack for Vivienne;
+the repository's identity anchors (`CHARACTERS.md`) and two
+portraits per woman (begin / end).
+(2) *Proposed proof scene:* one woman, one continuous take,
+about 25 s at 60 fps, one single build through the ladder
+(CH2) to a peak with the eye roll on the bar envelope, ending
+in afterglow, in her own signature (K1). Vivienne is the natural
+subject only because the renderer's M2 takes her through intake
+first; the choice is the Owner's. **Solo, stated plainly:** the
+bar's universal stress test is two-body, and a solo scene does
+not discharge it — the two-body proof is a second scene, after
+the renderer's contact module (M3).
+(3) *Missing stages, as build items:* cast intake of a Strobe
+keeper (M2 G-gates); textured face with joint-driven eyes on her
+rig (U2 — her rig's eye geometry is unexamined here); the
+channel record and ladder (C1, C3, CH2); her signature data
+(K1); 60 fps export gate; region-channel measurement (U3);
+verdict-pack assembler.
+(4) *Gate:* verdict pack against `PARITY.md` — expected-vs-seen,
+a FAIL exemplar beside each item, the channel table, replay
+hash. Contact rows are reported *not applicable — solo*, never
+passed.
+
+**VS2 — MoonDeep video (second).**
+(1) *Art sources:* the 79-plate programme under primo
+`~/.local/share/pax/moondeep-art-20261109/` — counted on disk:
+pilot 10, roster 18, corruption 12, features 19, endings 11,
+environments 9 = 79 PNG files; registered as candidates.
+Maelis is a design proposal with no appearance canon and is not
+used; the K11 fork-blocked cells stay blocked.
+(2) *Proposed proof scene:* one roster heroine with settled
+appearance canon, one take of about 20 s over one environment
+plate: a hypnosis-induction beat (trance-eye steps under the
+honesty register — disclosed technique, never claimed effect)
+into a single build. Which heroine is the Owner's choice.
+(3) *Staged prerequisite, plainly:* **2D plates cannot feed the
+3D route.** Either the plates become a layered 2D rig (cheaper;
+not the route the bar was measured on) or they serve as identity
+reference for a factory character on the union skeleton
+(lumen V2's recommendation), which needs an identity gate before
+anything is animated. Then everything in VS1 (3).
+(4) *Gate:* as VS1, plus an identity sheet — factory character
+beside her plates — judged by the Owner before the scene is
+authored.
+
+**VS3 — Hands-On video (third).**
+(1) *Art sources:* the title's identity is a terminal interface
+and an egui front-end; its cast of record (`CAST.md`, seventeen
+level records) says no art was generated and every verdict reads
+*pending — Owner play*. **This lane found no finished character
+art of record for the title.**
+(2) *Proposed proof scene:* none yet. A scene needs a subject
+with appearance canon. If the Owner wants the title's own look
+— the terminal itself — as the subject, that is a different
+video (interface animation, kinetic-UI lineage) and a different
+bar than `PARITY.md`'s character bar; say which.
+(3) *Staged prerequisite:* an art source of record, or a ruling
+that the cast records' hosts borrow nothing from other titles
+and are to be designed first.
+(4) *Gate:* as VS1 once a subject exists.
+
 ## 4. Pick-up order
 
 **Unblocked today:** E1, E3, E5, R1 (schema), R3 (proxies measured
@@ -279,6 +531,16 @@ R7 (M2–M3).
 **Waiting on a ruling:** A4 (voice engine route — lumen plan §5);
 B3 ends in one.
 
+**Added by D-1295 (planning only):** *text work, unblocked:* K1's
+data shape and the derivation of the dashed cells from canon
+(needs the D-273 and D-798 records in hand), K2, K3, CH2's
+ladder, PG1's parameter sheet. *Waiting on the instrument:* HV1,
+DJ1, every bar-measured parameter. *Waiting on this renderer:*
+VS1 (M2 intake), DJ3 and the two-body follow-on (M3). *Staged
+prerequisites named above:* the lactation cycle records (CH1),
+the Strobe kink sheet (DJ2), MoonDeep's route to a rig (VS2), an
+art source for Hands-On (VS3).
+
 **First three, and why:**
 
 1. **E5 — lesson records.** Every other module here ends in one;
@@ -291,6 +553,16 @@ B3 ends in one.
    two-body bar depend on it.
 
 ## 5. Questions for the gate
+
+- **Canon records.** D-273, the D-798 fold, D-1055, D-799 and
+  the Strobe kink sheet were not read for the D-1295 amendment;
+  where are they on this machine?
+- **Solo or two-body for the first video?** VS1 proposes solo
+  because contact is not built; the bar's stress test is
+  two-body.
+- **Hands-On's subject** (VS3): character art to be designed, or
+  the interface itself as the subject?
+- **Sub-bar set for HV1**: which material?
 
 - **Finish has no instrument** (§1.2, B3). Is expected-vs-seen by
   eye the gate for it, or is a measured comparison wanted?
