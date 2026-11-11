@@ -516,6 +516,97 @@ that the cast records' hosts borrow nothing from other titles
 and are to be designed first.
 (4) *Gate:* as VS1 once a subject exists.
 
+**VS4 — Prima: the Personality Extractor scenes (Owner order of
+2026-11-10; feeds Lane D queue #28, D-1180).** Scenes at the
+flagship two-body set's quality bar, modelled in *structure* on
+the held title Personality Excretion Simulator, performed by
+Prima. Plan level only.
+
+*Law, first.* The held title (primo
+`~/.local/share/ntranch-game-re/JinkakuHaisetsu/Game`) is Tier A
+study material: its scene structure, staging and progression
+beats are measured and referenced; no asset, character,
+likeness, curve, pose parameter, text or audio of it is a
+training input or ships. Prima is the estate's own adult
+character and the scenes are the estate's own. This entry was
+written from the estate's existing study records only — the
+gap analysis `docs/PRIMA-TOROGAO-GAP-ANALYSIS.md` (queue #28)
+and what it cites; the game was not opened or run for it.
+
+(1) *Reference structure, as the study records hold it.*
+Measured (vocabulary and thresholds, from metadata): a
+five-step boundary ladder shared by the monitor, the
+inner-thought register and the dialogue phase mask; a counter
+exhausted at 50 counted climaxes, shown as a 10-block bar;
+11 stages; a climax presented as a full-screen authored event;
+afterglow *simulated* (slow curl-in, long heat decay), not a
+fade; voice phases Normal / Climax / Afterglow / Recover; a
+face built as per-stage pose families over split channels (eye,
+aperture, mouth, tongue, structural) with a 6-step blush
+channel; marked scenes staged in real time on a cinematic
+sequencer (no video clips in the build: VideoClip 0,
+AnimationClip 84, AudioClip 403), with a letterboxed finale.
+**Unknown, and stated as such by the study:** every
+formula-level dynamic (native code), whether depletion is
+linear, and all pose parameters — which are inadmissible in any
+case.
+
+(2) *The estate's scene design, under the desire inversion
+(D-1180).* The ladder keeps its five-step readability with the
+sign flipped — **Composed → Stirring → Yearning → Overwhelmed →
+Whiteout** — and what gives way is her reserve, the performed
+persona; Whiteout is bliss-overload. No Forced axis; desire is
+the progression engine; Swoon replaces fainting as a pacing
+event followed by aftercare staging, and the session may resume.
+Stop and aftercare surfaces are never progression-gated. Mapping
+onto this plan's machinery:
+
+| Scene design element | Carried by |
+|---|---|
+| five-step ladder | CH2 threshold ladder, as beats with channel bundles |
+| repeated climaxes banking toward ten veils she lowers herself | PG1 progressive mode — this is its native case |
+| composed / cracking / gone | PG1's three-stage table; composure channels decay across cycles |
+| per-stage performance sets (11 stages × 5 phases) | channel records (lumen C1) authored over her seven resolving rig states; heart pupils as a state at peak phases, never baked |
+| simulated afterglow | per-channel decay curves to afterglow values; afterglow is the next build's floor |
+| self-rewatch loop (D-1193) | a recorded session's event stream restaged identically; a rewatch is one more cycle that does not reset (K3) |
+| marked scenes, veil scenes, finale | the deterministic sequencer of the gap analysis (C4), slow flicker-free transitions under the seizure-risk holds |
+
+(3) *Proposed proof scenes — two, proof length.* (a) **One
+marked scene, solo:** a single continuous take, about 40 s at
+60 fps, crossing two ladder steps (Stirring → Yearning →
+Overwhelmed) with two peaks in progressive mode, so the ratchet
+is visible: second threshold sooner, second peak larger, second
+afterglow higher than the first. (b) **A veil-lowering beat:**
+about 15 s, the letterboxed set-piece form, one peak and a held
+afterglow. The bar's two-body stress test is not discharged by
+either; whether these scenes are solo-with-device or two-body
+is the Owner's call, and the two-body form waits on the contact
+module.
+
+(4) *Missing stages, as build items.* Everything in VS1 (3),
+plus: PG1's parameter sheet (all five parameters
+estate-authored until HV1 finds a multi-peak bar scene); the
+graded blush channel reaching the renderer (lumen C8); the
+sequencer (gap analysis C4); **the presentation-route ruling
+(gap analysis C5)** — the remake's own open fork between a 2D
+puppet, a rendered-plate hybrid and in-engine 3D. For *video*
+at this bar the route is the native renderer (this programme);
+that does not settle the in-game route, and this entry does not
+pretend it does. Staged prerequisite for a deeper structural
+study (scene counts and beat timings per stage, which the
+records do not hold): one fathom extraction session on the held
+title's sequencer data — measurement only, cross-checked before
+any number is used.
+
+(5) *Gate.* As VS1: verdict pack against `PARITY.md`,
+expected-versus-seen with a FAIL exemplar beside each item, the
+channel table, replay hash — plus PG1's monotonicity gates
+measured on the rendered scene, and a **clean-room line** in the
+pack: every structural number cites the study record it came
+from, and a reviewer confirms no frame, pose or sound of the
+held title was an input. Diffusion image-to-video stays
+reference-class only.
+
 ## 4. Pick-up order
 
 **Unblocked today:** E1, E3, E5, R1 (schema), R3 (proxies measured
@@ -560,6 +651,7 @@ art source for Hands-On (VS3).
 - **Solo or two-body for the first video?** VS1 proposes solo
   because contact is not built; the bar's stress test is
   two-body.
+- **VS4's subject form:** solo with device, or two-body?
 - **Hands-On's subject** (VS3): character art to be designed, or
   the interface itself as the subject?
 - **Sub-bar set for HV1**: which material?
