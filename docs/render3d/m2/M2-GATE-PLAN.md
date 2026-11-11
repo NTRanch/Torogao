@@ -66,6 +66,26 @@ a measurement. It is listed in §2 as carried over.
    one-paragraph addendum or this table accepted as the record.
 7. **Family B intake** — was not started in M1; it is M2.1.
 
+8. **Toolchain of the M1 gate runs — found after the report,
+   stated here.** The repo pins `nightly-2026-10-30`. My M1 CPU
+   gates (unit tests, clippy, fmt, CPU proving tests) and the
+   release `render3d-cast` binary the GPU queue used
+   (sha256 `44f85541…`) were built by the session shell's system
+   toolchain, **cargo 1.99.1**, not the pin. The queue's proving
+   suite (17/17) did run on the pin (login shell).
+   - Cured for the CPU gates: re-run under the pin at `d1a3944`
+     — unit 26, motion-clip 67/22/19, CPU proving 15, clippy
+     all-targets `-D warnings` rc 0, fmt rc 0
+     (`m1/pinned-regate/regate.log`).
+   - **Not cured:** the per-girl crosscheck and twin-render
+     results in §1 come from the 1.99.1-built binary. They are
+     real measurements of that binary; they are not yet
+     measurements of a pin-built one. Re-running the queue with a
+     pin-built binary is a GPU job and was not done here (this
+     part of the commission forbids GPU runs). Any M2 build step
+     must put the pinned toolchain first on `PATH` and record
+     `cargo --version` in every gate log.
+
 ## 3. M2.1 — Vivienne (Family B enters the renderer)
 
 ### 3.1 Her census, re-read from the artifact
