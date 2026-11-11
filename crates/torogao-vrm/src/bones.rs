@@ -77,6 +77,93 @@ pub const HUMANOID_BONES: &[&str] = &[
 /// has optional eye bones, so the exporter recognizes them.
 pub const GAZE_BONES: &[&str] = &["LeftEye", "RightEye"];
 
+/// The union skeleton's skin joints, in source-rig (Mixamo) names
+/// and lumen joint-table order (Owner ruling D-1282, 2026-11-11).
+///
+/// The union is the articulation set shared by the lumen factory
+/// skeleton and the torogao cast rigs: the 52 joints both sides
+/// already carried, plus `LeftEye` / `RightEye` from the cast
+/// side. A GLB on the union skeleton skins exactly these 54
+/// joints; every one of them must resolve through
+/// [`resolve_source_node`].
+pub const UNION_SKIN_JOINTS: &[&str] = &[
+    "Hips",
+    "Spine",
+    "Spine1",
+    "Spine2",
+    "Neck",
+    "Head",
+    "LeftEye",
+    "RightEye",
+    "LeftShoulder",
+    "LeftArm",
+    "LeftForeArm",
+    "LeftHand",
+    "LeftHandThumb1",
+    "LeftHandThumb2",
+    "LeftHandThumb3",
+    "LeftHandIndex1",
+    "LeftHandIndex2",
+    "LeftHandIndex3",
+    "LeftHandMiddle1",
+    "LeftHandMiddle2",
+    "LeftHandMiddle3",
+    "LeftHandRing1",
+    "LeftHandRing2",
+    "LeftHandRing3",
+    "LeftHandPinky1",
+    "LeftHandPinky2",
+    "LeftHandPinky3",
+    "LeftUpLeg",
+    "LeftLeg",
+    "LeftFoot",
+    "LeftToeBase",
+    "RightShoulder",
+    "RightArm",
+    "RightForeArm",
+    "RightHand",
+    "RightHandThumb1",
+    "RightHandThumb2",
+    "RightHandThumb3",
+    "RightHandIndex1",
+    "RightHandIndex2",
+    "RightHandIndex3",
+    "RightHandMiddle1",
+    "RightHandMiddle2",
+    "RightHandMiddle3",
+    "RightHandRing1",
+    "RightHandRing2",
+    "RightHandRing3",
+    "RightHandPinky1",
+    "RightHandPinky2",
+    "RightHandPinky3",
+    "RightUpLeg",
+    "RightLeg",
+    "RightFoot",
+    "RightToeBase",
+];
+
+/// The union skeleton's landmark nodes: terminal `*_End` leaves
+/// the lumen factory keeps as plain nodes for construction
+/// endpoints (head height, leg-tube and finger chain ends). They
+/// are never skin joints and never resolve to a bone; a loader
+/// meets them as nodes only and skips them by design.
+pub const UNION_LANDMARK_NODES: &[&str] = &[
+    "HeadTop_End",
+    "LeftHandThumb_End",
+    "LeftHandIndex_End",
+    "LeftHandMiddle_End",
+    "LeftHandRing_End",
+    "LeftHandPinky_End",
+    "LeftToe_End",
+    "RightHandThumb_End",
+    "RightHandIndex_End",
+    "RightHandMiddle_End",
+    "RightHandRing_End",
+    "RightHandPinky_End",
+    "RightToe_End",
+];
+
 /// One torogao → VRM humanoid bone correspondence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BoneDef {
@@ -555,5 +642,47 @@ mod tests {
         assert!(is_vrm_bone_name("leftUpperArm"));
         assert!(is_vrm_bone_name("jaw"));
         assert!(!is_vrm_bone_name("LeftUpperArm"));
+    }
+
+    /// The union contract (D-1282): exactly 54 skin joints, every
+    /// one resolving to a torogao bone, none of them a landmark.
+    #[test]
+    fn union_skin_joints_all_resolve() {
+        use super::UNION_SKIN_JOINTS;
+        assert_eq!(UNION_SKIN_JOINTS.len(), 54);
+        for (index, name) in UNION_SKIN_JOINTS.iter().enumerate() {
+            assert!(
+                resolve_source_node(name).is_some(),
+                "union skin joint {name} must resolve"
+            );
+            assert!(
+                !name.ends_with("_End"),
+                "union skin joint {name} is a landmark"
+            );
+            assert!(
+                !UNION_SKIN_JOINTS[..index].contains(name),
+                "union skin joint {name} is duplicated"
+            );
+        }
+    }
+
+    /// Union landmarks are node-only: 13 of them, none resolving
+    /// to a bone and none in the skin list.
+    #[test]
+    fn union_landmarks_never_resolve() {
+        use super::{UNION_LANDMARK_NODES, UNION_SKIN_JOINTS};
+        assert_eq!(UNION_LANDMARK_NODES.len(), 13);
+        for name in UNION_LANDMARK_NODES {
+            assert!(name.ends_with("_End"), "landmark {name} is no End leaf");
+            assert_eq!(
+                resolve_source_node(name),
+                None,
+                "landmark {name} must not resolve to a bone"
+            );
+            assert!(
+                !UNION_SKIN_JOINTS.contains(name),
+                "landmark {name} is in the skin list"
+            );
+        }
     }
 }
