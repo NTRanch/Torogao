@@ -1,6 +1,7 @@
 ![Torogao](docs/images/torogao-header-v20-black-trio.png)
 
 # Torogao
+[![crates.io](https://img.shields.io/crates/v/torogao.svg)](https://crates.io/crates/torogao)
 
 A character-animation editor from **Nice Thoughts Ranch**:
 2D puppet rigs, governed expressions, scenes, and a playroom —
