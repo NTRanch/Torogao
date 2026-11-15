@@ -8,7 +8,7 @@ description = "The torogao-pen evdev side-channel: pen pressure and position rea
 
 [dependencies]
 libc = "0.2"
-torogao-paint = { path = "../torogao-paint", version = "0.4.0" }
+torogao-paint = { path = "../torogao-paint", version = "0.5.0" }
 
 [[bin]]
 name = "pen-battery"

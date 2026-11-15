@@ -37,7 +37,7 @@ resolver = "3"
 edition = "2024"
 license = "BSD-2-Clause"
 rust-version = "1.85"
-version = "0.4.0"
+version = "0.5.0"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
