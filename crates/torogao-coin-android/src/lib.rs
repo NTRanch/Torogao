@@ -86,20 +86,19 @@ fn android_main(app: AndroidApp) {
 /// are dropped (the native window is gone); on resume they
 /// are recreated and the fill re-presented — the fixture
 /// itself runs exactly once per process.
+#[cfg(target_os = "android")]
 #[derive(Default)]
 struct SpikeApp {
     context: Option<softbuffer::Context<std::rc::Rc<winit::window::Window>>>,
     surface: Option<
-        softbuffer::Surface<
-            std::rc::Rc<winit::window::Window>,
-            std::rc::Rc<winit::window::Window>,
-        >,
+        softbuffer::Surface<std::rc::Rc<winit::window::Window>, std::rc::Rc<winit::window::Window>>,
     >,
     window: Option<std::rc::Rc<winit::window::Window>>,
     success: bool,
     ran: bool,
 }
 
+#[cfg(target_os = "android")]
 impl winit::application::ApplicationHandler for SpikeApp {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         if self.window.is_some() {
@@ -155,7 +154,11 @@ impl winit::application::ApplicationHandler for SpikeApp {
                 }
                 if let Ok(mut buffer) = surface.buffer_mut() {
                     // softbuffer's pixel word is 0x00RRGGBB.
-                    let colour: u32 = if self.success { 0x0022_cc66 } else { 0x00cc_2222 };
+                    let colour: u32 = if self.success {
+                        0x0022_cc66
+                    } else {
+                        0x00cc_2222
+                    };
                     buffer.fill(colour);
                     let _ = buffer.present();
                 }

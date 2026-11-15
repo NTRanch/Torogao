@@ -181,16 +181,17 @@ mod tests {
         // Adversarial to the trace itself: recording must
         // not perturb the run it records.
         let dynamics = measured_dynamics().expect("dynamics load");
-        let mut plain = Session::new(dynamics.clone(), FIXTURE_DAY_START_MINUTE)
-            .expect("plain session");
-        let mut traced =
-            Session::new(dynamics, FIXTURE_DAY_START_MINUTE).expect("traced session");
+        let mut plain =
+            Session::new(dynamics.clone(), FIXTURE_DAY_START_MINUTE).expect("plain session");
+        let mut traced = Session::new(dynamics, FIXTURE_DAY_START_MINUTE).expect("traced session");
         for index in FIXTURE_PREP_ACTIONS {
             plain.apply_prep_action(index).expect("plain prep");
             traced.apply_prep_action(index).expect("traced prep");
         }
         let samples = fixture_samples();
-        let plain_outcome = plain.run_attempt(&samples, FIXTURE_DT_SECONDS).expect("plain run");
+        let plain_outcome = plain
+            .run_attempt(&samples, FIXTURE_DT_SECONDS)
+            .expect("plain run");
         let mut trace = Vec::new();
         let traced_outcome = traced
             .run_attempt_traced(&samples, FIXTURE_DT_SECONDS, &mut trace)
@@ -205,8 +206,7 @@ mod tests {
         // must move — a hash that cannot see the stream is
         // not evidence of anything.
         let dynamics = measured_dynamics().expect("dynamics load");
-        let mut session =
-            Session::new(dynamics, FIXTURE_DAY_START_MINUTE).expect("session");
+        let mut session = Session::new(dynamics, FIXTURE_DAY_START_MINUTE).expect("session");
         for index in FIXTURE_PREP_ACTIONS {
             session.apply_prep_action(index).expect("prep");
         }
@@ -233,12 +233,13 @@ mod tests {
         // where the untraced path does — a typed error,
         // never a panic or a silent zero.
         let dynamics = measured_dynamics().expect("dynamics load");
-        let mut session =
-            Session::new(dynamics, FIXTURE_DAY_START_MINUTE).expect("session");
+        let mut session = Session::new(dynamics, FIXTURE_DAY_START_MINUTE).expect("session");
         let mut trace = Vec::new();
         let bad = [0.0, f64::NAN];
-        assert!(session
-            .run_attempt_traced(&bad, FIXTURE_DT_SECONDS, &mut trace)
-            .is_err());
+        assert!(
+            session
+                .run_attempt_traced(&bad, FIXTURE_DT_SECONDS, &mut trace)
+                .is_err()
+        );
     }
 }

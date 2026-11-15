@@ -1,7 +1,7 @@
 //! Session validation and session-to-recipe compilation,
 //! ported from the D `torogao.cli.sessionbuild` module.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::audioproc::validate_recipe;
 use crate::criteria::Finding;
@@ -363,11 +363,7 @@ fn validate_v2(session: &Value, is_v2: bool, findings: &mut Vec<Finding>) {
             let name = jstr(phase, "name");
             let kind = {
                 let raw = jstr(phase, "kind");
-                if raw.is_empty() {
-                    "plateau"
-                } else {
-                    raw
-                }
+                if raw.is_empty() { "plateau" } else { raw }
             };
             if !BLOCK_KINDS.contains(&kind) {
                 findings.push(finding(
@@ -869,10 +865,12 @@ mod tests {
         // no glide key appears on its stem.
         let plain = build_session_recipe(&fixture()).expect("compiles");
         let plain_stems = plain["stems"].as_array().expect("stems");
-        assert!(plain_stems
-            .iter()
-            .filter(|s| s["type"] == json!("binaural"))
-            .all(|s| s.get("beatHzEnd").is_none()));
+        assert!(
+            plain_stems
+                .iter()
+                .filter(|s| s["type"] == json!("binaural"))
+                .all(|s| s.get("beatHzEnd").is_none())
+        );
     }
 
     #[test]

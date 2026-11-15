@@ -2,7 +2,7 @@
 //! BS.1770 loudness and true-peak measurement, rendering —
 //! ported from the D `torogao.audio.proc` module.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::criteria::Finding;
 use crate::util::{jget, jstr};
@@ -1136,9 +1136,11 @@ mod tests {
         let (channels, _) = synthesize_mix(&doc, frames(4.0));
         assert!(channels[0][0..frames(2.0)].iter().all(|&s| s == 0.0));
         assert!(channels[0][frames(3.0)..].iter().all(|&s| s == 0.0));
-        assert!(channels[0][frames(2.0)..frames(3.0)]
-            .iter()
-            .any(|&s| s != 0.0));
+        assert!(
+            channels[0][frames(2.0)..frames(3.0)]
+                .iter()
+                .any(|&s| s != 0.0)
+        );
     }
 
     // -- the layer stack: edit / add / remove ---------------

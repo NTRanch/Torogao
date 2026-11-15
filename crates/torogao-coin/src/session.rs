@@ -188,7 +188,10 @@ impl Session {
             swing.feed(x, &self.dynamics)?;
             if let Some(trace) = &mut trace {
                 let points = swing.points();
-                trace.push((points.to_bits(), (points * self.gauge_multiplier()).to_bits()));
+                trace.push((
+                    points.to_bits(),
+                    (points * self.gauge_multiplier()).to_bits(),
+                ));
             }
             elapsed += dt_seconds;
             if swing.points() * self.gauge_multiplier() >= target {
