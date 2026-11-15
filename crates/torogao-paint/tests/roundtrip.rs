@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: Apache-2.0 OR MIT
-// Copyright (c) 2026 Qompass AI
+// SPDX-License-Identifier: BSD-2-Clause
+// Copyright (c) 2026, Nice Thoughts Ranch
 
 //! Gate 1 (SPEC SS8 Phase 1): the scripted session below
 //! exercises brush, eraser, layer add/reorder/opacity and

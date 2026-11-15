@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: Apache-2.0 OR MIT
-// Copyright (c) 2026 Qompass AI
+// SPDX-License-Identifier: BSD-2-Clause
+// Copyright (c) 2026, Nice Thoughts Ranch
 
 //! The paint editor surface (SPEC Phase 1, D-991): an
 //! egui front over `torogao-paint`'s deterministic

@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: Apache-2.0 OR MIT
-// Copyright (c) 2026 Qompass AI
+// SPDX-License-Identifier: BSD-2-Clause
+// Copyright (c) 2026, Nice Thoughts Ranch
 
 //! The paint editor's window shell: the stage Shell's
 //! proven winit/egui-wgpu boilerplate (windowed.rs),

@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: Apache-2.0 OR MIT
-// Copyright (c) 2026 Qompass AI
+// SPDX-License-Identifier: BSD-2-Clause
+// Copyright (c) 2026, Nice Thoughts Ranch
 
 //! `torogao-paint`: the deterministic raster document
 //! core of the torogao paint surface (SPEC Phase 1,

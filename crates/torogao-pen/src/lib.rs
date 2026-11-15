@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: Apache-2.0 OR MIT
-// Copyright (c) 2026 Qompass AI
+// SPDX-License-Identifier: BSD-2-Clause
+// Copyright (c) 2026, Nice Thoughts Ranch
 
 //! `torogao-pen`: the production pen-input side channel
 //! for torogao-paint (SPEC SS7, DP-3 as built by the

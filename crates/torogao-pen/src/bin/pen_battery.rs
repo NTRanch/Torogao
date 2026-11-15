@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: Apache-2.0 OR MIT
-// Copyright (c) 2026 Qompass AI
+// SPDX-License-Identifier: BSD-2-Clause
+// Copyright (c) 2026, Nice Thoughts Ranch
 
 //! Gate 4 (SPEC SS8 Phase 1): the spike's S-1 synthetic
 //! battery re-run against the PRODUCTION shim — create
