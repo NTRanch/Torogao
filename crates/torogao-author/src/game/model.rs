@@ -114,6 +114,9 @@ pub struct Game {
     /// Message threads, sorted by id. (Serialized only when
     /// non-empty, like `streams`.)
     pub threads: Vec<ThreadDef>,
+    /// Direct-manipulation interaction grids, sorted by id.
+    /// (Serialized only when non-empty, like `streams`.)
+    pub interactions: Vec<InteractionDef>,
     /// Per-character appearance tables, sorted by character
     /// id. (Serialized only when non-empty, like `streams`.)
     pub appearances: Vec<AppearanceDef>,
@@ -220,6 +223,11 @@ impl Game {
     /// The thread with this id.
     pub fn thread(&self, id: &str) -> Option<&ThreadDef> {
         find(&self.threads, id, |item| &item.id)
+    }
+
+    /// The interaction grid with this id.
+    pub fn interaction(&self, id: &str) -> Option<&InteractionDef> {
+        find(&self.interactions, id, |item| &item.id)
     }
 
     /// The tier bands over this stat, if authored.
@@ -1214,6 +1222,76 @@ pub struct SceneExitDef {
     pub condition: Option<String>,
     /// Effect set applied on traversal.
     pub effect_set: Option<String>,
+}
+
+/// One body node of an interaction grid (P2-8): a GUI node on
+/// a character in the grid's scene — the study's `spr_GUINode_*`
+/// sprites, as a record address (character/scene addresses per
+/// the Phase 2 plan: nodes are character/scene addresses).
+#[derive(Clone, Debug, PartialEq)]
+pub struct InteractionNode {
+    /// Stable id, unique within the grid.
+    pub id: String,
+    /// The character the node sits on: a participant of the
+    /// grid's scene by authoring intent; the gate requires the
+    /// character to exist.
+    pub character: String,
+}
+
+/// One cell of an interaction grid (P2-8): what happens when
+/// one tool is applied to one node — the response effect set
+/// that applies as one transaction, and the camera preset the
+/// presentation frames the response with (the study's
+/// `scr_TabAngle_*` family, as record ids). Either may be
+/// absent: a cell with no response is a presentation-only
+/// touch; a cell with no camera keeps the current framing.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InteractionCell {
+    /// The tool id (a member of the grid's tool set).
+    pub tool: String,
+    /// The node id (a member of the grid's node set).
+    pub node: String,
+    /// The response effect set id, when the cell responds.
+    pub response: Option<String>,
+    /// The camera preset id, when the cell reframes.
+    pub camera: Option<String>,
+}
+
+/// A direct-manipulation interaction grid (`interaction_define`,
+/// Phase 2 slice P2-8): the Doujin Fever study's tool-cursor ×
+/// body-node system as records — a tool set, a node set, a
+/// camera-preset set, and the authored cells between them,
+/// played in one scene. At simulation an `interact` input names
+/// a (tool, node) pair: a recorded cell resolves (its response
+/// set applies as one transaction, its camera preset is named
+/// in the trace); an unrecorded pair is a typed no-op. The
+/// study's evidence is census-grade (the pilot build is
+/// YYC-native; behaviour was inventoried, not measured), so the
+/// grid claims the inventoried system is expressible — never
+/// behavioural parity.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InteractionDef {
+    /// Stable id.
+    pub id: String,
+    /// The scene the grid is played in.
+    pub scene: String,
+    /// Tool ids, sorted.
+    pub tools: Vec<String>,
+    /// Body nodes, sorted by id.
+    pub nodes: Vec<InteractionNode>,
+    /// Camera preset ids, sorted.
+    pub cameras: Vec<String>,
+    /// The authored cells, sorted by (tool, node).
+    pub cells: Vec<InteractionCell>,
+}
+
+impl InteractionDef {
+    /// The cell recorded for this (tool, node) pair.
+    pub fn cell(&self, tool: &str, node: &str) -> Option<&InteractionCell> {
+        self.cells
+            .iter()
+            .find(|row| row.tool == tool && row.node == node)
+    }
 }
 
 /// One prose entry of `content.ron`, keyed by content id. Entries

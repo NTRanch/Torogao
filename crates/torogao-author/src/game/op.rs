@@ -33,6 +33,9 @@ pub enum GameSlice {
     P26,
     /// Phase 2 slice 7: message-thread family (D-461).
     P27,
+    /// Phase 2 slice 8: direct-manipulation interaction
+    /// records (Doujin Fever census).
+    P28,
     /// AUTH-G slice G1 remainder (core records not yet needed by
     /// a Phase 2 slice).
     G1,
@@ -51,6 +54,7 @@ impl GameSlice {
             GameSlice::P24 => "Phase 2 slice 4 (expression table weights)",
             GameSlice::P26 => "Phase 2 slice 6 (visual-state deltas)",
             GameSlice::P27 => "Phase 2 slice 7 (message threads)",
+            GameSlice::P28 => "Phase 2 slice 8 (direct manipulation)",
             GameSlice::G1 => "AUTH-G G1",
             GameSlice::G2 => "AUTH-G G2",
         }
@@ -89,9 +93,10 @@ const fn verb(
 }
 
 /// The AUTH-G manifest: the Amendment's 22 verbs plus the
-/// visual-state pair P2-6 adds and the message-thread family
-/// P2-7 adds (27), alphabetical within group.
-pub const GAME_MANIFEST: [GameVerbSpec; 27] = [
+/// visual-state pair P2-6 adds, the message-thread family
+/// P2-7 adds, and the interaction verb P2-8 adds (28),
+/// alphabetical within group.
+pub const GAME_MANIFEST: [GameVerbSpec; 28] = [
     verb("clock_define", "game core", GameSlice::P22, true, true),
     verb("game_define", "game core", GameSlice::P21, true, true),
     verb(
@@ -129,6 +134,13 @@ pub const GAME_MANIFEST: [GameVerbSpec; 27] = [
         "gallery_entry_define",
         "game flow",
         GameSlice::G2,
+        true,
+        true,
+    ),
+    verb(
+        "interaction_define",
+        "game flow",
+        GameSlice::P28,
         true,
         true,
     ),
@@ -635,6 +647,53 @@ pub struct ThreadPostInput {
 pub struct ThreadReadInput {
     /// The thread id to read.
     pub thread: String,
+}
+
+/// One body node of an interaction grid, as input (P2-8).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InteractionNodeInput {
+    /// Node id (unique within the grid).
+    pub id: String,
+    /// The character the node sits on.
+    pub character: String,
+}
+
+/// One cell of an interaction grid, as input (P2-8).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InteractionCellInput {
+    /// The tool id (a member of the grid's tool set).
+    pub tool: String,
+    /// The node id (a member of the grid's node set).
+    pub node: String,
+    /// The response effect set id, when the cell responds.
+    #[serde(default)]
+    pub response: Option<String>,
+    /// The camera preset id, when the cell reframes.
+    #[serde(default)]
+    pub camera: Option<String>,
+}
+
+/// `interaction_define` inputs (P2-8): the whole grid in one
+/// op, like `appearance_define` authors a whole table — tools,
+/// nodes, camera presets, and the cells between them are one
+/// authored unit, re-authored whole or not at all.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InteractionDefineInput {
+    /// Grid id.
+    pub id: String,
+    /// The scene the grid is played in.
+    pub scene: String,
+    /// Tool ids.
+    pub tools: Vec<String>,
+    /// Body nodes.
+    pub nodes: Vec<InteractionNodeInput>,
+    /// Camera preset ids.
+    pub cameras: Vec<String>,
+    /// The authored cells.
+    pub cells: Vec<InteractionCellInput>,
 }
 
 /// `dialogue_line_define` inputs. The prose travels with the op
@@ -1154,12 +1213,15 @@ pub struct SceneExitDefineInput {
 pub struct LogEntryInput {
     /// The tick the input lands on (1-based).
     pub tick: u64,
-    /// `advance`, `event`, `offer`, or `choice`.
+    /// `advance`, `event`, `offer`, `choice`, or `interact`
+    /// (P2-8).
     pub kind: String,
-    /// The event name or trigger id, by kind (empty for
-    /// `advance`).
+    /// The event name, trigger id, choice id, or interaction
+    /// grid id, by kind (empty for `advance`).
     pub id: String,
-    /// The offer decision (`accept` / `decline`), for offers.
+    /// The offer decision (`accept` / `decline`), for offers;
+    /// the chosen option id, for choices; the
+    /// `<tool>:<node>` pair, for interacts.
     #[serde(default)]
     pub option: Option<String>,
 }
@@ -1235,6 +1297,8 @@ pub enum GameOp {
     ThreadCreate(ThreadCreateInput),
     /// `thread_post`.
     ThreadPost(ThreadPostInput),
+    /// `interaction_define`.
+    InteractionDefine(InteractionDefineInput),
 }
 
 fn typed<T: for<'de> Deserialize<'de>>(verb: &str, inputs: &Value) -> Result<T, Refusal> {
@@ -1273,6 +1337,7 @@ pub fn parse_game_op(verb: &str, inputs: &Value) -> Result<crate::op::Op, Refusa
         "table_define" => GameOp::TableDefine(typed(verb, inputs)?),
         "thread_create" => GameOp::ThreadCreate(typed(verb, inputs)?),
         "thread_post" => GameOp::ThreadPost(typed(verb, inputs)?),
+        "interaction_define" => GameOp::InteractionDefine(typed(verb, inputs)?),
         "trigger_define" => GameOp::TriggerDefine(typed(verb, inputs)?),
         "value_define" => GameOp::ValueDefine(typed(verb, inputs)?),
         "visual_state_define" => GameOp::VisualStateDefine(typed(verb, inputs)?),
@@ -1307,6 +1372,7 @@ impl GameOp {
             GameOp::TableDefine(_) => "table_define",
             GameOp::ThreadCreate(_) => "thread_create",
             GameOp::ThreadPost(_) => "thread_post",
+            GameOp::InteractionDefine(_) => "interaction_define",
             GameOp::TriggerDefine(_) => "trigger_define",
             GameOp::ValueDefine(_) => "value_define",
             GameOp::VisualStateDefine(_) => "visual_state_define",
@@ -1338,6 +1404,7 @@ impl GameOp {
             GameOp::TableDefine(inputs) => serde_json::to_value(inputs),
             GameOp::ThreadCreate(inputs) => serde_json::to_value(inputs),
             GameOp::ThreadPost(inputs) => serde_json::to_value(inputs),
+            GameOp::InteractionDefine(inputs) => serde_json::to_value(inputs),
             GameOp::TriggerDefine(inputs) => serde_json::to_value(inputs),
             GameOp::ValueDefine(inputs) => serde_json::to_value(inputs),
             GameOp::VisualStateDefine(inputs) => serde_json::to_value(inputs),
@@ -1356,8 +1423,8 @@ mod tests {
     use super::{GAME_MANIFEST, GameSlice};
 
     #[test]
-    fn game_manifest_has_27_verbs_alphabetical_within_group() {
-        assert_eq!(GAME_MANIFEST.len(), 27);
+    fn game_manifest_has_28_verbs_alphabetical_within_group() {
+        assert_eq!(GAME_MANIFEST.len(), 28);
         let mut groups: Vec<&str> = Vec::new();
         for spec in GAME_MANIFEST {
             if groups.last() != Some(&spec.group) {
@@ -1382,6 +1449,6 @@ mod tests {
             .count();
         assert_eq!(p21, 4);
         let implemented = GAME_MANIFEST.iter().filter(|spec| spec.implemented).count();
-        assert_eq!(implemented, 27);
+        assert_eq!(implemented, 28);
     }
 }

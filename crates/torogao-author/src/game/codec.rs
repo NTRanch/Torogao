@@ -19,12 +19,12 @@ use crate::game::model::{
     AppearanceDef, AppearanceEntry, AppearanceKind, AppearanceSlot, AppearanceValue, Atom,
     CharacterDef, ChoiceDef, ChoiceOption, ChoiceOrigin, ChoiceTarget, Clock, ClockField, CmpOp,
     ConditionDef, ContentEntry, DialogueLine, Direction, EffectSetDef, EndingDef, Expr, FlagDef,
-    FlagEdge, FlagScope, GalleryEntryDef, GalleryUnlock, Game, Lifetime, Migration, OfferDef,
-    Overflow, Presentation, Repetition, RngStreamDef, SaveContextPolicy, SaveSchema,
-    SceneBindingDef, SceneDef, SceneExitDef, ScheduleDef, ScheduleOverride, ScheduleSlot,
-    SlotHolds, StatDef, StatInitial, StatKind, StatScope, TableDef, TableOutcome, TableWeight,
-    ThreadDef, ThreadInterludeDef, ThreadMessage, TierDef, TriggerDef, TriggerKind, ValueDef,
-    VisualStateDef,
+    FlagEdge, FlagScope, GalleryEntryDef, GalleryUnlock, Game, InteractionCell, InteractionDef,
+    InteractionNode, Lifetime, Migration, OfferDef, Overflow, Presentation, Repetition,
+    RngStreamDef, SaveContextPolicy, SaveSchema, SceneBindingDef, SceneDef, SceneExitDef,
+    ScheduleDef, ScheduleOverride, ScheduleSlot, SlotHolds, StatDef, StatInitial, StatKind,
+    StatScope, TableDef, TableOutcome, TableWeight, ThreadDef, ThreadInterludeDef, ThreadMessage,
+    TierDef, TriggerDef, TriggerKind, ValueDef, VisualStateDef,
 };
 use crate::refusal::{Refusal, RefusalClass, refuse};
 use crate::ron::Ron;
@@ -221,7 +221,56 @@ pub(crate) fn game_to_ron(game: &Game) -> Ron {
             Ron::List(game.threads.iter().map(thread_to_ron).collect()),
         );
     }
+    // The P2-8 interaction surface is absent-means-absent the
+    // same way: a project with no grids keeps its exact bytes.
+    if !game.interactions.is_empty() {
+        insert_field(
+            &mut fields,
+            "scenes",
+            "interactions",
+            Ron::List(game.interactions.iter().map(interaction_to_ron).collect()),
+        );
+    }
     record("Game", fields)
+}
+
+fn interaction_to_ron(grid: &InteractionDef) -> Ron {
+    record(
+        "Interaction",
+        vec![
+            ("id", text(&grid.id)),
+            ("cameras", texts(&grid.cameras)),
+            (
+                "cells",
+                Ron::List(grid.cells.iter().map(interaction_cell_to_ron).collect()),
+            ),
+            (
+                "nodes",
+                Ron::List(grid.nodes.iter().map(interaction_node_to_ron).collect()),
+            ),
+            ("scene", text(&grid.scene)),
+            ("tools", texts(&grid.tools)),
+        ],
+    )
+}
+
+fn interaction_node_to_ron(node: &InteractionNode) -> Ron {
+    record(
+        "InteractionNode",
+        vec![("id", text(&node.id)), ("character", text(&node.character))],
+    )
+}
+
+fn interaction_cell_to_ron(cell: &InteractionCell) -> Ron {
+    record(
+        "InteractionCell",
+        vec![
+            ("camera", opt(cell.camera.as_ref(), |id| text(id))),
+            ("node", text(&cell.node)),
+            ("response", opt(cell.response.as_ref(), |id| text(id))),
+            ("tool", text(&cell.tool)),
+        ],
+    )
 }
 
 fn thread_to_ron(thread: &ThreadDef) -> Ron {
@@ -1144,6 +1193,11 @@ pub(crate) fn game_from_ron(value: Ron) -> Result<Game, Refusal> {
         Some(Ron::List(items)) => collect(items, thread_from_ron)?,
         Some(_) => return wrong_type("threads", "a list"),
     };
+    let interactions = match fields.try_take("interactions") {
+        None => Vec::new(),
+        Some(Ron::List(items)) => collect(items, interaction_from_ron)?,
+        Some(_) => return wrong_type("interactions", "a list"),
+    };
     let alter_ego_veto = opt_string_absent(&mut fields, "alter_ego_veto")?;
     let tiers = collect(fields.list("tiers")?, tier_from_ron)?;
     let triggers = collect(fields.list("triggers")?, trigger_from_ron)?;
@@ -1177,6 +1231,7 @@ pub(crate) fn game_from_ron(value: Ron) -> Result<Game, Refusal> {
         scene_exits: sorted_scene_exits(scene_exits)?,
         save_schema,
         threads: sorted_unique(threads, "threads", |item| &item.id)?,
+        interactions: sorted_unique(interactions, "interactions", |item| &item.id)?,
     };
     fields.done()?;
     Ok(game)
@@ -1253,6 +1308,42 @@ fn sorted_scene_exits(mut items: Vec<SceneExitDef>) -> Result<Vec<SceneExitDef>,
         }
     }
     Ok(items)
+}
+
+fn interaction_from_ron(value: Ron) -> Result<InteractionDef, Refusal> {
+    let mut fields = open(value, "Interaction")?;
+    let grid = InteractionDef {
+        id: fields.string("id")?,
+        scene: fields.string("scene")?,
+        tools: as_strings(fields.list("tools")?, "tools")?,
+        nodes: collect(fields.list("nodes")?, interaction_node_from_ron)?,
+        cameras: as_strings(fields.list("cameras")?, "cameras")?,
+        cells: collect(fields.list("cells")?, interaction_cell_from_ron)?,
+    };
+    fields.done()?;
+    Ok(grid)
+}
+
+fn interaction_node_from_ron(value: Ron) -> Result<InteractionNode, Refusal> {
+    let mut fields = open(value, "InteractionNode")?;
+    let node = InteractionNode {
+        id: fields.string("id")?,
+        character: fields.string("character")?,
+    };
+    fields.done()?;
+    Ok(node)
+}
+
+fn interaction_cell_from_ron(value: Ron) -> Result<InteractionCell, Refusal> {
+    let mut fields = open(value, "InteractionCell")?;
+    let cell = InteractionCell {
+        tool: fields.string("tool")?,
+        node: fields.string("node")?,
+        response: fields.opt_string("response")?,
+        camera: fields.opt_string("camera")?,
+    };
+    fields.done()?;
+    Ok(cell)
 }
 
 fn thread_from_ron(value: Ron) -> Result<ThreadDef, Refusal> {

@@ -14,7 +14,8 @@
 //!    becomes an offer, for offer-bearing triggers).
 //! 3. Consume one choice-log input: an advance, an event (its
 //!    `on_event` triggers fire as the transaction), an offer
-//!    decision, or a choice. A choice resolves its authored
+//!    decision, a choice, or an interact (P2-8: a grid cell
+//!    resolves, or the pair is a typed no-op). A choice resolves its authored
 //!    record: the offered options (visible and enabled, in
 //!    (sort value, authored ordinal) order) are recorded in the
 //!    trace, the picked option must be among them, its effect
@@ -71,12 +72,14 @@ use std::collections::BTreeSet;
 pub struct LogEntry {
     /// The tick the input lands on (1-based).
     pub tick: u64,
-    /// `advance`, `event`, `offer`, or `choice`.
+    /// `advance`, `event`, `offer`, `choice`, or `interact`.
     pub kind: String,
-    /// The event name, trigger id, or choice id, by kind.
+    /// The event name, trigger id, choice id, or interaction
+    /// grid id, by kind.
     pub id: String,
     /// The offer decision (`accept` / `decline`), for offers;
-    /// the chosen option id, for choices.
+    /// the chosen option id, for choices; the
+    /// `<tool>:<node>` pair, for interacts.
     pub option: Option<String>,
 }
 
@@ -259,7 +262,7 @@ pub fn parse_log(inputs: &[LogEntryInput], ticks: u64) -> Result<Vec<Option<LogE
             );
         }
         match input.kind.as_str() {
-            "advance" | "choice" | "event" | "offer" => {}
+            "advance" | "choice" | "event" | "interact" | "offer" => {}
             other => {
                 return refuse(
                     RefusalClass::UnknownKind,
@@ -961,6 +964,7 @@ fn apply_input(
         }
         "offer" => apply_offer_input(game, state, entry, events),
         "choice" => apply_choice_input(game, state, entry, events),
+        "interact" => apply_interact_input(game, state, entry, events),
         _ => refuse(
             RefusalClass::UnknownKind,
             format!("choice-log entry kind '{}' is not known", entry.kind),
@@ -1185,6 +1189,79 @@ fn apply_choice_input(
                 state.pending_scene = Some(exit.target.clone());
             }
         }
+    }
+    Ok(())
+}
+
+/// Step 3 (interactions, P2-8): the input names an
+/// interaction grid and a `<tool>:<node>` pair. A grid the
+/// game does not define refuses the run (`TG-GAME-GRAPH`):
+/// the log and the game have diverged. A pair the grid does
+/// not record — or a grid played outside its own scene — is
+/// a typed no-op: a trace event, never a state change, so an
+/// exploratory touch costs the run nothing. A recorded cell
+/// resolves in the trace (with its camera preset when it
+/// carries one) and its response set applies as one
+/// transaction, like a choice option's set.
+fn apply_interact_input(
+    game: &Game,
+    state: &mut GameState,
+    entry: &LogEntry,
+    events: &mut Vec<String>,
+) -> Result<(), Refusal> {
+    let Some(grid) = game.interaction(&entry.id) else {
+        return refuse(
+            RefusalClass::GameGraph,
+            format!(
+                "input interacts through grid '{}', but the game defines no such grid",
+                entry.id
+            ),
+        );
+    };
+    let Some(pair) = &entry.option else {
+        return refuse(
+            RefusalClass::Malformed,
+            "an interact input must carry an option (the '<tool>:<node>' pair)",
+        );
+    };
+    let Some((tool, node)) = pair.split_once(':') else {
+        return refuse(
+            RefusalClass::Malformed,
+            format!("interact pair '{pair}' is not of the form '<tool>:<node>'"),
+        );
+    };
+    if state.current_scene.as_deref() != Some(grid.scene.as_str()) {
+        events.push(format!(
+            "tick {}: interact '{}' {} x {} — the grid belongs to scene '{}'; no-op",
+            state.tick, grid.id, tool, node, grid.scene
+        ));
+        return Ok(());
+    }
+    let Some(cell) = grid.cell(tool, node) else {
+        events.push(format!(
+            "tick {}: interact '{}' {} x {} — no record; no-op",
+            state.tick, grid.id, tool, node
+        ));
+        return Ok(());
+    };
+    match &cell.camera {
+        Some(camera) => events.push(format!(
+            "tick {}: interact '{}' {} x {} resolved; camera preset '{}'",
+            state.tick, grid.id, tool, node, camera
+        )),
+        None => events.push(format!(
+            "tick {}: interact '{}' {} x {} resolved",
+            state.tick, grid.id, tool, node
+        )),
+    }
+    if let Some(set) = &cell.response {
+        apply_named_set(
+            game,
+            state,
+            set,
+            events,
+            &format!("interaction '{}' cell {} x {}", grid.id, tool, node),
+        );
     }
     Ok(())
 }

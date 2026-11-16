@@ -114,6 +114,16 @@ pub const GAME_EXPR_DEPTH_MAX: usize = 24;
 pub const GAME_EXPR_NODES_MAX: usize = 4096;
 /// Maximum flags in one game.
 pub const GAME_FLAGS_MAX: usize = 1024;
+/// Maximum interaction grids in one game (P2-8).
+pub const GAME_INTERACTIONS_MAX: usize = 256;
+/// Maximum camera presets in one interaction grid (P2-8).
+pub const GAME_INTERACTION_CAMERAS_MAX: usize = 64;
+/// Maximum cells in one interaction grid (P2-8).
+pub const GAME_INTERACTION_CELLS_MAX: usize = 1024;
+/// Maximum body nodes in one interaction grid (P2-8).
+pub const GAME_INTERACTION_NODES_MAX: usize = 128;
+/// Maximum tools in one interaction grid (P2-8).
+pub const GAME_INTERACTION_TOOLS_MAX: usize = 64;
 /// Maximum lifetime window on a stat, in days.
 pub const GAME_LIFETIME_DAYS_MAX: u32 = 36_500;
 /// Maximum offer expiry window on a trigger, in days.

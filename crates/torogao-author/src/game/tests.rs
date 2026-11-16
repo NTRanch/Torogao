@@ -581,6 +581,22 @@ fn game_section_codec_round_trips_every_record_shape() {
             next: None,
             hook_expression: None,
         }],
+        interactions: vec![InteractionDef {
+            id: "grid".to_string(),
+            scene: "intro".to_string(),
+            tools: vec!["touch".to_string()],
+            nodes: vec![InteractionNode {
+                id: "head".to_string(),
+                character: "amy".to_string(),
+            }],
+            cameras: vec!["tab_head".to_string()],
+            cells: vec![InteractionCell {
+                tool: "touch".to_string(),
+                node: "head".to_string(),
+                response: None,
+                camera: Some("tab_head".to_string()),
+            }],
+        }],
         appearances: vec![AppearanceDef {
             base: vec![
                 AppearanceEntry {
@@ -2567,4 +2583,327 @@ fn visual_state_gates_refuse_typed() {
         json!({"character": "mia", "state": "MindControl-1", "delta": [{"slot": "body", "value": "other"}]}),
     );
     assert_eq!(bad.doc["code"], "TG-AUTH-CONFLICT", "{}", bad.doc);
+}
+
+// ---- P2-8: direct-manipulation interaction records ---------------
+//
+// The parity fixture is the Doujin Fever study's census: the
+// eight cursor tools (`scr_cursors_*`), the body nodes the
+// GUINode sprites and `scr_TabAngle_*` camera scripts name,
+// and a representative authored cell set over them. The
+// study's evidence is census-grade — the pilot build is
+// YYC-native and its behaviour was inventoried, not measured —
+// so these tests prove the record family expresses the
+// inventoried system and resolves it at simulation; they
+// claim no behavioural parity.
+
+fn doujin_grid_inputs() -> Value {
+    json!({
+        "id": "night_grid",
+        "scene": "assault",
+        "tools": ["touch", "undress", "tongue", "mushroom", "mushroom_insert",
+                  "mix", "move", "grab"],
+        "nodes": [
+            {"id": "head", "character": "girl"},
+            {"id": "oppai_r", "character": "girl"},
+            {"id": "hand_l", "character": "girl"},
+            {"id": "lower", "character": "girl"},
+            {"id": "panties", "character": "girl"},
+            {"id": "upper", "character": "girl"},
+        ],
+        "cameras": ["tab_head", "tab_oppai_r", "tab_hand_l", "tab_lower",
+                    "tab_panties", "tab_upper_rotation"],
+        "cells": [
+            {"tool": "touch", "node": "head", "response": "resp_touch_head",
+             "camera": "tab_head"},
+            {"tool": "touch", "node": "oppai_r", "response": "resp_touch_oppai",
+             "camera": "tab_oppai_r"},
+            {"tool": "undress", "node": "upper", "response": "resp_undress",
+             "camera": "tab_upper_rotation"},
+            {"tool": "grab", "node": "hand_l", "camera": "tab_hand_l"},
+            {"tool": "tongue", "node": "lower", "response": "resp_tongue"},
+        ],
+    })
+}
+
+fn author_doujin_fever(root: &Path) {
+    let stir_set = |id: &str, amount: i64| {
+        (
+            "effect_set_define",
+            json!({
+                "id": id,
+                "atoms": [{
+                    "kind": "stat_add", "stat": "stir",
+                    "amount": {"kind": "lit", "value": amount},
+                }],
+            }),
+        )
+    };
+    let answer = script(
+        root,
+        vec![
+            ("project_init", init_inputs()),
+            (
+                "game_define",
+                json!({"id": "doujin_fever_fixture", "start_scene": "assault"}),
+            ),
+            ("clock_define", json!({"slots": ["night_1", "night_2"]})),
+            (
+                "stat_define",
+                json!({
+                    "id": "stir", "scope": "game", "kind": {"kind": "int"},
+                    "min": 0, "max": 100, "default": 0, "overflow": "clamp",
+                }),
+            ),
+            (
+                "character_define",
+                json!({"id": "girl", "name_ref": "name_girl", "name_text": "Girl"}),
+            ),
+            (
+                "scene_define",
+                json!({"id": "assault", "presentation": "room"}),
+            ),
+            (
+                "scene_define",
+                json!({"id": "shop", "presentation": "room"}),
+            ),
+            stir_set("resp_touch_head", 5),
+            stir_set("resp_touch_oppai", 10),
+            stir_set("resp_undress", 15),
+            stir_set("resp_tongue", 8),
+            ("interaction_define", doujin_grid_inputs()),
+            (
+                "interaction_define",
+                json!({
+                    "id": "shop_grid", "scene": "shop",
+                    "tools": ["touch"],
+                    "nodes": [{"id": "counter", "character": "girl"}],
+                    "cameras": [],
+                    "cells": [{"tool": "touch", "node": "counter"}],
+                }),
+            ),
+        ],
+    );
+    assert_eq!(answer.status, Status::Ok, "doujin fixture: {}", answer.doc);
+    assert!(
+        validate_codes(root).is_empty(),
+        "doujin fixture validates clean: {:?}",
+        validate_codes(root)
+    );
+}
+
+fn stir_key() -> StatKey {
+    StatKey {
+        character: None,
+        stat: "stir".to_string(),
+    }
+}
+
+fn interact_log(
+    entries: &[(u64, &str, &str)],
+    ticks: u64,
+) -> Vec<Option<crate::game::simulate::LogEntry>> {
+    let inputs: Vec<LogEntryInput> = entries
+        .iter()
+        .map(|(tick, grid, pair)| LogEntryInput {
+            tick: *tick,
+            kind: "interact".to_string(),
+            id: (*grid).to_string(),
+            option: Some((*pair).to_string()),
+        })
+        .collect();
+    parse_log(&inputs, ticks).expect("log parses")
+}
+
+#[test]
+fn doujin_grid_authors_canonically_and_replays() {
+    let root = test_root("doujin-author");
+    author_doujin_fever(&root);
+    let project_text = read(&root, PROJECT_FILE);
+    assert!(project_text.contains("interactions"), "{project_text}");
+    // Canonical shape: tools sorted however they were authored.
+    let loaded = load_project(&root);
+    let grid = loaded
+        .project
+        .game
+        .as_ref()
+        .expect("game section")
+        .interaction("night_grid")
+        .expect("grid stored");
+    assert_eq!(grid.tools.first().map(String::as_str), Some("grab"));
+    assert_eq!(grid.cells.len(), 5);
+    assert_eq!(
+        grid.cell("touch", "head")
+            .and_then(|cell| cell.camera.as_deref()),
+        Some("tab_head")
+    );
+    // The upsert law: identical redefinition is a no-op and
+    // moves no byte; a differing one conflicts.
+    let before = read(&root, PROJECT_FILE);
+    let same = verb(&root, "interaction_define", doujin_grid_inputs());
+    assert_eq!(same.status, Status::Ok, "{}", same.doc);
+    assert_eq!(read(&root, PROJECT_FILE), before, "no-op churned bytes");
+    let mut changed = doujin_grid_inputs();
+    changed["cells"] = json!([]);
+    let changed = verb(&root, "interaction_define", changed);
+    assert_eq!(changed.status, Status::Refused);
+    assert_eq!(changed.doc["code"], "TG-AUTH-CONFLICT", "{}", changed.doc);
+    let replay = verb(&root, "project_replay", json!({}));
+    assert_eq!(replay.status, Status::Ok, "{}", replay.doc);
+    assert_eq!(replay.doc["result"], "identical");
+}
+
+#[test]
+fn doujin_interactions_resolve_and_unrecorded_pairs_noop() {
+    let root = test_root("doujin-sim");
+    author_doujin_fever(&root);
+    let loaded = load_project(&root);
+    let project = &loaded.project;
+    let log = interact_log(
+        &[
+            (1, "night_grid", "touch:head"),
+            (2, "night_grid", "touch:oppai_r"),
+            (3, "night_grid", "mix:head"),
+            (4, "night_grid", "grab:hand_l"),
+            (5, "shop_grid", "touch:counter"),
+        ],
+        6,
+    );
+    let mut state = genesis(project, 7).expect("genesis");
+    let (events, _chain) = run_to(project, &mut state, &log, 6);
+    // Recorded cells applied their responses: 5 + 10; the
+    // camera-only cell and both no-ops changed nothing.
+    assert_eq!(state.stats[&stir_key()], 15, "events: {events:?}");
+    assert!(
+        events.iter().any(|event| event
+            .contains("interact 'night_grid' touch x head resolved; camera preset 'tab_head'")),
+        "resolution is traced with its camera preset: {events:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.contains("interact 'night_grid' mix x head — no record; no-op")),
+        "unrecorded pair is a typed no-op: {events:?}"
+    );
+    assert!(
+        events.iter().any(|event| event.contains(
+            "interact 'shop_grid' touch x counter — the grid belongs to scene 'shop'; no-op"
+        )),
+        "a grid outside its scene is a typed no-op: {events:?}"
+    );
+    // The no-op ticks hash exactly as if the inputs were absent.
+    let bare = interact_log(
+        &[
+            (1, "night_grid", "touch:head"),
+            (2, "night_grid", "touch:oppai_r"),
+        ],
+        6,
+    );
+    let mut bare_state = genesis(project, 7).expect("genesis");
+    let (_e, bare_chain) = run_to(project, &mut bare_state, &bare, 6);
+    let (_e2, chain) = {
+        let mut again = genesis(project, 7).expect("genesis");
+        run_to(project, &mut again, &log, 6)
+    };
+    assert_eq!(chain, bare_chain, "no-op inputs move no hash");
+}
+
+#[test]
+fn doujin_simulation_is_byte_identical_across_three_runs() {
+    let root = test_root("doujin-chain");
+    author_doujin_fever(&root);
+    let inputs = json!({
+        "run_seed": 7,
+        "ticks": 6,
+        "choice_log": [
+            {"tick": 1, "kind": "interact", "id": "night_grid", "option": "touch:head"},
+            {"tick": 2, "kind": "interact", "id": "night_grid", "option": "undress:upper"},
+            {"tick": 3, "kind": "interact", "id": "night_grid", "option": "move:lower"},
+        ],
+    });
+    let first = verb(&root, "game_simulate", inputs.clone());
+    assert_eq!(first.status, Status::Ok, "{}", first.doc);
+    for _ in 0..2 {
+        let again = verb(&root, "game_simulate", inputs.clone());
+        assert_eq!(again.doc, first.doc, "run evidence is byte-identical");
+    }
+    // An interact naming a grid the game does not define
+    // refuses the run: the log and the game have diverged.
+    let bad = verb(
+        &root,
+        "game_simulate",
+        json!({
+            "run_seed": 7,
+            "ticks": 2,
+            "choice_log": [
+                {"tick": 1, "kind": "interact", "id": "no_such_grid", "option": "touch:head"},
+            ],
+        }),
+    );
+    assert_eq!(bad.status, Status::Refused, "{}", bad.doc);
+    assert_eq!(bad.doc["code"], "TG-GAME-GRAPH", "{}", bad.doc);
+}
+
+#[test]
+fn interaction_define_refuses_dangling_and_duplicate_cells() {
+    let root = test_root("doujin-refusals");
+    author_doujin_fever(&root);
+    let mut base = doujin_grid_inputs();
+    base["id"] = json!("second_grid");
+    // A cell naming a tool outside the grid's own set.
+    let mut bad = base.clone();
+    bad["cells"] = json!([{"tool": "laser", "node": "head"}]);
+    let answer = verb(&root, "interaction_define", bad);
+    assert_eq!(answer.status, Status::Refused);
+    assert_eq!(answer.doc["code"], "TG-AUTH-DANGLING", "{}", answer.doc);
+    // A cell naming a node outside the grid's own set.
+    let mut bad = base.clone();
+    bad["cells"] = json!([{"tool": "touch", "node": "elbow"}]);
+    let answer = verb(&root, "interaction_define", bad);
+    assert_eq!(answer.doc["code"], "TG-AUTH-DANGLING", "{}", answer.doc);
+    // A cell naming a response set the game does not define.
+    let mut bad = base.clone();
+    bad["cells"] = json!([{"tool": "touch", "node": "head", "response": "nope"}]);
+    let answer = verb(&root, "interaction_define", bad);
+    assert_eq!(answer.doc["code"], "TG-AUTH-DANGLING", "{}", answer.doc);
+    // A cell naming a camera outside the grid's preset set.
+    let mut bad = base.clone();
+    bad["cells"] = json!([{"tool": "touch", "node": "head", "camera": "drone"}]);
+    let answer = verb(&root, "interaction_define", bad);
+    assert_eq!(answer.doc["code"], "TG-AUTH-DANGLING", "{}", answer.doc);
+    // A node on a character the game does not define.
+    let mut bad = base.clone();
+    bad["nodes"] = json!([{"id": "head", "character": "ghost"}]);
+    bad["cells"] = json!([]);
+    let answer = verb(&root, "interaction_define", bad);
+    assert_eq!(answer.doc["code"], "TG-AUTH-DANGLING", "{}", answer.doc);
+    // A grid in a scene the game does not define.
+    let mut bad = base.clone();
+    bad["scene"] = json!("dungeon");
+    let answer = verb(&root, "interaction_define", bad);
+    assert_eq!(answer.doc["code"], "TG-AUTH-DANGLING", "{}", answer.doc);
+    // The same (tool, node) pair authored twice.
+    let mut bad = base.clone();
+    bad["cells"] = json!([
+        {"tool": "touch", "node": "head"},
+        {"tool": "touch", "node": "head", "camera": "tab_head"},
+    ]);
+    let answer = verb(&root, "interaction_define", bad);
+    assert_eq!(answer.status, Status::Refused);
+    assert_eq!(answer.doc["code"], "TG-AUTH-MALFORMED", "{}", answer.doc);
+}
+
+#[test]
+fn plain_vn_project_has_no_interaction_surface() {
+    // The slice's negative gate: a project authored before
+    // the family keeps its exact shape — no grid field, and
+    // its simulation chain is the pre-slice chain.
+    let root = test_root("doujin-negative");
+    author_plain_vn(&root);
+    let project_text = read(&root, PROJECT_FILE);
+    assert!(
+        !project_text.contains("Interaction"),
+        "plain-VN project gained an interaction surface: {project_text}"
+    );
+    assert_eq!(validate_codes(&root), Vec::<String>::new());
 }

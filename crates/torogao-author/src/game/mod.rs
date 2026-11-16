@@ -19,7 +19,15 @@
 //! interpreter's interlude semantics — instant batch delivery
 //! at scene entry, an authored reply delay consumed on the
 //! step clock, and thread choices through the ordinary choice
-//! machinery.
+//! machinery. Slice P2-8 adds the direct-manipulation
+//! interaction family: `interaction_define` authors a scene's
+//! (tool × body-node) grid — response effect sets and camera
+//! presets as records — and the interpreter's `interact` input
+//! resolves a recorded cell or lands as a typed no-op. The
+//! family's evidence is the Doujin Fever study's census
+//! (cursor scripts, GUINode sprites, the TabAngle camera
+//! family): census-grade, inventoried not measured, and the
+//! records claim expressibility, never behavioural parity.
 
 pub mod apply;
 pub mod codec;

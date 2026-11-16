@@ -695,14 +695,15 @@ fn game_manifest_counts_the_flow_verbs_live() {
     // The trunk census: GAME_MANIFEST directly (verbs_doc()
     // covers the rig manifest only — the documented
     // adaptation of the branch's census test).
-    assert_eq!(GAME_MANIFEST.len(), 27);
+    assert_eq!(GAME_MANIFEST.len(), 28);
     let implemented = GAME_MANIFEST.iter().filter(|spec| spec.implemented).count();
-    assert_eq!(implemented, 27);
+    assert_eq!(implemented, 28);
     for name in [
         "choice_define",
         "ending_define",
         "gallery_entry_define",
         "game_save_schema_define",
+        "interaction_define",
         "schedule_define",
         "scene_bind_rig",
         "scene_exit_define",

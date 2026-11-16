@@ -10,11 +10,12 @@ use crate::game::model::{
     AppearanceDef, AppearanceEntry, AppearanceKind, AppearanceSlot, AppearanceValue, Atom,
     CharacterDef, ChoiceDef, ChoiceOption, ChoiceOrigin, ChoiceTarget, Clock, ConditionDef,
     DialogueLine, Direction, EffectSetDef, EndingDef, FlagDef, FlagEdge, FlagScope,
-    GAME_FORMAT_VERSION, GalleryEntryDef, GalleryUnlock, Game, Lifetime, Migration, OfferDef,
-    Overflow, Repetition, RngStreamDef, SaveContextPolicy, SaveSchema, SceneBindingDef, SceneDef,
-    SceneExitDef, ScheduleDef, ScheduleOverride, ScheduleSlot, SlotHolds, StatDef, StatInitial,
-    StatKind, StatScope, TableDef, TableOutcome, TableWeight, ThreadDef, ThreadInterludeDef,
-    ThreadMessage, TierDef, TriggerDef, TriggerKind, ValueDef, VisualStateDef,
+    GAME_FORMAT_VERSION, GalleryEntryDef, GalleryUnlock, Game, InteractionCell, InteractionDef,
+    InteractionNode, Lifetime, Migration, OfferDef, Overflow, Repetition, RngStreamDef,
+    SaveContextPolicy, SaveSchema, SceneBindingDef, SceneDef, SceneExitDef, ScheduleDef,
+    ScheduleOverride, ScheduleSlot, SlotHolds, StatDef, StatInitial, StatKind, StatScope, TableDef,
+    TableOutcome, TableWeight, ThreadDef, ThreadInterludeDef, ThreadMessage, TierDef, TriggerDef,
+    TriggerKind, ValueDef, VisualStateDef,
 };
 use crate::game::op::{
     AppearanceDefineInput, AppearanceEntryInput, AppearanceKindInput, AppearanceSlotInput,
@@ -22,7 +23,8 @@ use crate::game::op::{
     ChoiceTargetInput, ClockDefineInput, ConditionDefineInput, DialogueLineDefineInput,
     DirectionInput, EffectSetDefineInput, EndingDefineInput, FlagDefineInput, FlagEdgeInput,
     FlagScopeInput, GalleryEntryDefineInput, GalleryUnlockInput, GameDefineInput, GameOp,
-    OverflowInput, PresentationInput, RepetitionInput, RngStreamDefineInput, SavePolicyInput,
+    InteractionCellInput, InteractionDefineInput, InteractionNodeInput, OverflowInput,
+    PresentationInput, RepetitionInput, RngStreamDefineInput, SavePolicyInput,
     SaveSchemaDefineInput, SceneBindRigInput, SceneDefineInput, SceneExitDefineInput,
     ScheduleDefineInput, StatDefineInput, StatKindInput, StatScopeInput, StatTierDefineInput,
     TableDefineInput, TableOutcomeInput, ThreadCreateInput, ThreadPostInput, TriggerDefineInput,
@@ -111,6 +113,76 @@ pub(crate) fn thread_create_input_of(record: &ThreadDef) -> ThreadCreateInput {
     ThreadCreateInput {
         id: record.id.clone(),
         participants: record.participants.clone(),
+    }
+}
+
+/// The interaction grid record an `interaction_define`
+/// produces (P2-8): tools and cameras sorted, nodes sorted by
+/// id, cells sorted by (tool, node) — the record is canonical
+/// however the author ordered the inputs.
+pub(crate) fn interaction_record(inputs: &InteractionDefineInput) -> InteractionDef {
+    let mut tools = inputs.tools.clone();
+    tools.sort();
+    let mut cameras = inputs.cameras.clone();
+    cameras.sort();
+    let mut nodes: Vec<InteractionNode> = inputs
+        .nodes
+        .iter()
+        .map(|row| InteractionNode {
+            id: row.id.clone(),
+            character: row.character.clone(),
+        })
+        .collect();
+    nodes.sort_by(|a, b| a.id.cmp(&b.id));
+    let mut cells: Vec<InteractionCell> = inputs
+        .cells
+        .iter()
+        .map(|row| InteractionCell {
+            tool: row.tool.clone(),
+            node: row.node.clone(),
+            response: row.response.clone(),
+            camera: row.camera.clone(),
+        })
+        .collect();
+    cells.sort_by(|a, b| {
+        (a.tool.as_str(), a.node.as_str()).cmp(&(b.tool.as_str(), b.node.as_str()))
+    });
+    InteractionDef {
+        id: inputs.id.clone(),
+        scene: inputs.scene.clone(),
+        tools,
+        nodes,
+        cameras,
+        cells,
+    }
+}
+
+/// The inputs a stored interaction grid rebuilds from (for
+/// the validation sweep).
+pub(crate) fn interaction_input_of(record: &InteractionDef) -> InteractionDefineInput {
+    InteractionDefineInput {
+        id: record.id.clone(),
+        scene: record.scene.clone(),
+        tools: record.tools.clone(),
+        nodes: record
+            .nodes
+            .iter()
+            .map(|row| InteractionNodeInput {
+                id: row.id.clone(),
+                character: row.character.clone(),
+            })
+            .collect(),
+        cameras: record.cameras.clone(),
+        cells: record
+            .cells
+            .iter()
+            .map(|row| InteractionCellInput {
+                tool: row.tool.clone(),
+                node: row.node.clone(),
+                response: row.response.clone(),
+                camera: row.camera.clone(),
+            })
+            .collect(),
     }
 }
 
@@ -782,6 +854,11 @@ pub fn apply_game(project: &mut Project, op: &GameOp) -> Result<(), Refusal> {
                 .find(|row| row.id == inputs.thread)
                 .expect("decide() admitted a post to a missing thread");
             thread.messages.push(record);
+        }
+        GameOp::InteractionDefine(inputs) => {
+            let record = interaction_record(inputs);
+            let game = game_mut(project);
+            upsert(&mut game.interactions, record, |g| &g.id);
         }
     }
     if let Some(game) = &mut project.game {

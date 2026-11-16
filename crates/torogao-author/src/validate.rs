@@ -934,6 +934,24 @@ fn game_ops(project: &Project) -> Vec<Op> {
             );
         }
     }
+    for grid in &game.interactions {
+        let mut deps = vec!["game".to_string(), format!("scene:{}", grid.scene)];
+        for node in &grid.nodes {
+            deps.push(format!("character:{}", node.character));
+        }
+        for cell in &grid.cells {
+            if let Some(response) = &cell.response {
+                deps.push(format!("set:{response}"));
+            }
+        }
+        push(
+            format!("interaction:{}", grid.id),
+            deps,
+            Op::Game(GameOp::InteractionDefine(
+                crate::game::apply::interaction_input_of(grid),
+            )),
+        );
+    }
     for value in &game.values {
         let mut deps = vec!["game".to_string()];
         expr_deps(&value.expr, &mut deps);
@@ -1511,6 +1529,70 @@ fn game_findings(project: &Project) -> Vec<Refusal> {
                             thread.id, message.id, message.at, index
                         ),
                     ));
+                }
+            }
+        }
+        for grid in &game.interactions {
+            if game.scene(&grid.scene).is_none() {
+                dangling(
+                    &mut findings,
+                    format!(
+                        "interaction grid '{}' names missing scene '{}'",
+                        grid.id, grid.scene
+                    ),
+                );
+            }
+            for node in &grid.nodes {
+                if game.character(&node.character).is_none() {
+                    dangling(
+                        &mut findings,
+                        format!(
+                            "interaction grid '{}' node '{}' names missing character '{}'",
+                            grid.id, node.id, node.character
+                        ),
+                    );
+                }
+            }
+            for cell in &grid.cells {
+                if !grid.tools.iter().any(|tool| tool == &cell.tool) {
+                    dangling(
+                        &mut findings,
+                        format!(
+                            "interaction grid '{}' cell names tool '{}' outside its tool set",
+                            grid.id, cell.tool
+                        ),
+                    );
+                }
+                if !grid.nodes.iter().any(|node| node.id == cell.node) {
+                    dangling(
+                        &mut findings,
+                        format!(
+                            "interaction grid '{}' cell names node '{}' outside its node set",
+                            grid.id, cell.node
+                        ),
+                    );
+                }
+                if let Some(response) = &cell.response
+                    && game.effect_set(response).is_none()
+                {
+                    dangling(
+                        &mut findings,
+                        format!(
+                            "interaction grid '{}' cell ({}, {}) names missing effect set '{response}'",
+                            grid.id, cell.tool, cell.node
+                        ),
+                    );
+                }
+                if let Some(camera) = &cell.camera
+                    && !grid.cameras.iter().any(|preset| preset == camera)
+                {
+                    dangling(
+                        &mut findings,
+                        format!(
+                            "interaction grid '{}' cell ({}, {}) names camera preset '{camera}' outside its preset set",
+                            grid.id, cell.tool, cell.node
+                        ),
+                    );
                 }
             }
         }

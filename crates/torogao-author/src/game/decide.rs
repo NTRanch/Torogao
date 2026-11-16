@@ -8,9 +8,10 @@ use crate::decide::{Verdict, check_id};
 use crate::game::apply::{
     appearance_record, character_record, choice_record, clock_record, condition_record,
     dialogue_record, effect_set_record, ending_record, flag_record, gallery_record,
-    save_schema_record, save_schema_version_of, scene_binding_record, scene_exit_record,
-    scene_record, schedule_record, stat_record, stream_record, table_record, thread_message_record,
-    thread_record, tier_record, trigger_record, value_record, visual_state_record,
+    interaction_record, save_schema_record, save_schema_version_of, scene_binding_record,
+    scene_exit_record, scene_record, schedule_record, stat_record, stream_record, table_record,
+    thread_message_record, thread_record, tier_record, trigger_record, value_record,
+    visual_state_record,
 };
 use crate::game::model::{
     AppearanceKind, GAME_FORMAT_VERSION, GAME_FORMAT_VERSION_FIRST, GAME_HASH_ALGO, Game,
@@ -20,23 +21,24 @@ use crate::game::op::{
     AppearanceDefineInput, AppearanceEntryInput, AppearanceValueInput, AtomInput,
     CharacterDefineInput, ChoiceDefineInput, ClockDefineInput, ConditionDefineInput,
     DialogueLineDefineInput, EffectSetDefineInput, EndingDefineInput, ExprInput, FlagDefineInput,
-    GalleryEntryDefineInput, GalleryUnlockInput, GameDefineInput, GameOp, RngStreamDefineInput,
-    SaveSchemaDefineInput, SceneBindRigInput, SceneDefineInput, SceneExitDefineInput,
-    ScheduleDefineInput, StatDefineInput, StatKindInput, StatTierDefineInput, TableDefineInput,
-    ThreadCreateInput, ThreadPostInput, TriggerDefineInput, TriggerKindInput, ValueDefineInput,
-    VisualStateDefineInput, WeightInput,
+    GalleryEntryDefineInput, GalleryUnlockInput, GameDefineInput, GameOp, InteractionDefineInput,
+    RngStreamDefineInput, SaveSchemaDefineInput, SceneBindRigInput, SceneDefineInput,
+    SceneExitDefineInput, ScheduleDefineInput, StatDefineInput, StatKindInput, StatTierDefineInput,
+    TableDefineInput, ThreadCreateInput, ThreadPostInput, TriggerDefineInput, TriggerKindInput,
+    ValueDefineInput, VisualStateDefineInput, WeightInput,
 };
 use crate::limits::{
     GAME_APPEARANCE_SLOTS_MAX, GAME_CATEGORY_TEXT_BYTES_MAX, GAME_CHARACTERS_MAX,
     GAME_CHOICE_OPTIONS_MAX, GAME_CHOICES_MAX, GAME_CONDITIONS_MAX, GAME_CONTENT_TEXT_BYTES_MAX,
     GAME_DIALOGUE_LINES_MAX, GAME_EFFECT_ATOMS_MAX, GAME_EFFECT_SETS_MAX, GAME_ENDINGS_MAX,
-    GAME_FLAGS_MAX, GAME_GALLERY_ENTRIES_MAX, GAME_LIFETIME_DAYS_MAX, GAME_MIGRATIONS_MAX,
-    GAME_OFFER_DAYS_MAX, GAME_RNG_STREAMS_MAX, GAME_SAVE_SLOTS_MAX, GAME_SCENE_BINDINGS_MAX,
-    GAME_SCENE_EXITS_MAX, GAME_SCENES_MAX, GAME_SCHEDULE_OVERRIDES_MAX, GAME_SCHEDULES_MAX,
-    GAME_SLOTS_MAX, GAME_STATS_MAX, GAME_TABLE_OUTCOMES_MAX, GAME_TABLES_MAX,
-    GAME_THREAD_DELAY_MS_MAX, GAME_THREAD_MESSAGES_MAX, GAME_THREAD_PARTICIPANTS_MAX,
-    GAME_THREADS_MAX, GAME_TIER_THRESHOLDS_MAX, GAME_TRIGGERS_MAX, GAME_VALUES_MAX,
-    GAME_VISUAL_STATES_MAX,
+    GAME_FLAGS_MAX, GAME_GALLERY_ENTRIES_MAX, GAME_INTERACTION_CAMERAS_MAX,
+    GAME_INTERACTION_CELLS_MAX, GAME_INTERACTION_NODES_MAX, GAME_INTERACTION_TOOLS_MAX,
+    GAME_INTERACTIONS_MAX, GAME_LIFETIME_DAYS_MAX, GAME_MIGRATIONS_MAX, GAME_OFFER_DAYS_MAX,
+    GAME_RNG_STREAMS_MAX, GAME_SAVE_SLOTS_MAX, GAME_SCENE_BINDINGS_MAX, GAME_SCENE_EXITS_MAX,
+    GAME_SCENES_MAX, GAME_SCHEDULE_OVERRIDES_MAX, GAME_SCHEDULES_MAX, GAME_SLOTS_MAX,
+    GAME_STATS_MAX, GAME_TABLE_OUTCOMES_MAX, GAME_TABLES_MAX, GAME_THREAD_DELAY_MS_MAX,
+    GAME_THREAD_MESSAGES_MAX, GAME_THREAD_PARTICIPANTS_MAX, GAME_THREADS_MAX,
+    GAME_TIER_THRESHOLDS_MAX, GAME_TRIGGERS_MAX, GAME_VALUES_MAX, GAME_VISUAL_STATES_MAX,
 };
 use crate::model::Project;
 use crate::refusal::{Refusal, RefusalClass, refuse};
@@ -221,7 +223,141 @@ pub fn decide_game(project: &Project, op: &GameOp) -> Result<Verdict, Refusal> {
             decide_thread_create(game, inputs)
         }
         GameOp::ThreadPost(inputs) => decide_thread_post(project, inputs),
+        GameOp::InteractionDefine(inputs) => {
+            let game = section(project)?;
+            decide_interaction(game, inputs)
+        }
     }
+}
+
+/// The `interaction_define` gate (P2-8): the grid's scene and
+/// every node's character must exist; a cell naming a tool or
+/// node outside the grid's own sets, a response set the game
+/// does not define, or a camera outside the grid's preset set
+/// is refused here, at authoring time (`TG-AUTH-DANGLING`) —
+/// the interpreter never has to guess what a pair means.
+fn decide_interaction(game: &Game, inputs: &InteractionDefineInput) -> Result<Verdict, Refusal> {
+    check_id(&inputs.id, "interaction grid id")?;
+    check_id(&inputs.scene, "interaction scene id")?;
+    if game.scene(&inputs.scene).is_none() {
+        return dangling("scene", &inputs.scene);
+    }
+    if inputs.tools.is_empty() {
+        return refuse(
+            RefusalClass::Malformed,
+            format!("interaction grid '{}' names no tools", inputs.id),
+        );
+    }
+    check_count(
+        inputs.tools.len(),
+        GAME_INTERACTION_TOOLS_MAX,
+        "interaction tools",
+    )?;
+    let mut tools: Vec<&str> = Vec::new();
+    for tool in &inputs.tools {
+        check_id(tool, "interaction tool id")?;
+        if tools.contains(&tool.as_str()) {
+            return refuse(
+                RefusalClass::Malformed,
+                format!(
+                    "tool '{tool}' is named twice in interaction grid '{}'",
+                    inputs.id
+                ),
+            );
+        }
+        tools.push(tool.as_str());
+    }
+    if inputs.nodes.is_empty() {
+        return refuse(
+            RefusalClass::Malformed,
+            format!("interaction grid '{}' names no nodes", inputs.id),
+        );
+    }
+    check_count(
+        inputs.nodes.len(),
+        GAME_INTERACTION_NODES_MAX,
+        "interaction nodes",
+    )?;
+    let mut nodes: Vec<&str> = Vec::new();
+    for node in &inputs.nodes {
+        check_id(&node.id, "interaction node id")?;
+        check_id(&node.character, "interaction node character")?;
+        if nodes.contains(&node.id.as_str()) {
+            return refuse(
+                RefusalClass::Malformed,
+                format!(
+                    "node '{}' is named twice in interaction grid '{}'",
+                    node.id, inputs.id
+                ),
+            );
+        }
+        if game.character(&node.character).is_none() {
+            return dangling("character", &node.character);
+        }
+        nodes.push(node.id.as_str());
+    }
+    check_count(
+        inputs.cameras.len(),
+        GAME_INTERACTION_CAMERAS_MAX,
+        "interaction camera presets",
+    )?;
+    let mut cameras: Vec<&str> = Vec::new();
+    for camera in &inputs.cameras {
+        check_id(camera, "interaction camera preset id")?;
+        if cameras.contains(&camera.as_str()) {
+            return refuse(
+                RefusalClass::Malformed,
+                format!(
+                    "camera preset '{camera}' is named twice in interaction grid '{}'",
+                    inputs.id
+                ),
+            );
+        }
+        cameras.push(camera.as_str());
+    }
+    check_count(
+        inputs.cells.len(),
+        GAME_INTERACTION_CELLS_MAX,
+        "interaction cells",
+    )?;
+    let mut pairs: Vec<(&str, &str)> = Vec::new();
+    for cell in &inputs.cells {
+        if !tools.contains(&cell.tool.as_str()) {
+            return dangling("interaction tool", &cell.tool);
+        }
+        if !nodes.contains(&cell.node.as_str()) {
+            return dangling("interaction node", &cell.node);
+        }
+        if pairs.contains(&(cell.tool.as_str(), cell.node.as_str())) {
+            return refuse(
+                RefusalClass::Malformed,
+                format!(
+                    "cell ({}, {}) is authored twice in interaction grid '{}'",
+                    cell.tool, cell.node, inputs.id
+                ),
+            );
+        }
+        pairs.push((cell.tool.as_str(), cell.node.as_str()));
+        if let Some(response) = &cell.response
+            && game.effect_set(response).is_none()
+        {
+            return dangling("effect set", response);
+        }
+        if let Some(camera) = &cell.camera
+            && !cameras.contains(&camera.as_str())
+        {
+            return dangling("interaction camera preset", camera);
+        }
+    }
+    let record = interaction_record(inputs);
+    upsert_verdict(
+        game.interaction(&inputs.id),
+        &record,
+        "interaction grid",
+        &inputs.id,
+        game.interactions.len() + 1,
+        GAME_INTERACTIONS_MAX,
+    )
 }
 
 fn decide_thread_create(game: &Game, inputs: &ThreadCreateInput) -> Result<Verdict, Refusal> {
