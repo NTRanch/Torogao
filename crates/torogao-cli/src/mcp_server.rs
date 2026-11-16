@@ -121,12 +121,13 @@ pub struct CliServer;
 impl ServerHandler for CliServer {
     fn get_info(&self) -> InitializeResult {
         // The baseline's serverInfo: name "torogao", title
-        // "Torogao", version = the registry version (a domain
-        // constant, 5.0.0 — not the crate version).
+        // "Torogao", version = this crate's version (the MCP
+        // serverInfo convention; the registry version is the
+        // tool-surface constant, a separate domain version).
         let mut server_info = Implementation::default();
         server_info.name = "torogao".to_string();
         server_info.title = Some("Torogao".to_string());
-        server_info.version = registry::REGISTRY_VERSION.to_string();
+        server_info.version = env!("CARGO_PKG_VERSION").to_string();
         let mut info = InitializeResult::default();
         info.protocol_version = ProtocolVersion::V_2026_07_28;
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
