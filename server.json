@@ -1,0 +1,35 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.NTRanch/torogao",
+  "title": "Torogao",
+  "description": "The Torogao command-line tools: the registry, MCP and A2A servers, scenes, writer, tutorials, toolbox, and conversion.",
+  "version": "0.5.2",
+  "websiteUrl": "https://github.com/NTRanch/torogao",
+  "repository": {
+    "url": "https://github.com/NTRanch/torogao",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "identifier": "torogao",
+      "registryType": "cargo",
+      "transport": {
+        "type": "stdio"
+      },
+      "version": "0.5.2"
+    }
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "io.github.NTRanch/identity": {
+        "cratesIo": "https://crates.io/users/NTRanch",
+        "github": "https://github.com/NTRanch",
+        "publisher": "NTRanch"
+      },
+      "io.github.NTRanch/torogao": {
+        "agentCard": ".well-known/agent-card.json",
+        "versionNote": "Server version of record is 0.5.2 (D-1608): the torogao CLI crate in this repo (crates/torogao-cli/Cargo.toml) is 0.5.2, the release commit c8469a9 on main is 'release: torogao 0.5.2 (CLI package only)', and the installed binary at ~/.cargo/bin/torogao reports version 0.5.2 in its MCP server/discover serverInfo. The packages entry is the cargo package only; no mcpb bundle is asserted."
+      }
+    }
+  }
+}
