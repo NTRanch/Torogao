@@ -13,3 +13,7 @@ serde = { workspace = true }
 [[bin]]
 name = "coin-smoke"
 path = "src/main.rs"
+
+[[bin]]
+name = "coin-play"
+path = "src/bin/coin_play.rs"

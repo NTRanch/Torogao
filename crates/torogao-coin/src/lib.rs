@@ -20,12 +20,14 @@
 #![forbid(unsafe_code)]
 
 pub mod dynamics;
+pub mod play;
 pub mod session;
 pub mod shell;
 pub mod swing;
 pub mod trajectory;
 
 pub use dynamics::{CoinError, DYNAMICS_RON, Dynamics, PrepAction, StatTriple, measured_dynamics};
+pub use play::{PlaySession, run_play_script};
 pub use session::{AttemptOutcome, Session};
 pub use shell::{AttemptVerdict, CoinShell, SkeletonSession, run_skeleton_sessions};
 pub use swing::SwingAccumulator;
