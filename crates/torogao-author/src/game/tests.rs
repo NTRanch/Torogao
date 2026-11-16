@@ -581,6 +581,17 @@ fn game_section_codec_round_trips_every_record_shape() {
             next: None,
             hook_expression: None,
         }],
+        fail_ceilings: vec![FailCeilingDef {
+            id: "wake_gauge".to_string(),
+            scene: "intro".to_string(),
+            ceiling: 100,
+            decay_per_tick: 5,
+            gains: vec![FailCeilingGain {
+                event: "brush".to_string(),
+                amount: 30,
+            }],
+            adverse: "apply_control".to_string(),
+        }],
         interactions: vec![InteractionDef {
             id: "grid".to_string(),
             scene: "intro".to_string(),
@@ -2906,4 +2917,258 @@ fn plain_vn_project_has_no_interaction_surface() {
         "plain-VN project gained an interaction surface: {project_text}"
     );
     assert_eq!(validate_codes(&root), Vec::<String>::new());
+}
+
+// ---- P2-9: fail-ceiling disturbance channel ----------------------
+//
+// The parity fixture is the Doujin Fever study's sleep/wake
+// census: `scr_shaking_level` (the disturbance gauge),
+// `scr_girl_wakeUp` (the adverse scene end), `scr_sleep_idle`
+// (the guarded scene). Rates are authored values from the
+// study's inventory — census-grade, as P2-8: the gate proves
+// the channel kind expresses the inventoried mechanic, not
+// that the numbers are the game's measured dynamics.
+
+fn author_doujin_channel(root: &Path) {
+    let answer = script(
+        root,
+        vec![
+            ("project_init", init_inputs()),
+            (
+                "game_define",
+                json!({"id": "doujin_channel_fixture", "start_scene": "assault"}),
+            ),
+            ("clock_define", json!({"slots": ["night_1", "night_2"]})),
+            (
+                "character_define",
+                json!({"id": "girl", "name_ref": "name_girl", "name_text": "Girl"}),
+            ),
+            (
+                "scene_define",
+                json!({"id": "assault", "presentation": "room"}),
+            ),
+            (
+                "scene_define",
+                json!({"id": "woken", "presentation": "room"}),
+            ),
+            (
+                "flag_define",
+                json!({"id": "awake", "scope": "run", "default": false}),
+            ),
+            (
+                "effect_set_define",
+                json!({
+                    "id": "wake_up",
+                    "atoms": [
+                        {"kind": "flag_set", "flag": "awake"},
+                        {"kind": "enter_scene", "scene": "woken"},
+                    ],
+                }),
+            ),
+            (
+                "fail_ceiling_define",
+                json!({
+                    "id": "wake_gauge", "scene": "assault", "ceiling": 100,
+                    "decay_per_tick": 5,
+                    "gains": [
+                        {"event": "brush", "amount": 30},
+                        {"event": "poke", "amount": 45},
+                    ],
+                    "adverse": "wake_up",
+                }),
+            ),
+        ],
+    );
+    assert_eq!(answer.status, Status::Ok, "channel fixture: {}", answer.doc);
+    assert!(
+        validate_codes(root).is_empty(),
+        "channel fixture validates clean: {:?}",
+        validate_codes(root)
+    );
+}
+
+#[test]
+fn doujin_channel_accumulates_decays_and_crosses_exactly_once() {
+    let root = test_root("channel-crossing");
+    author_doujin_channel(&root);
+    let loaded = load_project(&root);
+    let project = &loaded.project;
+    let log = event_log(
+        &[
+            (1, "brush"),
+            (2, "poke"),
+            (3, "brush"),
+            (4, "brush"),
+            (5, "brush"),
+        ],
+        6,
+    );
+    let mut state = genesis(project, 7).expect("genesis");
+    let gauge = |state: &GameState| state.fail_ceilings["wake_gauge"];
+    // Tick order is gains, ceiling check, decay: 30 -> 25,
+    // +45 -> 70 -> 65, +30 -> 95 -> 90.
+    let (_e, _c) = run_to(project, &mut state, &log, 1);
+    assert_eq!(gauge(&state).value, 25);
+    let (_e, _c) = run_to(project, &mut state, &log, 2);
+    assert_eq!(gauge(&state).value, 65);
+    let (_e, _c) = run_to(project, &mut state, &log, 3);
+    assert_eq!(gauge(&state).value, 90);
+    assert!(!gauge(&state).fired);
+    // Tick 4: 90 + 30 = 120 >= 100 — the crossing fires the
+    // adverse transaction: the flag sets and the scene ends
+    // (the run transitions to 'woken' in the same tick).
+    let (events, _c) = run_to(project, &mut state, &log, 4);
+    assert_eq!(gauge(&state).value, 120);
+    assert!(gauge(&state).fired);
+    assert!(state.flags_run["awake"]);
+    assert_eq!(state.current_scene.as_deref(), Some("woken"));
+    assert!(
+        events
+            .iter()
+            .any(|event| event.contains("fail-ceiling 'wake_gauge' crossed (120 >= 100)")),
+        "the crossing is a trace event: {events:?}"
+    );
+    // Tick 5's brush lands in 'woken', outside the guarded
+    // scene, and the latch holds regardless: no second
+    // crossing, ever — the adverse transaction is exactly-once.
+    let (later, _c) = run_to(project, &mut state, &log, 6);
+    assert_eq!(gauge(&state).value, 120);
+    assert!(
+        !later.iter().any(|event| event.contains("crossed")),
+        "no second adverse transaction: {later:?}"
+    );
+}
+
+#[test]
+fn doujin_channel_below_ceiling_decays_back_to_safety() {
+    let root = test_root("channel-decay");
+    author_doujin_channel(&root);
+    let loaded = load_project(&root);
+    let project = &loaded.project;
+    let log = event_log(&[(1, "brush")], 8);
+    let mut state = genesis(project, 7).expect("genesis");
+    let (_e, _c) = run_to(project, &mut state, &log, 8);
+    let gauge = state.fail_ceilings["wake_gauge"];
+    assert_eq!(gauge.value, 0, "decay restores safety: {gauge:?}");
+    assert!(!gauge.fired);
+    assert!(!state.flags_run["awake"]);
+    assert_eq!(state.current_scene.as_deref(), Some("assault"));
+}
+
+#[test]
+fn doujin_channel_chain_is_byte_identical_across_three_runs() {
+    let root = test_root("channel-chain");
+    author_doujin_channel(&root);
+    let inputs = json!({
+        "run_seed": 7,
+        "ticks": 6,
+        "choice_log": [
+            {"tick": 1, "kind": "event", "id": "brush"},
+            {"tick": 2, "kind": "event", "id": "poke"},
+            {"tick": 3, "kind": "event", "id": "brush"},
+            {"tick": 4, "kind": "event", "id": "brush"},
+        ],
+    });
+    let first = verb(&root, "game_simulate", inputs.clone());
+    assert_eq!(first.status, Status::Ok, "{}", first.doc);
+    for _ in 0..2 {
+        let again = verb(&root, "game_simulate", inputs.clone());
+        assert_eq!(again.doc, first.doc, "run evidence is byte-identical");
+    }
+    assert_eq!(first.doc["final"]["scene"], "woken");
+}
+
+#[test]
+fn doujin_channel_save_round_trip_mid_accumulation_reproduces_the_chain() {
+    let root = test_root("channel-save");
+    author_doujin_channel(&root);
+    let loaded = load_project(&root);
+    let project = &loaded.project;
+    let log = event_log(&[(1, "brush"), (2, "poke"), (3, "brush"), (4, "brush")], 6);
+    let mut reference = genesis(project, 7).expect("genesis");
+    let (_e, reference_chain) = run_to(project, &mut reference, &log, 6);
+    let mut state = genesis(project, 7).expect("genesis");
+    let (_e, mut chain) = run_to(project, &mut state, &log, 3);
+    assert_eq!(state.fail_ceilings["wake_gauge"].value, 90);
+    let text = save_game(project, &loaded.sha256, &state, 7).expect("save");
+    let saved = load_game(project, &loaded.sha256, &text).expect("load");
+    assert_eq!(saved.state, state, "the loaded state is the saved state");
+    let mut resumed = saved.state;
+    let (_e, tail) = run_to(project, &mut resumed, &log, 6);
+    chain.extend(tail);
+    assert_eq!(chain, reference_chain, "the chain survives save/load");
+    assert_eq!(resumed, reference);
+}
+
+#[test]
+fn fail_ceiling_define_refuses_bad_channels() {
+    let root = test_root("channel-refusals");
+    author_doujin_channel(&root);
+    let base = json!({
+        "id": "second_gauge", "scene": "assault", "ceiling": 50,
+        "decay_per_tick": 5,
+        "gains": [{"event": "brush", "amount": 10}],
+        "adverse": "wake_up",
+    });
+    // A ceiling below 1 could never rest uncrossed.
+    let mut bad = base.clone();
+    bad["ceiling"] = json!(0);
+    let answer = verb(&root, "fail_ceiling_define", bad);
+    assert_eq!(answer.status, Status::Refused);
+    assert_eq!(answer.doc["code"], "TG-AUTH-RANGE", "{}", answer.doc);
+    // Negative decay adds disturbance; it never restores safety.
+    let mut bad = base.clone();
+    bad["decay_per_tick"] = json!(-1);
+    let answer = verb(&root, "fail_ceiling_define", bad);
+    assert_eq!(answer.doc["code"], "TG-AUTH-RANGE", "{}", answer.doc);
+    // A zero gain is not a gain.
+    let mut bad = base.clone();
+    bad["gains"] = json!([{"event": "brush", "amount": 0}]);
+    let answer = verb(&root, "fail_ceiling_define", bad);
+    assert_eq!(answer.doc["code"], "TG-AUTH-RANGE", "{}", answer.doc);
+    // One event, one row.
+    let mut bad = base.clone();
+    bad["gains"] = json!([
+        {"event": "brush", "amount": 10},
+        {"event": "brush", "amount": 5},
+    ]);
+    let answer = verb(&root, "fail_ceiling_define", bad);
+    assert_eq!(answer.doc["code"], "TG-AUTH-MALFORMED", "{}", answer.doc);
+    // A scene the game does not define.
+    let mut bad = base.clone();
+    bad["scene"] = json!("dungeon");
+    let answer = verb(&root, "fail_ceiling_define", bad);
+    assert_eq!(answer.doc["code"], "TG-AUTH-DANGLING", "{}", answer.doc);
+    // An adverse set the game does not define.
+    let mut bad = base.clone();
+    bad["adverse"] = json!("nope");
+    let answer = verb(&root, "fail_ceiling_define", bad);
+    assert_eq!(answer.doc["code"], "TG-AUTH-DANGLING", "{}", answer.doc);
+    // The upsert law: identical is a no-op, differing conflicts.
+    let same = verb(&root, "fail_ceiling_define", base.clone());
+    assert_eq!(same.status, Status::Ok, "{}", same.doc);
+    let same = verb(&root, "fail_ceiling_define", base.clone());
+    assert_eq!(same.status, Status::Ok, "{}", same.doc);
+    let mut changed = base.clone();
+    changed["ceiling"] = json!(60);
+    let changed = verb(&root, "fail_ceiling_define", changed);
+    assert_eq!(changed.doc["code"], "TG-AUTH-CONFLICT", "{}", changed.doc);
+}
+
+#[test]
+fn plain_vn_state_has_no_fail_ceiling_partition() {
+    // The slice's negative gate: a project with no channels
+    // evaluates tick-for-tick identically — its state carries
+    // no fail-ceiling partition, so its hashes are the
+    // pre-slice hashes.
+    let root = test_root("channel-negative");
+    author_plain_vn(&root);
+    let loaded = load_project(&root);
+    let game = loaded.project.game.as_ref().expect("game section");
+    assert!(game.fail_ceilings.is_empty());
+    let project_text = read(&root, PROJECT_FILE);
+    assert!(
+        !project_text.contains("FailCeiling"),
+        "plain-VN project gained a fail-ceiling surface: {project_text}"
+    );
 }

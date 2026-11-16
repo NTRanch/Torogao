@@ -247,6 +247,11 @@ fn verify_state_against_project(game: &Game, state: &GameState) -> Result<(), Re
             return schema_refusal(format!("save names undefined RNG stream '{id}'"));
         }
     }
+    for id in state.fail_ceilings.keys() {
+        if game.fail_ceiling(id).is_none() {
+            return schema_refusal(format!("save names undefined fail-ceiling channel '{id}'"));
+        }
+    }
     if let Some(scene) = &state.current_scene
         && game.scene(scene).is_none()
     {

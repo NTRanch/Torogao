@@ -934,6 +934,20 @@ fn game_ops(project: &Project) -> Vec<Op> {
             );
         }
     }
+    for channel in &game.fail_ceilings {
+        let deps = vec![
+            "game".to_string(),
+            format!("scene:{}", channel.scene),
+            format!("set:{}", channel.adverse),
+        ];
+        push(
+            format!("failceiling:{}", channel.id),
+            deps,
+            Op::Game(GameOp::FailCeilingDefine(
+                crate::game::apply::fail_ceiling_input_of(channel),
+            )),
+        );
+    }
     for grid in &game.interactions {
         let mut deps = vec!["game".to_string(), format!("scene:{}", grid.scene)];
         for node in &grid.nodes {
@@ -1594,6 +1608,26 @@ fn game_findings(project: &Project) -> Vec<Refusal> {
                         ),
                     );
                 }
+            }
+        }
+        for channel in &game.fail_ceilings {
+            if game.scene(&channel.scene).is_none() {
+                dangling(
+                    &mut findings,
+                    format!(
+                        "fail-ceiling channel '{}' names missing scene '{}'",
+                        channel.id, channel.scene
+                    ),
+                );
+            }
+            if game.effect_set(&channel.adverse).is_none() {
+                dangling(
+                    &mut findings,
+                    format!(
+                        "fail-ceiling channel '{}' names missing adverse effect set '{}'",
+                        channel.id, channel.adverse
+                    ),
+                );
             }
         }
         for choice in &game.choices {

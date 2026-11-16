@@ -112,6 +112,10 @@ pub const GAME_EFFECT_ATOMS_MAX: usize = 256;
 pub const GAME_EXPR_DEPTH_MAX: usize = 24;
 /// Maximum expression nodes in one expression tree.
 pub const GAME_EXPR_NODES_MAX: usize = 4096;
+/// Maximum fail-ceiling channels in one game (P2-9).
+pub const GAME_FAIL_CEILINGS_MAX: usize = 256;
+/// Maximum gain rows in one fail-ceiling channel (P2-9).
+pub const GAME_FAIL_CEILING_GAINS_MAX: usize = 64;
 /// Maximum flags in one game.
 pub const GAME_FLAGS_MAX: usize = 1024;
 /// Maximum interaction grids in one game (P2-8).

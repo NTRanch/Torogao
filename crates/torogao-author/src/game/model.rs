@@ -114,6 +114,9 @@ pub struct Game {
     /// Message threads, sorted by id. (Serialized only when
     /// non-empty, like `streams`.)
     pub threads: Vec<ThreadDef>,
+    /// Fail-ceiling disturbance channels, sorted by id.
+    /// (Serialized only when non-empty, like `streams`.)
+    pub fail_ceilings: Vec<FailCeilingDef>,
     /// Direct-manipulation interaction grids, sorted by id.
     /// (Serialized only when non-empty, like `streams`.)
     pub interactions: Vec<InteractionDef>,
@@ -228,6 +231,11 @@ impl Game {
     /// The interaction grid with this id.
     pub fn interaction(&self, id: &str) -> Option<&InteractionDef> {
         find(&self.interactions, id, |item| &item.id)
+    }
+
+    /// The fail-ceiling channel with this id.
+    pub fn fail_ceiling(&self, id: &str) -> Option<&FailCeilingDef> {
+        find(&self.fail_ceilings, id, |item| &item.id)
     }
 
     /// The tier bands over this stat, if authored.
@@ -1292,6 +1300,51 @@ impl InteractionDef {
             .iter()
             .find(|row| row.tool == tool && row.node == node)
     }
+}
+
+/// One gain row of a fail-ceiling channel (P2-9): when the
+/// named event is among a tick's events (the step-3 event
+/// input, or an event an effect set emitted in steps 2–4),
+/// the channel's gauge accumulates this amount.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FailCeilingGain {
+    /// The event name that feeds the gauge.
+    pub event: String,
+    /// The amount one occurrence adds (>= 1).
+    pub amount: i64,
+}
+
+/// A fail-ceiling disturbance channel (`fail_ceiling_define`,
+/// Phase 2 slice P2-9): the Doujin Fever study's
+/// `shaking_level` / `girl_wakeUp` mechanic as a channel kind
+/// inside the tick — a gauge that accumulates from authored
+/// input events, decays per tick at its authored rate, and on
+/// crossing its ceiling fires exactly one adverse
+/// scene-ending effect transaction. The channel is live only
+/// while the run is in its scene. Per tick the order is:
+/// gains, then the ceiling check, then decay (a crossing
+/// tick does not decay — the scene is ending). The arousal
+/// corpus's channels culminate in a success event; this is
+/// the dual — overflow terminates the scene adversely, and
+/// decay restores safety. Evidence is census-grade, as P2-8:
+/// the rates a fixture authors are inventory values, not
+/// measured dynamics.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FailCeilingDef {
+    /// Stable id.
+    pub id: String,
+    /// The scene the channel guards: it accumulates and
+    /// decays only while the run is in this scene.
+    pub scene: String,
+    /// The ceiling: a gauge at or above it crosses (>= 1).
+    pub ceiling: i64,
+    /// Per-tick decay toward zero (>= 0).
+    pub decay_per_tick: i64,
+    /// The gain rows, sorted by event.
+    pub gains: Vec<FailCeilingGain>,
+    /// The adverse effect set applied, as one transaction,
+    /// the one time the ceiling is crossed.
+    pub adverse: String,
 }
 
 /// One prose entry of `content.ron`, keyed by content id. Entries

@@ -18,13 +18,14 @@ use crate::codec::{
 use crate::game::model::{
     AppearanceDef, AppearanceEntry, AppearanceKind, AppearanceSlot, AppearanceValue, Atom,
     CharacterDef, ChoiceDef, ChoiceOption, ChoiceOrigin, ChoiceTarget, Clock, ClockField, CmpOp,
-    ConditionDef, ContentEntry, DialogueLine, Direction, EffectSetDef, EndingDef, Expr, FlagDef,
-    FlagEdge, FlagScope, GalleryEntryDef, GalleryUnlock, Game, InteractionCell, InteractionDef,
-    InteractionNode, Lifetime, Migration, OfferDef, Overflow, Presentation, Repetition,
-    RngStreamDef, SaveContextPolicy, SaveSchema, SceneBindingDef, SceneDef, SceneExitDef,
-    ScheduleDef, ScheduleOverride, ScheduleSlot, SlotHolds, StatDef, StatInitial, StatKind,
-    StatScope, TableDef, TableOutcome, TableWeight, ThreadDef, ThreadInterludeDef, ThreadMessage,
-    TierDef, TriggerDef, TriggerKind, ValueDef, VisualStateDef,
+    ConditionDef, ContentEntry, DialogueLine, Direction, EffectSetDef, EndingDef, Expr,
+    FailCeilingDef, FailCeilingGain, FlagDef, FlagEdge, FlagScope, GalleryEntryDef, GalleryUnlock,
+    Game, InteractionCell, InteractionDef, InteractionNode, Lifetime, Migration, OfferDef,
+    Overflow, Presentation, Repetition, RngStreamDef, SaveContextPolicy, SaveSchema,
+    SceneBindingDef, SceneDef, SceneExitDef, ScheduleDef, ScheduleOverride, ScheduleSlot,
+    SlotHolds, StatDef, StatInitial, StatKind, StatScope, TableDef, TableOutcome, TableWeight,
+    ThreadDef, ThreadInterludeDef, ThreadMessage, TierDef, TriggerDef, TriggerKind, ValueDef,
+    VisualStateDef,
 };
 use crate::refusal::{Refusal, RefusalClass, refuse};
 use crate::ron::Ron;
@@ -231,7 +232,44 @@ pub(crate) fn game_to_ron(game: &Game) -> Ron {
             Ron::List(game.interactions.iter().map(interaction_to_ron).collect()),
         );
     }
+    // The P2-9 fail-ceiling surface is absent-means-absent
+    // the same way.
+    if !game.fail_ceilings.is_empty() {
+        insert_field(
+            &mut fields,
+            "flags",
+            "fail_ceilings",
+            Ron::List(game.fail_ceilings.iter().map(fail_ceiling_to_ron).collect()),
+        );
+    }
     record("Game", fields)
+}
+
+fn fail_ceiling_to_ron(channel: &FailCeilingDef) -> Ron {
+    record(
+        "FailCeiling",
+        vec![
+            ("id", text(&channel.id)),
+            ("adverse", text(&channel.adverse)),
+            ("ceiling", Ron::Int(channel.ceiling)),
+            ("decay_per_tick", Ron::Int(channel.decay_per_tick)),
+            (
+                "gains",
+                Ron::List(channel.gains.iter().map(fail_ceiling_gain_to_ron).collect()),
+            ),
+            ("scene", text(&channel.scene)),
+        ],
+    )
+}
+
+fn fail_ceiling_gain_to_ron(gain: &FailCeilingGain) -> Ron {
+    record(
+        "FailCeilingGain",
+        vec![
+            ("amount", Ron::Int(gain.amount)),
+            ("event", text(&gain.event)),
+        ],
+    )
 }
 
 fn interaction_to_ron(grid: &InteractionDef) -> Ron {
@@ -1198,6 +1236,11 @@ pub(crate) fn game_from_ron(value: Ron) -> Result<Game, Refusal> {
         Some(Ron::List(items)) => collect(items, interaction_from_ron)?,
         Some(_) => return wrong_type("interactions", "a list"),
     };
+    let fail_ceilings = match fields.try_take("fail_ceilings") {
+        None => Vec::new(),
+        Some(Ron::List(items)) => collect(items, fail_ceiling_from_ron)?,
+        Some(_) => return wrong_type("fail_ceilings", "a list"),
+    };
     let alter_ego_veto = opt_string_absent(&mut fields, "alter_ego_veto")?;
     let tiers = collect(fields.list("tiers")?, tier_from_ron)?;
     let triggers = collect(fields.list("triggers")?, trigger_from_ron)?;
@@ -1232,6 +1275,7 @@ pub(crate) fn game_from_ron(value: Ron) -> Result<Game, Refusal> {
         save_schema,
         threads: sorted_unique(threads, "threads", |item| &item.id)?,
         interactions: sorted_unique(interactions, "interactions", |item| &item.id)?,
+        fail_ceilings: sorted_unique(fail_ceilings, "fail-ceiling channels", |item| &item.id)?,
     };
     fields.done()?;
     Ok(game)
@@ -1308,6 +1352,30 @@ fn sorted_scene_exits(mut items: Vec<SceneExitDef>) -> Result<Vec<SceneExitDef>,
         }
     }
     Ok(items)
+}
+
+fn fail_ceiling_from_ron(value: Ron) -> Result<FailCeilingDef, Refusal> {
+    let mut fields = open(value, "FailCeiling")?;
+    let channel = FailCeilingDef {
+        id: fields.string("id")?,
+        scene: fields.string("scene")?,
+        ceiling: fields.int("ceiling")?,
+        decay_per_tick: fields.int("decay_per_tick")?,
+        gains: collect(fields.list("gains")?, fail_ceiling_gain_from_ron)?,
+        adverse: fields.string("adverse")?,
+    };
+    fields.done()?;
+    Ok(channel)
+}
+
+fn fail_ceiling_gain_from_ron(value: Ron) -> Result<FailCeilingGain, Refusal> {
+    let mut fields = open(value, "FailCeilingGain")?;
+    let gain = FailCeilingGain {
+        event: fields.string("event")?,
+        amount: fields.int("amount")?,
+    };
+    fields.done()?;
+    Ok(gain)
 }
 
 fn interaction_from_ron(value: Ron) -> Result<InteractionDef, Refusal> {

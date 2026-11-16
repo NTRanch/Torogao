@@ -36,6 +36,9 @@ pub enum GameSlice {
     /// Phase 2 slice 8: direct-manipulation interaction
     /// records (Doujin Fever census).
     P28,
+    /// Phase 2 slice 9: fail-ceiling disturbance channel
+    /// (Doujin Fever census).
+    P29,
     /// AUTH-G slice G1 remainder (core records not yet needed by
     /// a Phase 2 slice).
     G1,
@@ -55,6 +58,7 @@ impl GameSlice {
             GameSlice::P26 => "Phase 2 slice 6 (visual-state deltas)",
             GameSlice::P27 => "Phase 2 slice 7 (message threads)",
             GameSlice::P28 => "Phase 2 slice 8 (direct manipulation)",
+            GameSlice::P29 => "Phase 2 slice 9 (fail-ceiling channel)",
             GameSlice::G1 => "AUTH-G G1",
             GameSlice::G2 => "AUTH-G G2",
         }
@@ -94,9 +98,10 @@ const fn verb(
 
 /// The AUTH-G manifest: the Amendment's 22 verbs plus the
 /// visual-state pair P2-6 adds, the message-thread family
-/// P2-7 adds, and the interaction verb P2-8 adds (28),
-/// alphabetical within group.
-pub const GAME_MANIFEST: [GameVerbSpec; 28] = [
+/// P2-7 adds, the interaction verb P2-8 adds, and the
+/// fail-ceiling verb P2-9 adds (29), alphabetical within
+/// group.
+pub const GAME_MANIFEST: [GameVerbSpec; 29] = [
     verb("clock_define", "game core", GameSlice::P22, true, true),
     verb("game_define", "game core", GameSlice::P21, true, true),
     verb(
@@ -112,6 +117,13 @@ pub const GAME_MANIFEST: [GameVerbSpec; 28] = [
         "effect_set_define",
         "game state",
         GameSlice::P22,
+        true,
+        true,
+    ),
+    verb(
+        "fail_ceiling_define",
+        "game state",
+        GameSlice::P29,
         true,
         true,
     ),
@@ -673,6 +685,36 @@ pub struct InteractionCellInput {
     /// The camera preset id, when the cell reframes.
     #[serde(default)]
     pub camera: Option<String>,
+}
+
+/// One gain row of a fail-ceiling channel, as input (P2-9).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FailCeilingGainInput {
+    /// The event name that feeds the gauge.
+    pub event: String,
+    /// The amount one occurrence adds (>= 1).
+    pub amount: i64,
+}
+
+/// `fail_ceiling_define` inputs (P2-9).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FailCeilingDefineInput {
+    /// Channel id.
+    pub id: String,
+    /// The scene the channel guards.
+    pub scene: String,
+    /// The ceiling: a gauge at or above it crosses (>= 1).
+    pub ceiling: i64,
+    /// Per-tick decay toward zero (>= 0).
+    #[serde(default)]
+    pub decay_per_tick: i64,
+    /// The gain rows.
+    pub gains: Vec<FailCeilingGainInput>,
+    /// The adverse effect set applied the one time the
+    /// ceiling is crossed.
+    pub adverse: String,
 }
 
 /// `interaction_define` inputs (P2-8): the whole grid in one
@@ -1299,6 +1341,8 @@ pub enum GameOp {
     ThreadPost(ThreadPostInput),
     /// `interaction_define`.
     InteractionDefine(InteractionDefineInput),
+    /// `fail_ceiling_define`.
+    FailCeilingDefine(FailCeilingDefineInput),
 }
 
 fn typed<T: for<'de> Deserialize<'de>>(verb: &str, inputs: &Value) -> Result<T, Refusal> {
@@ -1338,6 +1382,7 @@ pub fn parse_game_op(verb: &str, inputs: &Value) -> Result<crate::op::Op, Refusa
         "thread_create" => GameOp::ThreadCreate(typed(verb, inputs)?),
         "thread_post" => GameOp::ThreadPost(typed(verb, inputs)?),
         "interaction_define" => GameOp::InteractionDefine(typed(verb, inputs)?),
+        "fail_ceiling_define" => GameOp::FailCeilingDefine(typed(verb, inputs)?),
         "trigger_define" => GameOp::TriggerDefine(typed(verb, inputs)?),
         "value_define" => GameOp::ValueDefine(typed(verb, inputs)?),
         "visual_state_define" => GameOp::VisualStateDefine(typed(verb, inputs)?),
@@ -1373,6 +1418,7 @@ impl GameOp {
             GameOp::ThreadCreate(_) => "thread_create",
             GameOp::ThreadPost(_) => "thread_post",
             GameOp::InteractionDefine(_) => "interaction_define",
+            GameOp::FailCeilingDefine(_) => "fail_ceiling_define",
             GameOp::TriggerDefine(_) => "trigger_define",
             GameOp::ValueDefine(_) => "value_define",
             GameOp::VisualStateDefine(_) => "visual_state_define",
@@ -1405,6 +1451,7 @@ impl GameOp {
             GameOp::ThreadCreate(inputs) => serde_json::to_value(inputs),
             GameOp::ThreadPost(inputs) => serde_json::to_value(inputs),
             GameOp::InteractionDefine(inputs) => serde_json::to_value(inputs),
+            GameOp::FailCeilingDefine(inputs) => serde_json::to_value(inputs),
             GameOp::TriggerDefine(inputs) => serde_json::to_value(inputs),
             GameOp::ValueDefine(inputs) => serde_json::to_value(inputs),
             GameOp::VisualStateDefine(inputs) => serde_json::to_value(inputs),
@@ -1423,8 +1470,8 @@ mod tests {
     use super::{GAME_MANIFEST, GameSlice};
 
     #[test]
-    fn game_manifest_has_28_verbs_alphabetical_within_group() {
-        assert_eq!(GAME_MANIFEST.len(), 28);
+    fn game_manifest_has_29_verbs_alphabetical_within_group() {
+        assert_eq!(GAME_MANIFEST.len(), 29);
         let mut groups: Vec<&str> = Vec::new();
         for spec in GAME_MANIFEST {
             if groups.last() != Some(&spec.group) {
@@ -1449,6 +1496,6 @@ mod tests {
             .count();
         assert_eq!(p21, 4);
         let implemented = GAME_MANIFEST.iter().filter(|spec| spec.implemented).count();
-        assert_eq!(implemented, 28);
+        assert_eq!(implemented, 29);
     }
 }

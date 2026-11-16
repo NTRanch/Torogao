@@ -47,6 +47,17 @@ pub struct TriggerState {
     pub offer: Option<OfferState>,
 }
 
+/// One fail-ceiling channel's runtime state (P2-9).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct FailCeilingState {
+    /// The gauge's current value.
+    pub value: i64,
+    /// Whether the ceiling has been crossed: the adverse set
+    /// fires exactly once, at the crossing, and the latch is
+    /// what makes it exactly once.
+    pub fired: bool,
+}
+
 /// A pending offer's runtime state.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OfferState {
@@ -107,6 +118,12 @@ pub struct GameState {
     /// it is positive no choice in the interlude's scene may
     /// fire. Emitted only when positive, like the ending.
     pub thread_delay_ms: u64,
+    /// Fail-ceiling channel states by channel id (P2-9):
+    /// seeded at genesis for every authored channel. Emitted
+    /// only when non-empty (absent means absent), so a state
+    /// document from before channels existed keeps its bytes
+    /// and its hash.
+    pub fail_ceilings: BTreeMap<String, FailCeilingState>,
     /// Transient: a scene transition awaiting the tick's
     /// transition step. Never serialized.
     pub pending_scene: Option<String>,
@@ -271,6 +288,37 @@ pub fn state_to_ron(state: &GameState) -> Ron {
             .position(|(name, _)| *name == "flags_globals")
             .unwrap_or(fields.len());
         fields.insert(pos, ("ending", text(ending)));
+    }
+    // The fail-ceiling partition rides only once a channel
+    // exists, under the same law (inserted after the ending:
+    // alphabetically ending < fail_ceilings < flags_globals).
+    if !state.fail_ceilings.is_empty() {
+        let pos = fields
+            .iter()
+            .position(|(name, _)| *name == "flags_globals")
+            .unwrap_or(fields.len());
+        fields.insert(
+            pos,
+            (
+                "fail_ceilings",
+                Ron::List(
+                    state
+                        .fail_ceilings
+                        .iter()
+                        .map(|(id, channel)| {
+                            record(
+                                "FailCeilingState",
+                                vec![
+                                    ("channel", text(id)),
+                                    ("fired", Ron::Bool(channel.fired)),
+                                    ("value", Ron::Int(channel.value)),
+                                ],
+                            )
+                        })
+                        .collect(),
+                ),
+            ),
+        );
     }
     record("State", fields)
 }
@@ -459,6 +507,30 @@ pub fn state_from_ron(value: Ron, format_version: i64) -> Result<GameState, Refu
             .map_err(|_| Refusal::new(RefusalClass::Range, "thread_delay_ms is below 0"))?,
         Some(_) => return wrong_type("thread_delay_ms", "an integer"),
     };
+    // The fail-ceiling partition is absent in state documents
+    // written before channels existed; it reads as empty.
+    let mut fail_ceilings = BTreeMap::new();
+    match fields.try_take("fail_ceilings") {
+        None => {}
+        Some(Ron::List(items)) => {
+            for item in items {
+                let mut row = open(item, "FailCeilingState")?;
+                let channel = FailCeilingState {
+                    value: row.int("value")?,
+                    fired: row.boolean("fired")?,
+                };
+                let id = row.string("channel")?;
+                row.done()?;
+                if fail_ceilings.insert(id.clone(), channel).is_some() {
+                    return refuse(
+                        RefusalClass::Malformed,
+                        format!("state carries fail-ceiling channel '{id}' twice"),
+                    );
+                }
+            }
+        }
+        Some(_) => return wrong_type("fail_ceilings", "a list"),
+    }
     let state = GameState {
         tick: as_u64(fields.take("tick")?, "tick")?,
         day: fields.int("day")?,
@@ -474,6 +546,7 @@ pub fn state_from_ron(value: Ron, format_version: i64) -> Result<GameState, Refu
         triggers,
         threads_delivered,
         thread_delay_ms,
+        fail_ceilings,
         pending_scene: None,
         emitted: Vec::new(),
     };

@@ -7,11 +7,11 @@
 use crate::decide::{Verdict, check_id};
 use crate::game::apply::{
     appearance_record, character_record, choice_record, clock_record, condition_record,
-    dialogue_record, effect_set_record, ending_record, flag_record, gallery_record,
-    interaction_record, save_schema_record, save_schema_version_of, scene_binding_record,
-    scene_exit_record, scene_record, schedule_record, stat_record, stream_record, table_record,
-    thread_message_record, thread_record, tier_record, trigger_record, value_record,
-    visual_state_record,
+    dialogue_record, effect_set_record, ending_record, fail_ceiling_record, flag_record,
+    gallery_record, interaction_record, save_schema_record, save_schema_version_of,
+    scene_binding_record, scene_exit_record, scene_record, schedule_record, stat_record,
+    stream_record, table_record, thread_message_record, thread_record, tier_record, trigger_record,
+    value_record, visual_state_record,
 };
 use crate::game::model::{
     AppearanceKind, GAME_FORMAT_VERSION, GAME_FORMAT_VERSION_FIRST, GAME_HASH_ALGO, Game,
@@ -20,25 +20,27 @@ use crate::game::model::{
 use crate::game::op::{
     AppearanceDefineInput, AppearanceEntryInput, AppearanceValueInput, AtomInput,
     CharacterDefineInput, ChoiceDefineInput, ClockDefineInput, ConditionDefineInput,
-    DialogueLineDefineInput, EffectSetDefineInput, EndingDefineInput, ExprInput, FlagDefineInput,
-    GalleryEntryDefineInput, GalleryUnlockInput, GameDefineInput, GameOp, InteractionDefineInput,
-    RngStreamDefineInput, SaveSchemaDefineInput, SceneBindRigInput, SceneDefineInput,
-    SceneExitDefineInput, ScheduleDefineInput, StatDefineInput, StatKindInput, StatTierDefineInput,
-    TableDefineInput, ThreadCreateInput, ThreadPostInput, TriggerDefineInput, TriggerKindInput,
-    ValueDefineInput, VisualStateDefineInput, WeightInput,
+    DialogueLineDefineInput, EffectSetDefineInput, EndingDefineInput, ExprInput,
+    FailCeilingDefineInput, FlagDefineInput, GalleryEntryDefineInput, GalleryUnlockInput,
+    GameDefineInput, GameOp, InteractionDefineInput, RngStreamDefineInput, SaveSchemaDefineInput,
+    SceneBindRigInput, SceneDefineInput, SceneExitDefineInput, ScheduleDefineInput,
+    StatDefineInput, StatKindInput, StatTierDefineInput, TableDefineInput, ThreadCreateInput,
+    ThreadPostInput, TriggerDefineInput, TriggerKindInput, ValueDefineInput,
+    VisualStateDefineInput, WeightInput,
 };
 use crate::limits::{
     GAME_APPEARANCE_SLOTS_MAX, GAME_CATEGORY_TEXT_BYTES_MAX, GAME_CHARACTERS_MAX,
     GAME_CHOICE_OPTIONS_MAX, GAME_CHOICES_MAX, GAME_CONDITIONS_MAX, GAME_CONTENT_TEXT_BYTES_MAX,
     GAME_DIALOGUE_LINES_MAX, GAME_EFFECT_ATOMS_MAX, GAME_EFFECT_SETS_MAX, GAME_ENDINGS_MAX,
-    GAME_FLAGS_MAX, GAME_GALLERY_ENTRIES_MAX, GAME_INTERACTION_CAMERAS_MAX,
-    GAME_INTERACTION_CELLS_MAX, GAME_INTERACTION_NODES_MAX, GAME_INTERACTION_TOOLS_MAX,
-    GAME_INTERACTIONS_MAX, GAME_LIFETIME_DAYS_MAX, GAME_MIGRATIONS_MAX, GAME_OFFER_DAYS_MAX,
-    GAME_RNG_STREAMS_MAX, GAME_SAVE_SLOTS_MAX, GAME_SCENE_BINDINGS_MAX, GAME_SCENE_EXITS_MAX,
-    GAME_SCENES_MAX, GAME_SCHEDULE_OVERRIDES_MAX, GAME_SCHEDULES_MAX, GAME_SLOTS_MAX,
-    GAME_STATS_MAX, GAME_TABLE_OUTCOMES_MAX, GAME_TABLES_MAX, GAME_THREAD_DELAY_MS_MAX,
-    GAME_THREAD_MESSAGES_MAX, GAME_THREAD_PARTICIPANTS_MAX, GAME_THREADS_MAX,
-    GAME_TIER_THRESHOLDS_MAX, GAME_TRIGGERS_MAX, GAME_VALUES_MAX, GAME_VISUAL_STATES_MAX,
+    GAME_FAIL_CEILING_GAINS_MAX, GAME_FAIL_CEILINGS_MAX, GAME_FLAGS_MAX, GAME_GALLERY_ENTRIES_MAX,
+    GAME_INTERACTION_CAMERAS_MAX, GAME_INTERACTION_CELLS_MAX, GAME_INTERACTION_NODES_MAX,
+    GAME_INTERACTION_TOOLS_MAX, GAME_INTERACTIONS_MAX, GAME_LIFETIME_DAYS_MAX, GAME_MIGRATIONS_MAX,
+    GAME_OFFER_DAYS_MAX, GAME_RNG_STREAMS_MAX, GAME_SAVE_SLOTS_MAX, GAME_SCENE_BINDINGS_MAX,
+    GAME_SCENE_EXITS_MAX, GAME_SCENES_MAX, GAME_SCHEDULE_OVERRIDES_MAX, GAME_SCHEDULES_MAX,
+    GAME_SLOTS_MAX, GAME_STATS_MAX, GAME_TABLE_OUTCOMES_MAX, GAME_TABLES_MAX,
+    GAME_THREAD_DELAY_MS_MAX, GAME_THREAD_MESSAGES_MAX, GAME_THREAD_PARTICIPANTS_MAX,
+    GAME_THREADS_MAX, GAME_TIER_THRESHOLDS_MAX, GAME_TRIGGERS_MAX, GAME_VALUES_MAX,
+    GAME_VISUAL_STATES_MAX,
 };
 use crate::model::Project;
 use crate::refusal::{Refusal, RefusalClass, refuse};
@@ -227,7 +229,82 @@ pub fn decide_game(project: &Project, op: &GameOp) -> Result<Verdict, Refusal> {
             let game = section(project)?;
             decide_interaction(game, inputs)
         }
+        GameOp::FailCeilingDefine(inputs) => {
+            let game = section(project)?;
+            decide_fail_ceiling(game, inputs)
+        }
     }
+}
+
+/// The `fail_ceiling_define` gate (P2-9): the guarded scene
+/// and the adverse effect set must exist; the ceiling must
+/// be reachable in principle (at least 1), decay may not be
+/// negative, and every gain must add a positive amount for a
+/// distinctly named event.
+fn decide_fail_ceiling(game: &Game, inputs: &FailCeilingDefineInput) -> Result<Verdict, Refusal> {
+    check_id(&inputs.id, "fail-ceiling channel id")?;
+    check_id(&inputs.scene, "fail-ceiling scene id")?;
+    if game.scene(&inputs.scene).is_none() {
+        return dangling("scene", &inputs.scene);
+    }
+    if inputs.ceiling < 1 {
+        return refuse(
+            RefusalClass::Range,
+            format!(
+                "fail-ceiling channel '{}' ceiling {} is below 1; the gauge could never rest below it",
+                inputs.id, inputs.ceiling
+            ),
+        );
+    }
+    if inputs.decay_per_tick < 0 {
+        return refuse(
+            RefusalClass::Range,
+            format!(
+                "fail-ceiling channel '{}' decay {} is negative; decay restores safety, never adds disturbance",
+                inputs.id, inputs.decay_per_tick
+            ),
+        );
+    }
+    check_count(
+        inputs.gains.len(),
+        GAME_FAIL_CEILING_GAINS_MAX,
+        "fail-ceiling gain rows",
+    )?;
+    let mut events: Vec<&str> = Vec::new();
+    for gain in &inputs.gains {
+        check_id(&gain.event, "fail-ceiling gain event")?;
+        if gain.amount < 1 {
+            return refuse(
+                RefusalClass::Range,
+                format!(
+                    "fail-ceiling channel '{}' gain for event '{}' is {}; a gain adds at least 1",
+                    inputs.id, gain.event, gain.amount
+                ),
+            );
+        }
+        if events.contains(&gain.event.as_str()) {
+            return refuse(
+                RefusalClass::Malformed,
+                format!(
+                    "event '{}' feeds fail-ceiling channel '{}' twice; author one row with the total",
+                    gain.event, inputs.id
+                ),
+            );
+        }
+        events.push(gain.event.as_str());
+    }
+    if game.effect_set(&inputs.adverse).is_none() {
+        return dangling("effect set", &inputs.adverse);
+    }
+    let record = fail_ceiling_record(inputs);
+    upsert_verdict(
+        game.fail_ceiling(&inputs.id),
+        &record,
+        "fail-ceiling channel",
+        &inputs.id,
+        game.fail_ceilings.len() + 1,
+        GAME_FAIL_CEILINGS_MAX,
+    )
 }
 
 /// The `interaction_define` gate (P2-8): the grid's scene and

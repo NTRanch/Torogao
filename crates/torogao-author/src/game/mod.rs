@@ -28,6 +28,11 @@
 //! (cursor scripts, GUINode sprites, the TabAngle camera
 //! family): census-grade, inventoried not measured, and the
 //! records claim expressibility, never behavioural parity.
+//! Slice P2-9 adds the fail-ceiling disturbance channel from
+//! the same study (`shaking_level` / `girl_wakeUp`): a gauge
+//! channel kind inside the tick — gains from authored input
+//! events, per-tick decay, and exactly one adverse
+//! scene-ending transaction on crossing its ceiling.
 
 pub mod apply;
 pub mod codec;

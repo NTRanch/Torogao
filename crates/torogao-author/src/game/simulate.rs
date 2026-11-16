@@ -29,7 +29,11 @@
 //! 4. Re-evaluate `on_threshold` / `on_flag` triggers and the
 //!    `on_event` triggers of events emitted in steps 2–3, in the
 //!    same order, looping until none fire; each trigger fires at
-//!    most once per tick.
+//!    most once per tick. Then the fail-ceiling channels
+//!    (P2-9) evaluate: gains from the tick's events, the
+//!    ceiling check, decay — a crossing applies its adverse
+//!    set as one transaction, still inside this step's order,
+//!    so step 5 honours its transition.
 //! 5. Apply the scene transition (the last `enter_scene` of the
 //!    tick wins): the old scene's `on_exit` effect set
 //!    transacts, then the new scene's `on_enter` effect set
@@ -164,6 +168,12 @@ pub fn genesis(project: &Project, run_seed: i64) -> Result<GameState, Refusal> {
         state
             .rng
             .insert(stream.id.clone(), stream_seed(run_seed, &stream.id));
+    }
+    for channel in &game.fail_ceilings {
+        state.fail_ceilings.insert(
+            channel.id.clone(),
+            crate::game::state::FailCeilingState::default(),
+        );
     }
     state.current_scene = game.start_scene.clone();
     state.line = game.start_scene.as_deref().and_then(|scene| {
@@ -347,6 +357,12 @@ fn tick(
     }
     // Step 4: re-evaluate threshold/flag/emitted-event triggers.
     reevaluate(game, state, events, &mut fired)?;
+    // Step 4b: fail-ceiling channels (P2-9) — after the
+    // trigger re-evaluation settles, before the transition
+    // step, so a crossing's adverse transaction (an
+    // `enter_scene` atom included) is honoured by step 5 in
+    // the same tick.
+    evaluate_fail_ceilings(game, state, entry, events);
     // Step 5: scene transition — the old scene's on_exit set,
     // then the new scene's on_enter set, then on_enter_scene
     // triggers.
@@ -1396,6 +1412,77 @@ fn reevaluate(
         if !progress {
             return Ok(());
         }
+    }
+}
+
+/// Step 4b: fail-ceiling channels (P2-9). For each channel
+/// guarding the scene the run is in, in id order: the gauge
+/// accumulates the tick's gains (the step-3 event input and
+/// every event emitted in steps 2–4 feed it, once per gain
+/// row), then the ceiling check — a gauge at or above its
+/// ceiling crosses, latching the channel and applying its
+/// adverse set as one transaction — then, only when the
+/// channel did not cross, decay toward zero at the authored
+/// rate. A channel outside its scene neither accumulates nor
+/// decays, and a latched channel never fires again: the
+/// adverse transaction is exactly-once. Events the adverse
+/// set emits do not re-enter step 4 (it has settled); like
+/// step-5 emissions, they are trace-only.
+fn evaluate_fail_ceilings(
+    game: &Game,
+    state: &mut GameState,
+    entry: Option<&LogEntry>,
+    events: &mut Vec<String>,
+) {
+    if game.fail_ceilings.is_empty() {
+        return;
+    }
+    let mut tick_events: Vec<&str> = state.emitted.iter().map(String::as_str).collect();
+    if let Some(entry) = entry
+        && entry.kind == "event"
+    {
+        tick_events.push(entry.id.as_str());
+    }
+    let mut crossed: Vec<(String, String, i64, i64)> = Vec::new();
+    for def in &game.fail_ceilings {
+        if state.current_scene.as_deref() != Some(def.scene.as_str()) {
+            continue;
+        }
+        let channel = state.fail_ceilings.entry(def.id.clone()).or_default();
+        if channel.fired {
+            continue;
+        }
+        let mut gained: i64 = 0;
+        for gain in &def.gains {
+            if tick_events.contains(&gain.event.as_str()) {
+                gained = gained.saturating_add(gain.amount);
+            }
+        }
+        channel.value = channel.value.saturating_add(gained);
+        if channel.value >= def.ceiling {
+            channel.fired = true;
+            crossed.push((
+                def.id.clone(),
+                def.adverse.clone(),
+                channel.value,
+                def.ceiling,
+            ));
+        } else if def.decay_per_tick > 0 && channel.value > 0 {
+            channel.value = (channel.value - def.decay_per_tick).max(0);
+        }
+    }
+    for (id, adverse, value, ceiling) in crossed {
+        events.push(format!(
+            "tick {}: fail-ceiling '{id}' crossed ({value} >= {ceiling})",
+            state.tick
+        ));
+        apply_named_set(
+            game,
+            state,
+            &adverse,
+            events,
+            &format!("fail-ceiling '{id}'"),
+        );
     }
 }
 

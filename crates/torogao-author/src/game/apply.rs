@@ -9,26 +9,26 @@
 use crate::game::model::{
     AppearanceDef, AppearanceEntry, AppearanceKind, AppearanceSlot, AppearanceValue, Atom,
     CharacterDef, ChoiceDef, ChoiceOption, ChoiceOrigin, ChoiceTarget, Clock, ConditionDef,
-    DialogueLine, Direction, EffectSetDef, EndingDef, FlagDef, FlagEdge, FlagScope,
-    GAME_FORMAT_VERSION, GalleryEntryDef, GalleryUnlock, Game, InteractionCell, InteractionDef,
-    InteractionNode, Lifetime, Migration, OfferDef, Overflow, Repetition, RngStreamDef,
-    SaveContextPolicy, SaveSchema, SceneBindingDef, SceneDef, SceneExitDef, ScheduleDef,
-    ScheduleOverride, ScheduleSlot, SlotHolds, StatDef, StatInitial, StatKind, StatScope, TableDef,
-    TableOutcome, TableWeight, ThreadDef, ThreadInterludeDef, ThreadMessage, TierDef, TriggerDef,
-    TriggerKind, ValueDef, VisualStateDef,
+    DialogueLine, Direction, EffectSetDef, EndingDef, FailCeilingDef, FailCeilingGain, FlagDef,
+    FlagEdge, FlagScope, GAME_FORMAT_VERSION, GalleryEntryDef, GalleryUnlock, Game,
+    InteractionCell, InteractionDef, InteractionNode, Lifetime, Migration, OfferDef, Overflow,
+    Repetition, RngStreamDef, SaveContextPolicy, SaveSchema, SceneBindingDef, SceneDef,
+    SceneExitDef, ScheduleDef, ScheduleOverride, ScheduleSlot, SlotHolds, StatDef, StatInitial,
+    StatKind, StatScope, TableDef, TableOutcome, TableWeight, ThreadDef, ThreadInterludeDef,
+    ThreadMessage, TierDef, TriggerDef, TriggerKind, ValueDef, VisualStateDef,
 };
 use crate::game::op::{
     AppearanceDefineInput, AppearanceEntryInput, AppearanceKindInput, AppearanceSlotInput,
     AppearanceValueInput, AtomInput, CharacterDefineInput, ChoiceDefineInput, ChoiceOptionInput,
     ChoiceTargetInput, ClockDefineInput, ConditionDefineInput, DialogueLineDefineInput,
-    DirectionInput, EffectSetDefineInput, EndingDefineInput, FlagDefineInput, FlagEdgeInput,
-    FlagScopeInput, GalleryEntryDefineInput, GalleryUnlockInput, GameDefineInput, GameOp,
-    InteractionCellInput, InteractionDefineInput, InteractionNodeInput, OverflowInput,
-    PresentationInput, RepetitionInput, RngStreamDefineInput, SavePolicyInput,
-    SaveSchemaDefineInput, SceneBindRigInput, SceneDefineInput, SceneExitDefineInput,
-    ScheduleDefineInput, StatDefineInput, StatKindInput, StatScopeInput, StatTierDefineInput,
-    TableDefineInput, TableOutcomeInput, ThreadCreateInput, ThreadPostInput, TriggerDefineInput,
-    TriggerKindInput, ValueDefineInput, VisualStateDefineInput, WeightInput,
+    DirectionInput, EffectSetDefineInput, EndingDefineInput, FailCeilingDefineInput,
+    FailCeilingGainInput, FlagDefineInput, FlagEdgeInput, FlagScopeInput, GalleryEntryDefineInput,
+    GalleryUnlockInput, GameDefineInput, GameOp, InteractionCellInput, InteractionDefineInput,
+    InteractionNodeInput, OverflowInput, PresentationInput, RepetitionInput, RngStreamDefineInput,
+    SavePolicyInput, SaveSchemaDefineInput, SceneBindRigInput, SceneDefineInput,
+    SceneExitDefineInput, ScheduleDefineInput, StatDefineInput, StatKindInput, StatScopeInput,
+    StatTierDefineInput, TableDefineInput, TableOutcomeInput, ThreadCreateInput, ThreadPostInput,
+    TriggerDefineInput, TriggerKindInput, ValueDefineInput, VisualStateDefineInput, WeightInput,
 };
 use crate::model::{Project, locate};
 use crate::refusal::Refusal;
@@ -183,6 +183,49 @@ pub(crate) fn interaction_input_of(record: &InteractionDef) -> InteractionDefine
                 camera: row.camera.clone(),
             })
             .collect(),
+    }
+}
+
+/// The fail-ceiling record a `fail_ceiling_define` produces
+/// (P2-9): gain rows sorted by event, so the record is
+/// canonical however the author ordered them.
+pub(crate) fn fail_ceiling_record(inputs: &FailCeilingDefineInput) -> FailCeilingDef {
+    let mut gains: Vec<FailCeilingGain> = inputs
+        .gains
+        .iter()
+        .map(|row| FailCeilingGain {
+            event: row.event.clone(),
+            amount: row.amount,
+        })
+        .collect();
+    gains.sort_by(|a, b| a.event.cmp(&b.event));
+    FailCeilingDef {
+        id: inputs.id.clone(),
+        scene: inputs.scene.clone(),
+        ceiling: inputs.ceiling,
+        decay_per_tick: inputs.decay_per_tick,
+        gains,
+        adverse: inputs.adverse.clone(),
+    }
+}
+
+/// The inputs a stored fail-ceiling channel rebuilds from
+/// (for the validation sweep).
+pub(crate) fn fail_ceiling_input_of(record: &FailCeilingDef) -> FailCeilingDefineInput {
+    FailCeilingDefineInput {
+        id: record.id.clone(),
+        scene: record.scene.clone(),
+        ceiling: record.ceiling,
+        decay_per_tick: record.decay_per_tick,
+        gains: record
+            .gains
+            .iter()
+            .map(|row| FailCeilingGainInput {
+                event: row.event.clone(),
+                amount: row.amount,
+            })
+            .collect(),
+        adverse: record.adverse.clone(),
     }
 }
 
@@ -859,6 +902,11 @@ pub fn apply_game(project: &mut Project, op: &GameOp) -> Result<(), Refusal> {
             let record = interaction_record(inputs);
             let game = game_mut(project);
             upsert(&mut game.interactions, record, |g| &g.id);
+        }
+        GameOp::FailCeilingDefine(inputs) => {
+            let record = fail_ceiling_record(inputs);
+            let game = game_mut(project);
+            upsert(&mut game.fail_ceilings, record, |c| &c.id);
         }
     }
     if let Some(game) = &mut project.game {

@@ -221,9 +221,9 @@ fn thread_records_author_validate_read_and_replay_three_times() {
 
 #[test]
 fn thread_verbs_are_live_in_the_game_census() {
-    assert_eq!(GAME_MANIFEST.len(), 28);
+    assert_eq!(GAME_MANIFEST.len(), 29);
     let implemented = GAME_MANIFEST.iter().filter(|spec| spec.implemented).count();
-    assert_eq!(implemented, 28);
+    assert_eq!(implemented, 29);
     for (name, mutating) in [
         ("thread_create", true),
         ("thread_post", true),
