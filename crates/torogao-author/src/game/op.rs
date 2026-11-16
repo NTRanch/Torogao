@@ -39,6 +39,9 @@ pub enum GameSlice {
     /// Phase 2 slice 9: fail-ceiling disturbance channel
     /// (Doujin Fever census).
     P29,
+    /// Phase 2 slice 12: unseen-content marker lifecycle
+    /// (Changr census).
+    P212,
     /// AUTH-G slice G1 remainder (core records not yet needed by
     /// a Phase 2 slice).
     G1,
@@ -59,6 +62,7 @@ impl GameSlice {
             GameSlice::P27 => "Phase 2 slice 7 (message threads)",
             GameSlice::P28 => "Phase 2 slice 8 (direct manipulation)",
             GameSlice::P29 => "Phase 2 slice 9 (fail-ceiling channel)",
+            GameSlice::P212 => "Phase 2 slice 12 (unseen-content markers)",
             GameSlice::G1 => "AUTH-G G1",
             GameSlice::G2 => "AUTH-G G2",
         }
@@ -99,9 +103,9 @@ const fn verb(
 /// The AUTH-G manifest: the Amendment's 22 verbs plus the
 /// visual-state pair P2-6 adds, the message-thread family
 /// P2-7 adds, the interaction verb P2-8 adds, and the
-/// fail-ceiling verb P2-9 adds (29), alphabetical within
-/// group.
-pub const GAME_MANIFEST: [GameVerbSpec; 29] = [
+/// fail-ceiling verb P2-9 adds and the marker verb P2-12
+/// adds (30), alphabetical within group.
+pub const GAME_MANIFEST: [GameVerbSpec; 30] = [
     verb("clock_define", "game core", GameSlice::P22, true, true),
     verb("game_define", "game core", GameSlice::P21, true, true),
     verb(
@@ -128,6 +132,7 @@ pub const GAME_MANIFEST: [GameVerbSpec; 29] = [
         true,
     ),
     verb("flag_define", "game state", GameSlice::P22, true, true),
+    verb("marker_define", "game state", GameSlice::P212, true, true),
     verb("stat_define", "game state", GameSlice::P22, true, true),
     verb("stat_tier_define", "game state", GameSlice::P22, true, true),
     verb("table_define", "game state", GameSlice::P24, true, true),
@@ -355,6 +360,11 @@ pub enum AtomInput {
     RollTable {
         /// The table id.
         table: String,
+    },
+    /// `{"kind": "mark_new", "marker": "id"}` (P2-12).
+    MarkNew {
+        /// The marker id.
+        marker: String,
     },
     /// `{"kind": "stat_add", "stat": "id", "character": "id"?,
     /// "amount": expr}`.
@@ -715,6 +725,47 @@ pub struct FailCeilingDefineInput {
     /// The adverse effect set applied the one time the
     /// ceiling is crossed.
     pub adverse: String,
+}
+
+/// Marker keying category, as input (P2-12).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MarkerCategoryInput {
+    /// Character × data level content.
+    CharacterData,
+    /// A location's content.
+    Location,
+    /// An outfit's content.
+    Outfit,
+}
+
+/// Marker clear point, as input (P2-12).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MarkerClearInput {
+    /// Clears when the marker's scene is left.
+    Finish,
+    /// Clears when the marker's scene is entered.
+    Start,
+}
+
+/// `marker_define` inputs (P2-12).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MarkerDefineInput {
+    /// Marker id.
+    pub id: String,
+    /// The keying category.
+    pub category: MarkerCategoryInput,
+    /// The content address (an id-shaped key).
+    pub address: String,
+    /// Which save partition the flag lives in.
+    pub scope: FlagScopeInput,
+    /// When the flag clears.
+    pub clear: MarkerClearInput,
+    /// The scene whose entry (start) or exit (finish) clears
+    /// the flag.
+    pub scene: String,
 }
 
 /// `interaction_define` inputs (P2-8): the whole grid in one
@@ -1343,6 +1394,8 @@ pub enum GameOp {
     InteractionDefine(InteractionDefineInput),
     /// `fail_ceiling_define`.
     FailCeilingDefine(FailCeilingDefineInput),
+    /// `marker_define`.
+    MarkerDefine(MarkerDefineInput),
 }
 
 fn typed<T: for<'de> Deserialize<'de>>(verb: &str, inputs: &Value) -> Result<T, Refusal> {
@@ -1383,6 +1436,7 @@ pub fn parse_game_op(verb: &str, inputs: &Value) -> Result<crate::op::Op, Refusa
         "thread_post" => GameOp::ThreadPost(typed(verb, inputs)?),
         "interaction_define" => GameOp::InteractionDefine(typed(verb, inputs)?),
         "fail_ceiling_define" => GameOp::FailCeilingDefine(typed(verb, inputs)?),
+        "marker_define" => GameOp::MarkerDefine(typed(verb, inputs)?),
         "trigger_define" => GameOp::TriggerDefine(typed(verb, inputs)?),
         "value_define" => GameOp::ValueDefine(typed(verb, inputs)?),
         "visual_state_define" => GameOp::VisualStateDefine(typed(verb, inputs)?),
@@ -1419,6 +1473,7 @@ impl GameOp {
             GameOp::ThreadPost(_) => "thread_post",
             GameOp::InteractionDefine(_) => "interaction_define",
             GameOp::FailCeilingDefine(_) => "fail_ceiling_define",
+            GameOp::MarkerDefine(_) => "marker_define",
             GameOp::TriggerDefine(_) => "trigger_define",
             GameOp::ValueDefine(_) => "value_define",
             GameOp::VisualStateDefine(_) => "visual_state_define",
@@ -1452,6 +1507,7 @@ impl GameOp {
             GameOp::ThreadPost(inputs) => serde_json::to_value(inputs),
             GameOp::InteractionDefine(inputs) => serde_json::to_value(inputs),
             GameOp::FailCeilingDefine(inputs) => serde_json::to_value(inputs),
+            GameOp::MarkerDefine(inputs) => serde_json::to_value(inputs),
             GameOp::TriggerDefine(inputs) => serde_json::to_value(inputs),
             GameOp::ValueDefine(inputs) => serde_json::to_value(inputs),
             GameOp::VisualStateDefine(inputs) => serde_json::to_value(inputs),
@@ -1470,8 +1526,8 @@ mod tests {
     use super::{GAME_MANIFEST, GameSlice};
 
     #[test]
-    fn game_manifest_has_29_verbs_alphabetical_within_group() {
-        assert_eq!(GAME_MANIFEST.len(), 29);
+    fn game_manifest_has_30_verbs_alphabetical_within_group() {
+        assert_eq!(GAME_MANIFEST.len(), 30);
         let mut groups: Vec<&str> = Vec::new();
         for spec in GAME_MANIFEST {
             if groups.last() != Some(&spec.group) {
@@ -1496,6 +1552,6 @@ mod tests {
             .count();
         assert_eq!(p21, 4);
         let implemented = GAME_MANIFEST.iter().filter(|spec| spec.implemented).count();
-        assert_eq!(implemented, 29);
+        assert_eq!(implemented, 30);
     }
 }

@@ -128,6 +128,8 @@ pub const GAME_INTERACTION_CELLS_MAX: usize = 1024;
 pub const GAME_INTERACTION_NODES_MAX: usize = 128;
 /// Maximum tools in one interaction grid (P2-8).
 pub const GAME_INTERACTION_TOOLS_MAX: usize = 64;
+/// Maximum unseen-content markers in one game (P2-12).
+pub const GAME_MARKERS_MAX: usize = 1024;
 /// Maximum lifetime window on a stat, in days.
 pub const GAME_LIFETIME_DAYS_MAX: u32 = 36_500;
 /// Maximum offer expiry window on a trigger, in days.

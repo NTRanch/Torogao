@@ -934,6 +934,16 @@ fn game_ops(project: &Project) -> Vec<Op> {
             );
         }
     }
+    for marker in &game.markers {
+        let deps = vec!["game".to_string(), format!("scene:{}", marker.scene)];
+        push(
+            format!("marker:{}", marker.id),
+            deps,
+            Op::Game(GameOp::MarkerDefine(crate::game::apply::marker_input_of(
+                marker,
+            ))),
+        );
+    }
     for channel in &game.fail_ceilings {
         let deps = vec![
             "game".to_string(),
@@ -1322,6 +1332,7 @@ fn atom_deps(atom: &crate::game::model::Atom, deps: &mut Vec<String>) {
         Atom::FlagClear { flag } | Atom::FlagSet { flag } => {
             deps.push(format!("flag:{flag}"));
         }
+        Atom::MarkNew { marker } => deps.push(format!("marker:{marker}")),
         Atom::RollTable { table } => deps.push(format!("table:{table}")),
         Atom::StatAdd {
             character,
@@ -1608,6 +1619,17 @@ fn game_findings(project: &Project) -> Vec<Refusal> {
                         ),
                     );
                 }
+            }
+        }
+        for marker in &game.markers {
+            if game.scene(&marker.scene).is_none() {
+                dangling(
+                    &mut findings,
+                    format!(
+                        "marker '{}' names missing scene '{}'",
+                        marker.id, marker.scene
+                    ),
+                );
             }
         }
         for channel in &game.fail_ceilings {

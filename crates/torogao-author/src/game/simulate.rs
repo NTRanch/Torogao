@@ -367,10 +367,19 @@ fn tick(
     // then the new scene's on_enter set, then on_enter_scene
     // triggers.
     if let Some(scene) = state.pending_scene.take() {
-        if let Some(old) = state.current_scene.clone()
-            && let Some(set) = game.scene(&old).and_then(|def| def.on_exit.clone())
-        {
-            apply_named_set(game, state, &set, events, &format!("scene '{old}' exit"));
+        if let Some(old) = state.current_scene.clone() {
+            if let Some(set) = game.scene(&old).and_then(|def| def.on_exit.clone()) {
+                apply_named_set(game, state, &set, events, &format!("scene '{old}' exit"));
+            }
+            // P2-12: finish-clear markers bound to the scene
+            // being left clear as it is left.
+            clear_markers(
+                game,
+                state,
+                &old,
+                crate::game::model::MarkerClear::Finish,
+                events,
+            );
         }
         state.current_scene = Some(scene.clone());
         state.line = game
@@ -382,6 +391,15 @@ fn tick(
         if let Some(set) = game.scene(&scene).and_then(|def| def.on_enter.clone()) {
             apply_named_set(game, state, &set, events, &format!("scene '{scene}' entry"));
         }
+        // P2-12: start-clear markers bound to the scene being
+        // entered clear as it is entered.
+        clear_markers(
+            game,
+            state,
+            &scene,
+            crate::game::model::MarkerClear::Start,
+            events,
+        );
         fire_enter_scene(game, state, &scene, events, &mut fired)?;
     }
     // Step 6: ending rules, in ascending priority order; the
@@ -721,6 +739,24 @@ fn apply_atom(
         }
         Atom::FlagSet { flag } => {
             set_flag(game, state, flag, true);
+            Ok(())
+        }
+        Atom::MarkNew { marker } => {
+            let Some(def) = game.marker(marker) else {
+                return Err(format!("unknown marker '{marker}'"));
+            };
+            let flagged = match def.scope {
+                crate::game::model::FlagScope::Globals => {
+                    state.markers_globals.insert(marker.clone())
+                }
+                crate::game::model::FlagScope::Run => state.markers_run.insert(marker.clone()),
+            };
+            if flagged {
+                notes.push(format!(
+                    "tick {}: marker '{marker}' flagged new",
+                    state.tick
+                ));
+            }
             Ok(())
         }
         Atom::RollTable { table } => draw_table(game, state, table, notes, depth),
@@ -1483,6 +1519,39 @@ fn evaluate_fail_ceilings(
             events,
             &format!("fail-ceiling '{id}'"),
         );
+    }
+}
+
+/// Step 5 (marker lifecycle, P2-12): clears the flagged
+/// markers bound to `scene` at the named point — start-clear
+/// on entry, finish-clear on exit. Clearing a marker that is
+/// not flagged is silent (the lifecycle is idempotent); a
+/// clear that removes a flag is a trace event.
+fn clear_markers(
+    game: &Game,
+    state: &mut GameState,
+    scene: &str,
+    point: crate::game::model::MarkerClear,
+    events: &mut Vec<String>,
+) {
+    let point_name = match point {
+        crate::game::model::MarkerClear::Finish => "finish",
+        crate::game::model::MarkerClear::Start => "start",
+    };
+    for marker in &game.markers {
+        if marker.scene != scene || marker.clear != point {
+            continue;
+        }
+        let removed = match marker.scope {
+            crate::game::model::FlagScope::Globals => state.markers_globals.remove(&marker.id),
+            crate::game::model::FlagScope::Run => state.markers_run.remove(&marker.id),
+        };
+        if removed {
+            events.push(format!(
+                "tick {}: marker '{}' cleared ({point_name} at '{scene}')",
+                state.tick, marker.id
+            ));
+        }
     }
 }
 

@@ -117,6 +117,9 @@ pub struct Game {
     /// Fail-ceiling disturbance channels, sorted by id.
     /// (Serialized only when non-empty, like `streams`.)
     pub fail_ceilings: Vec<FailCeilingDef>,
+    /// Unseen-content markers, sorted by id. (Serialized only
+    /// when non-empty, like `streams`.)
+    pub markers: Vec<MarkerDef>,
     /// Direct-manipulation interaction grids, sorted by id.
     /// (Serialized only when non-empty, like `streams`.)
     pub interactions: Vec<InteractionDef>,
@@ -236,6 +239,11 @@ impl Game {
     /// The fail-ceiling channel with this id.
     pub fn fail_ceiling(&self, id: &str) -> Option<&FailCeilingDef> {
         find(&self.fail_ceilings, id, |item| &item.id)
+    }
+
+    /// The unseen-content marker with this id.
+    pub fn marker(&self, id: &str) -> Option<&MarkerDef> {
+        find(&self.markers, id, |item| &item.id)
     }
 
     /// The tier bands over this stat, if authored.
@@ -551,6 +559,13 @@ pub enum Atom {
     RollTable {
         /// The table id.
         table: String,
+    },
+    /// Flag an unseen-content marker as new (P2-12): the
+    /// marker joins its partition's flagged set until its
+    /// scene's start/finish clear removes it.
+    MarkNew {
+        /// The marker id.
+        marker: String,
     },
     /// Add an evaluated amount to a stat.
     StatAdd {
@@ -1345,6 +1360,56 @@ pub struct FailCeilingDef {
     /// The adverse effect set applied, as one transaction,
     /// the one time the ceiling is crossed.
     pub adverse: String,
+}
+
+/// The keying category of an unseen-content marker (P2-12):
+/// the Changr study's three content-address families.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MarkerCategory {
+    /// Character × data level content.
+    CharacterData,
+    /// A location's content.
+    Location,
+    /// An outfit's content.
+    Outfit,
+}
+
+/// When a marker's flag clears (P2-12): as its scene is
+/// entered (start-clear) or as it is left (finish-clear) —
+/// the study's GameState method family, as record data.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MarkerClear {
+    /// Clears when the marker's scene is left.
+    Finish,
+    /// Clears when the marker's scene is entered.
+    Start,
+}
+
+/// An unseen-content marker (`marker_define`, Phase 2 slice
+/// P2-12): a "NEW" flag over one content address, keyed by
+/// category, living in a save partition (the flag family's
+/// run/globals discipline — the partition is the authored
+/// schema decision), flagged by the `mark_new` effect atom
+/// and cleared by the scene lifecycle: start-clear markers
+/// clear when their scene is entered, finish-clear markers
+/// when it is left. The records are the format anchor; how
+/// the app surfaces flagged markers in its content browsers
+/// is the app's half of the slice.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MarkerDef {
+    /// Stable id.
+    pub id: String,
+    /// The keying category.
+    pub category: MarkerCategory,
+    /// The content address (an id-shaped key, e.g. `amy_lv2`).
+    pub address: String,
+    /// Which save partition the flag lives in.
+    pub scope: FlagScope,
+    /// When the flag clears.
+    pub clear: MarkerClear,
+    /// The scene whose entry (start) or exit (finish) clears
+    /// the flag.
+    pub scene: String,
 }
 
 /// One prose entry of `content.ron`, keyed by content id. Entries

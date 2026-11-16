@@ -124,6 +124,14 @@ pub struct GameState {
     /// document from before channels existed keeps its bytes
     /// and its hash.
     pub fail_ceilings: BTreeMap<String, FailCeilingState>,
+    /// Unseen-content markers currently flagged new, in the
+    /// run partition (P2-12). Emitted only when non-empty,
+    /// under the same absent-means-absent law.
+    pub markers_run: BTreeSet<String>,
+    /// Unseen-content markers currently flagged new, in the
+    /// globals partition (P2-12). Emitted only when
+    /// non-empty.
+    pub markers_globals: BTreeSet<String>,
     /// Transient: a scene transition awaiting the tick's
     /// transition step. Never serialized.
     pub pending_scene: Option<String>,
@@ -317,6 +325,28 @@ pub fn state_to_ron(state: &GameState) -> Ron {
                         })
                         .collect(),
                 ),
+            ),
+        );
+    }
+    // The marker partitions ride only once a marker is
+    // flagged, under the same absent-means-absent law.
+    if !state.markers_run.is_empty() || !state.markers_globals.is_empty() {
+        let pos = fields
+            .iter()
+            .position(|(name, _)| *name == "slot")
+            .unwrap_or(fields.len());
+        fields.insert(
+            pos,
+            (
+                "markers_run",
+                Ron::List(state.markers_run.iter().map(|id| text(id)).collect()),
+            ),
+        );
+        fields.insert(
+            pos,
+            (
+                "markers_globals",
+                Ron::List(state.markers_globals.iter().map(|id| text(id)).collect()),
             ),
         );
     }
@@ -531,6 +561,40 @@ pub fn state_from_ron(value: Ron, format_version: i64) -> Result<GameState, Refu
         }
         Some(_) => return wrong_type("fail_ceilings", "a list"),
     }
+    // The marker partitions are absent in state documents
+    // written before markers existed; they read as empty.
+    let mut markers_run = BTreeSet::new();
+    match fields.try_take("markers_run") {
+        None => {}
+        Some(Ron::List(items)) => {
+            for item in items {
+                let id = crate::codec::as_string(item, "markers_run")?;
+                if !markers_run.insert(id.clone()) {
+                    return refuse(
+                        RefusalClass::Malformed,
+                        format!("state carries run marker '{id}' twice"),
+                    );
+                }
+            }
+        }
+        Some(_) => return wrong_type("markers_run", "a list"),
+    }
+    let mut markers_globals = BTreeSet::new();
+    match fields.try_take("markers_globals") {
+        None => {}
+        Some(Ron::List(items)) => {
+            for item in items {
+                let id = crate::codec::as_string(item, "markers_globals")?;
+                if !markers_globals.insert(id.clone()) {
+                    return refuse(
+                        RefusalClass::Malformed,
+                        format!("state carries globals marker '{id}' twice"),
+                    );
+                }
+            }
+        }
+        Some(_) => return wrong_type("markers_globals", "a list"),
+    }
     let state = GameState {
         tick: as_u64(fields.take("tick")?, "tick")?,
         day: fields.int("day")?,
@@ -547,6 +611,8 @@ pub fn state_from_ron(value: Ron, format_version: i64) -> Result<GameState, Refu
         threads_delivered,
         thread_delay_ms,
         fail_ceilings,
+        markers_run,
+        markers_globals,
         pending_scene: None,
         emitted: Vec::new(),
     };

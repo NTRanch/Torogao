@@ -20,12 +20,12 @@ use crate::game::model::{
     CharacterDef, ChoiceDef, ChoiceOption, ChoiceOrigin, ChoiceTarget, Clock, ClockField, CmpOp,
     ConditionDef, ContentEntry, DialogueLine, Direction, EffectSetDef, EndingDef, Expr,
     FailCeilingDef, FailCeilingGain, FlagDef, FlagEdge, FlagScope, GalleryEntryDef, GalleryUnlock,
-    Game, InteractionCell, InteractionDef, InteractionNode, Lifetime, Migration, OfferDef,
-    Overflow, Presentation, Repetition, RngStreamDef, SaveContextPolicy, SaveSchema,
-    SceneBindingDef, SceneDef, SceneExitDef, ScheduleDef, ScheduleOverride, ScheduleSlot,
-    SlotHolds, StatDef, StatInitial, StatKind, StatScope, TableDef, TableOutcome, TableWeight,
-    ThreadDef, ThreadInterludeDef, ThreadMessage, TierDef, TriggerDef, TriggerKind, ValueDef,
-    VisualStateDef,
+    Game, InteractionCell, InteractionDef, InteractionNode, Lifetime, MarkerCategory, MarkerClear,
+    MarkerDef, Migration, OfferDef, Overflow, Presentation, Repetition, RngStreamDef,
+    SaveContextPolicy, SaveSchema, SceneBindingDef, SceneDef, SceneExitDef, ScheduleDef,
+    ScheduleOverride, ScheduleSlot, SlotHolds, StatDef, StatInitial, StatKind, StatScope, TableDef,
+    TableOutcome, TableWeight, ThreadDef, ThreadInterludeDef, ThreadMessage, TierDef, TriggerDef,
+    TriggerKind, ValueDef, VisualStateDef,
 };
 use crate::refusal::{Refusal, RefusalClass, refuse};
 use crate::ron::Ron;
@@ -242,7 +242,59 @@ pub(crate) fn game_to_ron(game: &Game) -> Ron {
             Ron::List(game.fail_ceilings.iter().map(fail_ceiling_to_ron).collect()),
         );
     }
+    // The P2-12 marker surface is absent-means-absent the
+    // same way.
+    if !game.markers.is_empty() {
+        insert_field(
+            &mut fields,
+            "scenes",
+            "markers",
+            Ron::List(game.markers.iter().map(marker_to_ron).collect()),
+        );
+    }
     record("Game", fields)
+}
+
+fn marker_to_ron(marker: &MarkerDef) -> Ron {
+    record(
+        "Marker",
+        vec![
+            ("id", text(&marker.id)),
+            ("address", text(&marker.address)),
+            (
+                "category",
+                Ron::Ident(
+                    match marker.category {
+                        MarkerCategory::CharacterData => "CharacterData",
+                        MarkerCategory::Location => "Location",
+                        MarkerCategory::Outfit => "Outfit",
+                    }
+                    .to_string(),
+                ),
+            ),
+            (
+                "clear",
+                Ron::Ident(
+                    match marker.clear {
+                        MarkerClear::Finish => "Finish",
+                        MarkerClear::Start => "Start",
+                    }
+                    .to_string(),
+                ),
+            ),
+            ("scene", text(&marker.scene)),
+            (
+                "scope",
+                Ron::Ident(
+                    match marker.scope {
+                        FlagScope::Globals => "Globals",
+                        FlagScope::Run => "Run",
+                    }
+                    .to_string(),
+                ),
+            ),
+        ],
+    )
 }
 
 fn fail_ceiling_to_ron(channel: &FailCeilingDef) -> Ron {
@@ -555,6 +607,7 @@ fn atom_to_ron(atom: &Atom) -> Ron {
         Atom::EnterScene { scene } => record("EnterScene", vec![("scene", text(scene))]),
         Atom::FlagClear { flag } => record("FlagClear", vec![("flag", text(flag))]),
         Atom::FlagSet { flag } => record("FlagSet", vec![("flag", text(flag))]),
+        Atom::MarkNew { marker } => record("MarkNew", vec![("marker", text(marker))]),
         Atom::RollTable { table } => record("RollTable", vec![("table", text(table))]),
         Atom::StatAdd {
             character,
@@ -1241,6 +1294,11 @@ pub(crate) fn game_from_ron(value: Ron) -> Result<Game, Refusal> {
         Some(Ron::List(items)) => collect(items, fail_ceiling_from_ron)?,
         Some(_) => return wrong_type("fail_ceilings", "a list"),
     };
+    let markers = match fields.try_take("markers") {
+        None => Vec::new(),
+        Some(Ron::List(items)) => collect(items, marker_from_ron)?,
+        Some(_) => return wrong_type("markers", "a list"),
+    };
     let alter_ego_veto = opt_string_absent(&mut fields, "alter_ego_veto")?;
     let tiers = collect(fields.list("tiers")?, tier_from_ron)?;
     let triggers = collect(fields.list("triggers")?, trigger_from_ron)?;
@@ -1276,6 +1334,7 @@ pub(crate) fn game_from_ron(value: Ron) -> Result<Game, Refusal> {
         threads: sorted_unique(threads, "threads", |item| &item.id)?,
         interactions: sorted_unique(interactions, "interactions", |item| &item.id)?,
         fail_ceilings: sorted_unique(fail_ceilings, "fail-ceiling channels", |item| &item.id)?,
+        markers: sorted_unique(markers, "markers", |item| &item.id)?,
     };
     fields.done()?;
     Ok(game)
@@ -1352,6 +1411,36 @@ fn sorted_scene_exits(mut items: Vec<SceneExitDef>) -> Result<Vec<SceneExitDef>,
         }
     }
     Ok(items)
+}
+
+fn marker_from_ron(value: Ron) -> Result<MarkerDef, Refusal> {
+    let mut fields = open(value, "Marker")?;
+    let category = match fields.ident("category")?.as_str() {
+        "CharacterData" => MarkerCategory::CharacterData,
+        "Location" => MarkerCategory::Location,
+        "Outfit" => MarkerCategory::Outfit,
+        other => return unknown_variant("category", other),
+    };
+    let clear = match fields.ident("clear")?.as_str() {
+        "Finish" => MarkerClear::Finish,
+        "Start" => MarkerClear::Start,
+        other => return unknown_variant("clear", other),
+    };
+    let scope = match fields.ident("scope")?.as_str() {
+        "Globals" => FlagScope::Globals,
+        "Run" => FlagScope::Run,
+        other => return unknown_variant("scope", other),
+    };
+    let marker = MarkerDef {
+        id: fields.string("id")?,
+        category,
+        address: fields.string("address")?,
+        scope,
+        clear,
+        scene: fields.string("scene")?,
+    };
+    fields.done()?;
+    Ok(marker)
 }
 
 fn fail_ceiling_from_ron(value: Ron) -> Result<FailCeilingDef, Refusal> {
@@ -1859,6 +1948,9 @@ fn atom_from_ron(value: Ron) -> Result<Atom, Refusal> {
         },
         "FlagSet" => Atom::FlagSet {
             flag: fields.string("flag")?,
+        },
+        "MarkNew" => Atom::MarkNew {
+            marker: fields.string("marker")?,
         },
         "RollTable" => Atom::RollTable {
             table: fields.string("table")?,

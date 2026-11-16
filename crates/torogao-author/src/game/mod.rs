@@ -32,7 +32,14 @@
 //! the same study (`shaking_level` / `girl_wakeUp`): a gauge
 //! channel kind inside the tick — gains from authored input
 //! events, per-tick decay, and exactly one adverse
-//! scene-ending transaction on crossing its ceiling.
+//! scene-ending transaction on crossing its ceiling. Slice
+//! P2-12 adds the unseen-content marker lifecycle (the
+//! Changr study's marker method family): `marker_define`
+//! records keyed by content category and save partition, the
+//! `mark_new` effect atom, and start/finish clears bound to
+//! the scene lifecycle — the records are the format anchor;
+//! the app's browser surfacing is the app's half of the
+//! slice.
 
 pub mod apply;
 pub mod codec;

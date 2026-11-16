@@ -8,7 +8,7 @@ use crate::decide::{Verdict, check_id};
 use crate::game::apply::{
     appearance_record, character_record, choice_record, clock_record, condition_record,
     dialogue_record, effect_set_record, ending_record, fail_ceiling_record, flag_record,
-    gallery_record, interaction_record, save_schema_record, save_schema_version_of,
+    gallery_record, interaction_record, marker_record, save_schema_record, save_schema_version_of,
     scene_binding_record, scene_exit_record, scene_record, schedule_record, stat_record,
     stream_record, table_record, thread_message_record, thread_record, tier_record, trigger_record,
     value_record, visual_state_record,
@@ -22,10 +22,10 @@ use crate::game::op::{
     CharacterDefineInput, ChoiceDefineInput, ClockDefineInput, ConditionDefineInput,
     DialogueLineDefineInput, EffectSetDefineInput, EndingDefineInput, ExprInput,
     FailCeilingDefineInput, FlagDefineInput, GalleryEntryDefineInput, GalleryUnlockInput,
-    GameDefineInput, GameOp, InteractionDefineInput, RngStreamDefineInput, SaveSchemaDefineInput,
-    SceneBindRigInput, SceneDefineInput, SceneExitDefineInput, ScheduleDefineInput,
-    StatDefineInput, StatKindInput, StatTierDefineInput, TableDefineInput, ThreadCreateInput,
-    ThreadPostInput, TriggerDefineInput, TriggerKindInput, ValueDefineInput,
+    GameDefineInput, GameOp, InteractionDefineInput, MarkerDefineInput, RngStreamDefineInput,
+    SaveSchemaDefineInput, SceneBindRigInput, SceneDefineInput, SceneExitDefineInput,
+    ScheduleDefineInput, StatDefineInput, StatKindInput, StatTierDefineInput, TableDefineInput,
+    ThreadCreateInput, ThreadPostInput, TriggerDefineInput, TriggerKindInput, ValueDefineInput,
     VisualStateDefineInput, WeightInput,
 };
 use crate::limits::{
@@ -34,10 +34,10 @@ use crate::limits::{
     GAME_DIALOGUE_LINES_MAX, GAME_EFFECT_ATOMS_MAX, GAME_EFFECT_SETS_MAX, GAME_ENDINGS_MAX,
     GAME_FAIL_CEILING_GAINS_MAX, GAME_FAIL_CEILINGS_MAX, GAME_FLAGS_MAX, GAME_GALLERY_ENTRIES_MAX,
     GAME_INTERACTION_CAMERAS_MAX, GAME_INTERACTION_CELLS_MAX, GAME_INTERACTION_NODES_MAX,
-    GAME_INTERACTION_TOOLS_MAX, GAME_INTERACTIONS_MAX, GAME_LIFETIME_DAYS_MAX, GAME_MIGRATIONS_MAX,
-    GAME_OFFER_DAYS_MAX, GAME_RNG_STREAMS_MAX, GAME_SAVE_SLOTS_MAX, GAME_SCENE_BINDINGS_MAX,
-    GAME_SCENE_EXITS_MAX, GAME_SCENES_MAX, GAME_SCHEDULE_OVERRIDES_MAX, GAME_SCHEDULES_MAX,
-    GAME_SLOTS_MAX, GAME_STATS_MAX, GAME_TABLE_OUTCOMES_MAX, GAME_TABLES_MAX,
+    GAME_INTERACTION_TOOLS_MAX, GAME_INTERACTIONS_MAX, GAME_LIFETIME_DAYS_MAX, GAME_MARKERS_MAX,
+    GAME_MIGRATIONS_MAX, GAME_OFFER_DAYS_MAX, GAME_RNG_STREAMS_MAX, GAME_SAVE_SLOTS_MAX,
+    GAME_SCENE_BINDINGS_MAX, GAME_SCENE_EXITS_MAX, GAME_SCENES_MAX, GAME_SCHEDULE_OVERRIDES_MAX,
+    GAME_SCHEDULES_MAX, GAME_SLOTS_MAX, GAME_STATS_MAX, GAME_TABLE_OUTCOMES_MAX, GAME_TABLES_MAX,
     GAME_THREAD_DELAY_MS_MAX, GAME_THREAD_MESSAGES_MAX, GAME_THREAD_PARTICIPANTS_MAX,
     GAME_THREADS_MAX, GAME_TIER_THRESHOLDS_MAX, GAME_TRIGGERS_MAX, GAME_VALUES_MAX,
     GAME_VISUAL_STATES_MAX,
@@ -233,7 +233,31 @@ pub fn decide_game(project: &Project, op: &GameOp) -> Result<Verdict, Refusal> {
             let game = section(project)?;
             decide_fail_ceiling(game, inputs)
         }
+        GameOp::MarkerDefine(inputs) => {
+            let game = section(project)?;
+            decide_marker(game, inputs)
+        }
     }
+}
+
+/// The `marker_define` gate (P2-12): the clearing scene
+/// must exist; the address is an id-shaped content key.
+fn decide_marker(game: &Game, inputs: &MarkerDefineInput) -> Result<Verdict, Refusal> {
+    check_id(&inputs.id, "marker id")?;
+    check_id(&inputs.address, "marker address")?;
+    check_id(&inputs.scene, "marker scene id")?;
+    if game.scene(&inputs.scene).is_none() {
+        return dangling("scene", &inputs.scene);
+    }
+    let record = marker_record(inputs);
+    upsert_verdict(
+        game.marker(&inputs.id),
+        &record,
+        "marker",
+        &inputs.id,
+        game.markers.len() + 1,
+        GAME_MARKERS_MAX,
+    )
 }
 
 /// The `fail_ceiling_define` gate (P2-9): the guarded scene
@@ -1038,6 +1062,12 @@ fn check_atom(game: &Game, atom: &AtomInput) -> Result<(), Refusal> {
         AtomInput::RollTable { table } => {
             if game.table(table).is_none() {
                 return dangling("table", table);
+            }
+            Ok(())
+        }
+        AtomInput::MarkNew { marker } => {
+            if game.marker(marker).is_none() {
+                return dangling("marker", marker);
             }
             Ok(())
         }

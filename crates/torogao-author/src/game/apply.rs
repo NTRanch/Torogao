@@ -11,11 +11,12 @@ use crate::game::model::{
     CharacterDef, ChoiceDef, ChoiceOption, ChoiceOrigin, ChoiceTarget, Clock, ConditionDef,
     DialogueLine, Direction, EffectSetDef, EndingDef, FailCeilingDef, FailCeilingGain, FlagDef,
     FlagEdge, FlagScope, GAME_FORMAT_VERSION, GalleryEntryDef, GalleryUnlock, Game,
-    InteractionCell, InteractionDef, InteractionNode, Lifetime, Migration, OfferDef, Overflow,
-    Repetition, RngStreamDef, SaveContextPolicy, SaveSchema, SceneBindingDef, SceneDef,
-    SceneExitDef, ScheduleDef, ScheduleOverride, ScheduleSlot, SlotHolds, StatDef, StatInitial,
-    StatKind, StatScope, TableDef, TableOutcome, TableWeight, ThreadDef, ThreadInterludeDef,
-    ThreadMessage, TierDef, TriggerDef, TriggerKind, ValueDef, VisualStateDef,
+    InteractionCell, InteractionDef, InteractionNode, Lifetime, MarkerCategory, MarkerClear,
+    MarkerDef, Migration, OfferDef, Overflow, Repetition, RngStreamDef, SaveContextPolicy,
+    SaveSchema, SceneBindingDef, SceneDef, SceneExitDef, ScheduleDef, ScheduleOverride,
+    ScheduleSlot, SlotHolds, StatDef, StatInitial, StatKind, StatScope, TableDef, TableOutcome,
+    TableWeight, ThreadDef, ThreadInterludeDef, ThreadMessage, TierDef, TriggerDef, TriggerKind,
+    ValueDef, VisualStateDef,
 };
 use crate::game::op::{
     AppearanceDefineInput, AppearanceEntryInput, AppearanceKindInput, AppearanceSlotInput,
@@ -24,11 +25,12 @@ use crate::game::op::{
     DirectionInput, EffectSetDefineInput, EndingDefineInput, FailCeilingDefineInput,
     FailCeilingGainInput, FlagDefineInput, FlagEdgeInput, FlagScopeInput, GalleryEntryDefineInput,
     GalleryUnlockInput, GameDefineInput, GameOp, InteractionCellInput, InteractionDefineInput,
-    InteractionNodeInput, OverflowInput, PresentationInput, RepetitionInput, RngStreamDefineInput,
-    SavePolicyInput, SaveSchemaDefineInput, SceneBindRigInput, SceneDefineInput,
-    SceneExitDefineInput, ScheduleDefineInput, StatDefineInput, StatKindInput, StatScopeInput,
-    StatTierDefineInput, TableDefineInput, TableOutcomeInput, ThreadCreateInput, ThreadPostInput,
-    TriggerDefineInput, TriggerKindInput, ValueDefineInput, VisualStateDefineInput, WeightInput,
+    InteractionNodeInput, MarkerCategoryInput, MarkerClearInput, MarkerDefineInput, OverflowInput,
+    PresentationInput, RepetitionInput, RngStreamDefineInput, SavePolicyInput,
+    SaveSchemaDefineInput, SceneBindRigInput, SceneDefineInput, SceneExitDefineInput,
+    ScheduleDefineInput, StatDefineInput, StatKindInput, StatScopeInput, StatTierDefineInput,
+    TableDefineInput, TableOutcomeInput, ThreadCreateInput, ThreadPostInput, TriggerDefineInput,
+    TriggerKindInput, ValueDefineInput, VisualStateDefineInput, WeightInput,
 };
 use crate::model::{Project, locate};
 use crate::refusal::Refusal;
@@ -229,6 +231,51 @@ pub(crate) fn fail_ceiling_input_of(record: &FailCeilingDef) -> FailCeilingDefin
     }
 }
 
+/// The marker record a `marker_define` produces (P2-12).
+pub(crate) fn marker_record(inputs: &MarkerDefineInput) -> MarkerDef {
+    MarkerDef {
+        id: inputs.id.clone(),
+        category: match inputs.category {
+            MarkerCategoryInput::CharacterData => MarkerCategory::CharacterData,
+            MarkerCategoryInput::Location => MarkerCategory::Location,
+            MarkerCategoryInput::Outfit => MarkerCategory::Outfit,
+        },
+        address: inputs.address.clone(),
+        scope: match inputs.scope {
+            FlagScopeInput::Globals => FlagScope::Globals,
+            FlagScopeInput::Run => FlagScope::Run,
+        },
+        clear: match inputs.clear {
+            MarkerClearInput::Finish => MarkerClear::Finish,
+            MarkerClearInput::Start => MarkerClear::Start,
+        },
+        scene: inputs.scene.clone(),
+    }
+}
+
+/// The inputs a stored marker rebuilds from (for the
+/// validation sweep).
+pub(crate) fn marker_input_of(record: &MarkerDef) -> MarkerDefineInput {
+    MarkerDefineInput {
+        id: record.id.clone(),
+        category: match record.category {
+            MarkerCategory::CharacterData => MarkerCategoryInput::CharacterData,
+            MarkerCategory::Location => MarkerCategoryInput::Location,
+            MarkerCategory::Outfit => MarkerCategoryInput::Outfit,
+        },
+        address: record.address.clone(),
+        scope: match record.scope {
+            FlagScope::Globals => FlagScopeInput::Globals,
+            FlagScope::Run => FlagScopeInput::Run,
+        },
+        clear: match record.clear {
+            MarkerClear::Finish => MarkerClearInput::Finish,
+            MarkerClear::Start => MarkerClearInput::Start,
+        },
+        scene: record.scene.clone(),
+    }
+}
+
 /// The message record a `thread_post` produces.
 pub(crate) fn thread_message_record(inputs: &ThreadPostInput) -> ThreadMessage {
     ThreadMessage {
@@ -379,6 +426,9 @@ pub(crate) fn atom_of(input: &AtomInput) -> Result<Atom, Refusal> {
         },
         AtomInput::FlagClear { flag } => Atom::FlagClear { flag: flag.clone() },
         AtomInput::FlagSet { flag } => Atom::FlagSet { flag: flag.clone() },
+        AtomInput::MarkNew { marker } => Atom::MarkNew {
+            marker: marker.clone(),
+        },
         AtomInput::RollTable { table } => Atom::RollTable {
             table: table.clone(),
         },
@@ -414,6 +464,9 @@ pub(crate) fn atom_input_of(atom: &Atom) -> AtomInput {
         },
         Atom::FlagClear { flag } => AtomInput::FlagClear { flag: flag.clone() },
         Atom::FlagSet { flag } => AtomInput::FlagSet { flag: flag.clone() },
+        Atom::MarkNew { marker } => AtomInput::MarkNew {
+            marker: marker.clone(),
+        },
         Atom::RollTable { table } => AtomInput::RollTable {
             table: table.clone(),
         },
@@ -907,6 +960,11 @@ pub fn apply_game(project: &mut Project, op: &GameOp) -> Result<(), Refusal> {
             let record = fail_ceiling_record(inputs);
             let game = game_mut(project);
             upsert(&mut game.fail_ceilings, record, |c| &c.id);
+        }
+        GameOp::MarkerDefine(inputs) => {
+            let record = marker_record(inputs);
+            let game = game_mut(project);
+            upsert(&mut game.markers, record, |m| &m.id);
         }
     }
     if let Some(game) = &mut project.game {

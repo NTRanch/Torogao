@@ -592,6 +592,14 @@ fn game_section_codec_round_trips_every_record_shape() {
             }],
             adverse: "apply_control".to_string(),
         }],
+        markers: vec![MarkerDef {
+            id: "new_amy_lv2".to_string(),
+            category: MarkerCategory::CharacterData,
+            address: "amy_lv2".to_string(),
+            scope: FlagScope::Run,
+            clear: MarkerClear::Start,
+            scene: "intro".to_string(),
+        }],
         interactions: vec![InteractionDef {
             id: "grid".to_string(),
             scene: "intro".to_string(),
@@ -3301,4 +3309,272 @@ fn induction_aggregates_replay_x3_and_gain_under_one_coefficient() {
         INDUCTION_COEFFICIENT_MILLI * (6 + 3 + 1 + 6),
         "every gain is the one coefficient times its band's swings"
     );
+}
+
+// ---- P2-12: unseen-content marker lifecycle ----------------------
+//
+// The parity fixture is the Changr study's marker method
+// family (has_new / mark_new / start-clear / finish-clear),
+// keyed by content address across its three categories —
+// character x data level, outfit, location — and exercising
+// both save partitions as authored decisions: the character
+// and location markers live in the run partition, the outfit
+// marker in globals.
+
+fn author_changr_markers(root: &Path) {
+    let answer = script(
+        root,
+        vec![
+            ("project_init", init_inputs()),
+            (
+                "game_define",
+                json!({"id": "changr_marker_fixture", "start_scene": "gallery"}),
+            ),
+            ("clock_define", json!({"slots": ["day_1", "day_2"]})),
+            (
+                "character_define",
+                json!({"id": "amy", "name_ref": "name_amy", "name_text": "Amy"}),
+            ),
+            (
+                "scene_define",
+                json!({"id": "gallery", "presentation": "room"}),
+            ),
+            (
+                "scene_define",
+                json!({"id": "hall", "presentation": "room"}),
+            ),
+            (
+                "marker_define",
+                json!({
+                    "id": "m_amy_lv2", "category": "character_data",
+                    "address": "amy_lv2", "scope": "run", "clear": "start",
+                    "scene": "gallery",
+                }),
+            ),
+            (
+                "marker_define",
+                json!({
+                    "id": "m_outfit_maid", "category": "outfit",
+                    "address": "outfit_maid", "scope": "globals", "clear": "finish",
+                    "scene": "gallery",
+                }),
+            ),
+            (
+                "marker_define",
+                json!({
+                    "id": "m_loc_beach", "category": "location",
+                    "address": "loc_beach", "scope": "run", "clear": "start",
+                    "scene": "hall",
+                }),
+            ),
+            (
+                "effect_set_define",
+                json!({
+                    "id": "unlock",
+                    "atoms": [
+                        {"kind": "mark_new", "marker": "m_amy_lv2"},
+                        {"kind": "mark_new", "marker": "m_outfit_maid"},
+                        {"kind": "mark_new", "marker": "m_loc_beach"},
+                    ],
+                }),
+            ),
+            (
+                "effect_set_define",
+                json!({
+                    "id": "go_hall",
+                    "atoms": [{"kind": "enter_scene", "scene": "hall"}],
+                }),
+            ),
+            (
+                "effect_set_define",
+                json!({
+                    "id": "go_gallery",
+                    "atoms": [{"kind": "enter_scene", "scene": "gallery"}],
+                }),
+            ),
+            (
+                "trigger_define",
+                json!({
+                    "id": "t_unlock",
+                    "kind": {"kind": "on_event", "event": "unlock"},
+                    "effect_set": "unlock",
+                }),
+            ),
+            (
+                "trigger_define",
+                json!({
+                    "id": "t_go_hall",
+                    "kind": {"kind": "on_event", "event": "go_hall"},
+                    "effect_set": "go_hall",
+                }),
+            ),
+            (
+                "trigger_define",
+                json!({
+                    "id": "t_go_gallery",
+                    "kind": {"kind": "on_event", "event": "go_gallery"},
+                    "effect_set": "go_gallery",
+                }),
+            ),
+        ],
+    );
+    assert_eq!(answer.status, Status::Ok, "marker fixture: {}", answer.doc);
+    assert!(
+        validate_codes(root).is_empty(),
+        "marker fixture validates clean: {:?}",
+        validate_codes(root)
+    );
+}
+
+#[test]
+fn changr_marker_lifecycle_across_partitions_and_categories() {
+    let root = test_root("marker-lifecycle");
+    author_changr_markers(&root);
+    let loaded = load_project(&root);
+    let project = &loaded.project;
+    let log = event_log(&[(1, "unlock"), (2, "go_hall"), (3, "go_gallery")], 4);
+    let mut state = genesis(project, 7).expect("genesis");
+    // Tick 1: the unlock flags all three markers, each in
+    // its authored partition.
+    let (events, _c) = run_to(project, &mut state, &log, 1);
+    assert!(state.markers_run.contains("m_amy_lv2"));
+    assert!(state.markers_run.contains("m_loc_beach"));
+    assert!(state.markers_globals.contains("m_outfit_maid"));
+    assert!(
+        events
+            .iter()
+            .any(|event| event.contains("marker 'm_amy_lv2' flagged new")),
+        "flagging is a trace event: {events:?}"
+    );
+    // Tick 2: leaving the gallery finish-clears the outfit
+    // marker (globals); entering the hall start-clears the
+    // location marker (run). The character marker, bound to
+    // the gallery's start, is untouched.
+    let (events, _c) = run_to(project, &mut state, &log, 2);
+    assert!(!state.markers_globals.contains("m_outfit_maid"));
+    assert!(!state.markers_run.contains("m_loc_beach"));
+    assert!(state.markers_run.contains("m_amy_lv2"));
+    assert!(
+        events
+            .iter()
+            .any(|event| event.contains("marker 'm_outfit_maid' cleared (finish at 'gallery')")),
+        "finish-clear is a trace event: {events:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.contains("marker 'm_loc_beach' cleared (start at 'hall')")),
+        "start-clear is a trace event: {events:?}"
+    );
+    // Tick 3: re-entering the gallery start-clears the
+    // character marker. Every category has now transitioned.
+    let (events, _c) = run_to(project, &mut state, &log, 3);
+    assert!(state.markers_run.is_empty());
+    assert!(state.markers_globals.is_empty());
+    assert!(
+        events
+            .iter()
+            .any(|event| event.contains("marker 'm_amy_lv2' cleared (start at 'gallery')")),
+        "start-clear is a trace event: {events:?}"
+    );
+}
+
+#[test]
+fn changr_marker_chain_x3_and_save_round_trip() {
+    let root = test_root("marker-chain");
+    author_changr_markers(&root);
+    let inputs = json!({
+        "run_seed": 7,
+        "ticks": 4,
+        "choice_log": [
+            {"tick": 1, "kind": "event", "id": "unlock"},
+            {"tick": 2, "kind": "event", "id": "go_hall"},
+            {"tick": 3, "kind": "event", "id": "go_gallery"},
+        ],
+    });
+    let first = verb(&root, "game_simulate", inputs.clone());
+    assert_eq!(first.status, Status::Ok, "{}", first.doc);
+    for _ in 0..2 {
+        let again = verb(&root, "game_simulate", inputs.clone());
+        assert_eq!(again.doc, first.doc, "run evidence is byte-identical");
+    }
+    // Save with markers flagged; the partitions survive the
+    // round trip and the chain continues identically.
+    let loaded = load_project(&root);
+    let project = &loaded.project;
+    let log = event_log(&[(1, "unlock"), (2, "go_hall"), (3, "go_gallery")], 4);
+    let mut reference = genesis(project, 7).expect("genesis");
+    let (_e, reference_chain) = run_to(project, &mut reference, &log, 4);
+    let mut state = genesis(project, 7).expect("genesis");
+    let (_e, mut chain) = run_to(project, &mut state, &log, 1);
+    let text = save_game(project, &loaded.sha256, &state, 7).expect("save");
+    let saved = load_game(project, &loaded.sha256, &text).expect("load");
+    assert_eq!(saved.state, state, "the loaded state is the saved state");
+    let mut resumed = saved.state;
+    let (_e, tail) = run_to(project, &mut resumed, &log, 4);
+    chain.extend(tail);
+    assert_eq!(chain, reference_chain, "the chain survives save/load");
+    assert_eq!(resumed, reference);
+}
+
+#[test]
+fn marker_define_and_mark_new_refuse_dangling() {
+    let root = test_root("marker-refusals");
+    author_changr_markers(&root);
+    // A marker bound to a scene the game does not define.
+    let answer = verb(
+        &root,
+        "marker_define",
+        json!({
+            "id": "m_bad", "category": "location", "address": "loc_x",
+            "scope": "run", "clear": "start", "scene": "dungeon",
+        }),
+    );
+    assert_eq!(answer.status, Status::Refused);
+    assert_eq!(answer.doc["code"], "TG-AUTH-DANGLING", "{}", answer.doc);
+    // An effect set flagging a marker the game does not define.
+    let answer = verb(
+        &root,
+        "effect_set_define",
+        json!({
+            "id": "bad_set",
+            "atoms": [{"kind": "mark_new", "marker": "m_ghost"}],
+        }),
+    );
+    assert_eq!(answer.doc["code"], "TG-AUTH-DANGLING", "{}", answer.doc);
+    // The upsert law: identical is a no-op, differing conflicts.
+    let same = verb(
+        &root,
+        "marker_define",
+        json!({
+            "id": "m_amy_lv2", "category": "character_data",
+            "address": "amy_lv2", "scope": "run", "clear": "start",
+            "scene": "gallery",
+        }),
+    );
+    assert_eq!(same.status, Status::Ok, "{}", same.doc);
+    let changed = verb(
+        &root,
+        "marker_define",
+        json!({
+            "id": "m_amy_lv2", "category": "character_data",
+            "address": "amy_lv2", "scope": "globals", "clear": "start",
+            "scene": "gallery",
+        }),
+    );
+    assert_eq!(changed.doc["code"], "TG-AUTH-CONFLICT", "{}", changed.doc);
+}
+
+#[test]
+fn plain_vn_project_has_no_marker_surface() {
+    // The slice's negative gate: content without markers
+    // gains no records, and no state partition appears.
+    let root = test_root("marker-negative");
+    author_plain_vn(&root);
+    let project_text = read(&root, PROJECT_FILE);
+    assert!(
+        !project_text.contains("Marker"),
+        "plain-VN project gained a marker surface: {project_text}"
+    );
+    assert_eq!(validate_codes(&root), Vec::<String>::new());
 }
