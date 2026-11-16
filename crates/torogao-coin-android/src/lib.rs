@@ -233,6 +233,20 @@ mod tests {
     }
 
     #[test]
+    fn spike_line_hash_equals_the_linux_fixture_hash() {
+        // The runnable host-side half of obligation
+        // coin.trajectory-hash-cross-platform: the line this
+        // crate logs on Android carries exactly the hash the
+        // Linux coin-smoke fixture run produces, because both
+        // execute torogao_coin::trajectory::run_measured_fixture.
+        // The on-device half stays open (no emulator run).
+        let run = torogao_coin::run_measured_fixture().expect("fixture runs");
+        let expected = format!("hash={:016x}", run.trajectory_hash);
+        let line = super::spike_line();
+        assert!(line.contains(&expected), "{line} vs {expected}");
+    }
+
+    #[test]
     fn bound_line_names_the_skeleton_sessions() {
         // Host-side proof of the bound run the Android shell
         // logs on startup: the three skeleton sessions

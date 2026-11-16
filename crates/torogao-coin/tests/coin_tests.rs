@@ -34,6 +34,7 @@ fn measured_table_matches_the_re_record() {
     assert!(approx(d.setup_wait_seconds(), 2.0));
     assert!(approx(d.bonus_threshold(), 8.0));
     assert!(approx(d.bonus_multiplier(), 1.15));
+    assert!(approx(d.pointer_animation_scale(), 1.2));
     assert!(approx(d.prep_scale(), 0.35));
     assert!(approx(d.message_divisor(), 100.0));
     assert!(approx(d.message_scale(), 0.65));
@@ -248,6 +249,24 @@ fn sixth_level_maximum_is_unknown_not_invented() {
         d.gauge_maximum(5),
         Err(CoinError::LevelTableExhausted { level: 5 })
     ));
+}
+
+#[test]
+fn message_path_scales_a_positive_triple() {
+    // Obligation coin.message-path-behaviour: the message
+    // path applies raw / 100 * 0.65 per stat (measured,
+    // UICtl::showMessage), not only the zero floor.
+    let d = measured_dynamics().unwrap();
+    let mut s = Session::new(d, 9 * 60).unwrap();
+    s.apply_message_stats(StatTriple {
+        hp: 100.0,
+        mp: 200.0,
+        sp: 50.0,
+    })
+    .unwrap();
+    assert!(approx(s.prep().hp, 0.65), "hp {}", s.prep().hp);
+    assert!(approx(s.prep().mp, 1.3), "mp {}", s.prep().mp);
+    assert!(approx(s.prep().sp, 0.325), "sp {}", s.prep().sp);
 }
 
 #[test]
