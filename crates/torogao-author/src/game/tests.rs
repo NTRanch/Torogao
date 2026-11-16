@@ -3172,3 +3172,133 @@ fn plain_vn_state_has_no_fail_ceiling_partition() {
         "plain-VN project gained a fail-ceiling surface: {project_text}"
     );
 }
+
+// ---- P2-10: performed-prop minigame seam (D-465) -----------------
+//
+// The seam is app-hosted (torogao-app's prop host reduces a
+// performed stream to one aggregate event per tick); the
+// interpreter's tick contract is NOT extended — the aggregate
+// is an ordinary step-3 event input, its name the result, its
+// option the bounded summary. This fixture's choice log is
+// written in exactly the host's output shape (the entries a
+// PropHost emits for deep/mid/light ticks), and it proves the
+// plan's gate on the interpreter side: replay from the log
+// reproduces the hash chain x3 with no input stream anywhere,
+// and the gain shape runs under ONE balance constant — the
+// fixture's coefficient — of which every authored amount is a
+// multiple (result band swings x coefficient).
+
+/// The fixture's single balance constant (the study's
+/// `saimin_coefficient`, in milliunits of depth per swing).
+const INDUCTION_COEFFICIENT_MILLI: i64 = 250;
+
+fn author_induction(root: &Path) {
+    let swing_set = |id: &str, swings: i64| {
+        (
+            "effect_set_define",
+            json!({
+                "id": id,
+                "atoms": [{
+                    "kind": "stat_add", "stat": "depth_milli",
+                    "amount": {"kind": "lit", "value": INDUCTION_COEFFICIENT_MILLI * swings},
+                }],
+            }),
+        )
+    };
+    let swing_trigger = |id: &str, set: &str| {
+        (
+            "trigger_define",
+            json!({
+                "id": id,
+                "kind": {"kind": "on_event", "event": id},
+                "effect_set": set,
+            }),
+        )
+    };
+    let answer = script(
+        root,
+        vec![
+            ("project_init", init_inputs()),
+            (
+                "game_define",
+                json!({"id": "induction_fixture", "start_scene": "session"}),
+            ),
+            ("clock_define", json!({"slots": ["evening_1", "evening_2"]})),
+            (
+                "stat_define",
+                json!({
+                    "id": "depth_milli", "scope": "game", "kind": {"kind": "fixed"},
+                    "min": 0, "max": 100_000, "default": 0, "overflow": "clamp",
+                }),
+            ),
+            (
+                "scene_define",
+                json!({"id": "session", "presentation": "room"}),
+            ),
+            swing_set("gain_deep", 6),
+            swing_set("gain_mid", 3),
+            swing_set("gain_light", 1),
+            swing_trigger("induction_deep", "gain_deep"),
+            swing_trigger("induction_mid", "gain_mid"),
+            swing_trigger("induction_light", "gain_light"),
+        ],
+    );
+    assert_eq!(
+        answer.status,
+        Status::Ok,
+        "induction fixture: {}",
+        answer.doc
+    );
+    assert!(
+        validate_codes(root).is_empty(),
+        "induction fixture validates clean: {:?}",
+        validate_codes(root)
+    );
+}
+
+#[test]
+fn induction_aggregates_replay_x3_and_gain_under_one_coefficient() {
+    let root = test_root("induction-seam");
+    author_induction(&root);
+    // The choice log as the app host logs it: one aggregate
+    // event per performed tick, summary in the option.
+    let inputs = json!({
+        "run_seed": 7,
+        "ticks": 5,
+        "choice_log": [
+            {"tick": 1, "kind": "event", "id": "induction_deep", "option": "swings=6;peak=990"},
+            {"tick": 2, "kind": "event", "id": "induction_mid", "option": "swings=5;peak=900"},
+            {"tick": 3, "kind": "event", "id": "induction_light", "option": "swings=2;peak=610"},
+            {"tick": 4, "kind": "event", "id": "induction_deep", "option": "swings=7;peak=1000"},
+        ],
+    });
+    let first = verb(&root, "game_simulate", inputs.clone());
+    assert_eq!(first.status, Status::Ok, "{}", first.doc);
+    for _ in 0..2 {
+        let again = verb(&root, "game_simulate", inputs.clone());
+        assert_eq!(
+            again.doc, first.doc,
+            "replay from the log alone is byte-identical"
+        );
+    }
+    // The gain shape: bands pay coefficient x band swings —
+    // deep 6, mid 3, light 1, deep 6 — whatever the performed
+    // summaries say (the summary is evidence; the authored
+    // bands are the contract).
+    let loaded = load_project(&root);
+    let project = &loaded.project;
+    let log_inputs: Vec<LogEntryInput> =
+        serde_json::from_value(inputs["choice_log"].clone()).expect("log inputs parse");
+    let log = parse_log(&log_inputs, 5).expect("log parses");
+    let mut state = genesis(project, 7).expect("genesis");
+    let (_e, _c) = run_to(project, &mut state, &log, 5);
+    let key = StatKey {
+        character: None,
+        stat: "depth_milli".to_string(),
+    };
+    assert_eq!(
+        state.stats[&key],
+        INDUCTION_COEFFICIENT_MILLI * (6 + 3 + 1 + 6),
+        "every gain is the one coefficient times its band's swings"
+    );
+}

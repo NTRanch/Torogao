@@ -24,6 +24,7 @@ pub mod paint;
 pub mod paint_window;
 pub mod persona;
 pub mod player;
+pub mod prop_host;
 pub mod render;
 pub mod save;
 pub mod scene;
