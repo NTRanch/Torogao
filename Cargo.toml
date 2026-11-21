@@ -14,6 +14,7 @@ members = [
     "crates/torogao-modapp",
     "crates/torogao-motion-clip",
     "crates/torogao-osc",
+    "crates/torogao-render3d",
     "crates/torogao-paint",
     "crates/torogao-pen",
     "crates/torogao-rig",
