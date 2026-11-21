@@ -2383,6 +2383,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lumen-scene-script"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "macro_rules_attribute"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4611,6 +4620,15 @@ name = "torogao-rig"
 version = "0.5.0"
 dependencies = [
  "image",
+ "serde_json",
+]
+
+[[package]]
+name = "torogao-scene"
+version = "0.5.0"
+dependencies = [
+ "lumen-scene-script",
+ "serde",
  "serde_json",
 ]
 

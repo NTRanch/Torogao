@@ -1,0 +1,18 @@
+[package]
+name = "torogao-scene"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Torogao scene solves (D-1394 P08): closed-form two-bone reach and surface anchors, as pure deterministic f64 arithmetic with typed errors. No iteration, no clock, no I/O."
+
+[lib]
+name = "torogao_scene"
+path = "src/lib.rs"
+
+[dependencies]
+lumen-scene-script = { path = "/home/phaedrus/.local/share/pax/lumen-scene-mvp-wt-20261112/crates/lumen-scene-script" }
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
