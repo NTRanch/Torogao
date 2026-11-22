@@ -2385,6 +2385,7 @@ dependencies = [
 [[package]]
 name = "lumen-scene-script"
 version = "0.1.0"
+source = "git+https://github.com/qompassai/lumen?rev=289c9af6c8fa6ebaa51f9259336da311ffd00979#289c9af6c8fa6ebaa51f9259336da311ffd00979"
 dependencies = [
  "serde",
  "serde_json",

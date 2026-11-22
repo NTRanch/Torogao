@@ -11,7 +11,7 @@ name = "torogao_scene"
 path = "src/lib.rs"
 
 [dependencies]
-lumen-scene-script = { path = "/home/phaedrus/.local/share/pax/lumen-scene-mvp-wt-20261112/crates/lumen-scene-script" }
+lumen-scene-script = { git = "https://github.com/qompassai/lumen", rev = "289c9af6c8fa6ebaa51f9259336da311ffd00979" }
 serde.workspace = true
 
 [dev-dependencies]
