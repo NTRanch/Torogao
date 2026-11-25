@@ -48,6 +48,20 @@ pub struct Mesh {
     /// Whether the GLB actually carried COLOR_1 (vs the
     /// zero-filled fallback).
     pub has_color1: bool,
+    /// UV set 0 (TEXCOORD_0): the paint-space UV the face
+    /// SDF is authored in. Zeros when absent.
+    pub texcoord0: Vec<[f32; 2]>,
+    /// UV set 1 (TEXCOORD_1): the packed-lightmap UV of
+    /// the R6 channel assignment. Zeros when absent.
+    pub texcoord1: Vec<[f32; 2]>,
+    /// Whether the GLB actually carried TEXCOORD_1.
+    pub has_texcoord1: bool,
+    /// Outline normals (Amendment A4): the smoothed second
+    /// normal set the inverted-hull outline pass displaces
+    /// along. Source order: the `_OUTLINE_NORMAL` custom
+    /// attribute, then TANGENT xyz, then the geometric
+    /// normal as the declared fallback.
+    pub outline_normal: Vec<[f32; 3]>,
     pub joints: Vec<[u16; 4]>,
     pub weights: Vec<[f32; 4]>,
     pub indices: Vec<u32>,
@@ -150,8 +164,80 @@ fn read_colors<'a>(
     }
 }
 
+/// Accessor indices of the `_OUTLINE_NORMAL` custom
+/// attribute, keyed by (mesh index, primitive index).
+/// The gltf crate does not surface custom vertex
+/// attributes, so the GLB's JSON chunk is read directly;
+/// non-GLB inputs carry no chunk and yield an empty map
+/// (the loader then falls back to TANGENT / NORMAL).
+fn outline_normal_accessors(bytes: &[u8]) -> std::collections::HashMap<(usize, usize), usize> {
+    let mut out = std::collections::HashMap::new();
+    if bytes.len() < 20 || &bytes[0..4] != b"glTF" {
+        return out;
+    }
+    let json_len = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+    let json_end = 20usize.saturating_add(json_len).min(bytes.len());
+    let Ok(root) = serde_json::from_slice::<serde_json::Value>(&bytes[20..json_end]) else {
+        return out;
+    };
+    let Some(meshes) = root.get("meshes").and_then(|m| m.as_array()) else {
+        return out;
+    };
+    for (mesh_index, mesh) in meshes.iter().enumerate() {
+        let Some(prims) = mesh.get("primitives").and_then(|p| p.as_array()) else {
+            continue;
+        };
+        for (prim_index, prim) in prims.iter().enumerate() {
+            let index = prim
+                .get("attributes")
+                .and_then(|a| a.get("_OUTLINE_NORMAL"))
+                .and_then(serde_json::Value::as_u64);
+            if let Some(index) = index {
+                out.insert((mesh_index, prim_index), index as usize);
+            }
+        }
+    }
+    out
+}
+
+/// The outline-normal set for one primitive (Amendment
+/// A4): the custom attribute when present and well-sized,
+/// else TANGENT xyz, else the geometric normals.
+#[allow(clippy::too_many_arguments)]
+fn read_outline_normals(
+    custom: &std::collections::HashMap<(usize, usize), usize>,
+    mesh_index: usize,
+    prim_index: usize,
+    document: &gltf::Document,
+    buffers: &[gltf::buffer::Data],
+    prim: &gltf::mesh::Primitive,
+    normals: &[[f32; 3]],
+) -> Result<Vec<[f32; 3]>, RenderError> {
+    if let Some(&accessor_index) = custom.get(&(mesh_index, prim_index)) {
+        let accessor = document
+            .accessors()
+            .nth(accessor_index)
+            .ok_or(RenderError::Accessor {
+                index: accessor_index,
+                detail: "_OUTLINE_NORMAL accessor index out of range".to_string(),
+            })?;
+        let rows = read_rows::<3>(document, buffers, &accessor)?;
+        if rows.len() == normals.len() {
+            return Ok(rows);
+        }
+    }
+    if let Some(tangent) = prim.get(&Semantic::Tangents) {
+        let rows = read_rows::<4>(document, buffers, &tangent)?;
+        if rows.len() == normals.len() {
+            return Ok(rows.iter().map(|t| [t[0], t[1], t[2]]).collect());
+        }
+    }
+    Ok(normals.to_vec())
+}
+
 /// Load and decode a GLB from memory.
 pub fn load_model(bytes: &[u8]) -> Result<Model, RenderError> {
+    let custom_outline = outline_normal_accessors(bytes);
     let (document, buffers, _images) =
         gltf::import_slice(bytes).map_err(|e| RenderError::GltfParse(e.to_string()))?;
 
@@ -309,6 +395,23 @@ pub fn load_model(bytes: &[u8]) -> Result<Model, RenderError> {
             let weights_acc =
                 get(&Semantic::Weights(0)).ok_or(RenderError::Missing("WEIGHTS_0"))?;
             let weights = read_rows::<4>(&document, &buffers, &weights_acc)?;
+            let texcoord0 = match get(&Semantic::TexCoords(0)) {
+                Some(accessor) => read_rows::<2>(&document, &buffers, &accessor)?,
+                None => vec![[0.0, 0.0]; count],
+            };
+            let (texcoord1, has_texcoord1) = match get(&Semantic::TexCoords(1)) {
+                Some(accessor) => (read_rows::<2>(&document, &buffers, &accessor)?, true),
+                None => (vec![[0.0, 0.0]; count], false),
+            };
+            let outline_normal = read_outline_normals(
+                &custom_outline,
+                mesh_gltf.index(),
+                prim_index,
+                &document,
+                &buffers,
+                &prim,
+                &normals,
+            )?;
             let indices_acc = prim.indices().ok_or(RenderError::Missing("indices"))?;
             let indices = read_indices(&document, &buffers, &indices_acc)?;
             for (what, len) in [
@@ -317,6 +420,9 @@ pub fn load_model(bytes: &[u8]) -> Result<Model, RenderError> {
                 ("COLOR_1", color1.len()),
                 ("JOINTS_0", joints.len()),
                 ("WEIGHTS_0", weights.len()),
+                ("TEXCOORD_0", texcoord0.len()),
+                ("TEXCOORD_1", texcoord1.len()),
+                ("OUTLINE_NORMAL", outline_normal.len()),
             ] {
                 if len != count {
                     return Err(RenderError::Document(format!(
@@ -391,6 +497,10 @@ pub fn load_model(bytes: &[u8]) -> Result<Model, RenderError> {
                 color0,
                 color1,
                 has_color1,
+                texcoord0,
+                texcoord1,
+                has_texcoord1,
+                outline_normal,
                 joints,
                 weights,
                 indices,

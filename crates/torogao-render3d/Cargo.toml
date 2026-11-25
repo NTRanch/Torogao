@@ -35,3 +35,7 @@ path = "src/bin/compare.rs"
 [[bin]]
 name = "render3d-cast"
 path = "src/bin/cast.rs"
+
+[[bin]]
+name = "render3d-toon-still"
+path = "src/bin/toon_still.rs"

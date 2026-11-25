@@ -38,7 +38,7 @@ fn main() {
     let shader_dir = manifest.join("shaders");
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("out dir"));
     // Shared chunks: touching one recompiles every consumer.
-    for chunk in ["skin.glsl", "shade.glsl"] {
+    for chunk in ["skin.glsl", "shade.glsl", "toon.glsl"] {
         println!(
             "cargo:rerun-if-changed={}",
             shader_dir.join(chunk).display()
@@ -46,6 +46,8 @@ fn main() {
     }
     compile(&shader_dir, &out_dir, "character.vert", "vertex");
     compile(&shader_dir, &out_dir, "character.frag", "fragment");
+    compile(&shader_dir, &out_dir, "outline.vert", "vertex");
+    compile(&shader_dir, &out_dir, "outline.frag", "fragment");
     compile(&shader_dir, &out_dir, "skin.comp", "compute");
     compile(&shader_dir, &out_dir, "skin.vert", "vertex");
     compile(&shader_dir, &out_dir, "set.vert", "vertex");

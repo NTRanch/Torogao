@@ -23,6 +23,7 @@ use crate::math::{Mat4, V3};
 use crate::model::Model;
 use crate::morph::PackedMorphs;
 use crate::setscene::{ArcScene, projection};
+use crate::toon::ToonData;
 
 /// One character mesh, upload-ready.
 #[derive(Debug, Clone)]
@@ -37,6 +38,15 @@ pub struct PackedMesh {
     /// test `color1_evidence`.)
     pub color0: Vec<[f32; 4]>,
     pub color1: Vec<[f32; 4]>,
+    /// UV sets packed for the toon model: xy = TEXCOORD_0
+    /// (face SDF space), zw = TEXCOORD_1 (packed-lightmap
+    /// space). Zeros when the mesh carries no UVs.
+    pub uv: Vec<[f32; 4]>,
+    /// Outline rows (Amendment A4): xyz = outline normal
+    /// (bind space), w = outline width from the RAW
+    /// COLOR_0 alpha — the width channel lives in COLOR_0
+    /// regardless of which colour set is the paint.
+    pub outline: Vec<[f32; 4]>,
     /// True when the paint came from COLOR_1 (the
     /// material base-colour factor is then already baked
     /// into the paint and must not multiply again).
@@ -97,6 +107,14 @@ pub struct PackedScene {
     pub set_pieces: Vec<PackedSetPiece>,
     /// Column-major view-projection.
     pub view_proj: [f32; 16],
+    /// Column-major view matrix (the toon model's sphere
+    /// map samples by view-space normal).
+    pub view: [f32; 16],
+    /// Toon shading data (gap G1) when the scene shades
+    /// with the toon model; `None` keeps the legacy
+    /// half-Lambert + GGX path bit-identical. `pack_scene`
+    /// leaves this `None`; a toon-aware caller fills it.
+    pub toon: Option<ToonData>,
     /// Direction to the sun + energy in w.
     pub sun: [f32; 4],
     /// Direction to the fill + energy in w.
@@ -244,6 +262,18 @@ pub fn pack_scene(model: &Model, scene: &ArcScene) -> PackedScene {
                 mesh.color0.clone()
             },
             color1: mesh.color1.clone(),
+            uv: mesh
+                .texcoord0
+                .iter()
+                .zip(&mesh.texcoord1)
+                .map(|(uv0, uv1)| [uv0[0], uv0[1], uv1[0], uv1[1]])
+                .collect(),
+            outline: mesh
+                .outline_normal
+                .iter()
+                .zip(&mesh.color0)
+                .map(|(n, c)| [n[0], n[1], n[2], c[3]])
+                .collect(),
             paint_from_color1: mesh.has_color1,
             joints: mesh
                 .joints
@@ -311,6 +341,8 @@ pub fn pack_scene(model: &Model, scene: &ArcScene) -> PackedScene {
         materials,
         set_pieces,
         view_proj,
+        view: scene.view.to_f32_cols(),
+        toon: None,
         sun: [
             scene.sun.to_light.x as f32,
             scene.sun.to_light.y as f32,

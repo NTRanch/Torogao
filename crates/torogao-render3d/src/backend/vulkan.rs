@@ -62,6 +62,20 @@ struct Uniforms {
     fill: [f32; 4],
     world: [f32; 4],
     camera_pos: [f32; 4],
+    // Toon extension (gap G1). The GLSL block in the
+    // character/outline shaders declares these fields;
+    // shaders predating the extension (set, depth)
+    // declare only the prefix above, which stays legal
+    // because the bound range covers the full block.
+    view: [f32; 16],
+    /// x: toon enabled, y: warm_cool, z: outline width
+    /// (m), w: rim strength.
+    toon0: [f32; 4],
+    /// x: head joint index (-1 = face branch off),
+    /// y: SDF softness.
+    toon1: [f32; 4],
+    head_forward: [f32; 4],
+    head_right: [f32; 4],
 }
 
 #[repr(C)]
@@ -173,9 +187,20 @@ struct SceneGpu {
     pool: vk::DescriptorPool,
     char_pipeline: vk::Pipeline,
     char_depth_pipeline: vk::Pipeline,
+    outline_pipeline: vk::Pipeline,
     set_pipeline: vk::Pipeline,
     set_depth_pipeline: vk::Pipeline,
     compute_pipeline: vk::Pipeline,
+    /// Toon contract textures (packed, ramp, face SDF,
+    /// sphere) — the scene's own, or 1x1 dummies when the
+    /// scene carries no toon data (descriptors must stay
+    /// valid; the shader branch is off then).
+    toon_images: Vec<ImageRes>,
+    toon_linear_sampler: vk::Sampler,
+    toon_nearest_sampler: vk::Sampler,
+    /// Whether the outline pass draws (toon data present
+    /// and a positive outline width).
+    outline_enabled: bool,
     char_pipeline_layout: vk::PipelineLayout,
     set_pipeline_layout: vk::PipelineLayout,
     compute_pipeline_layout: vk::PipelineLayout,
@@ -541,6 +566,111 @@ impl VulkanBackend {
         Ok(device_buffer)
     }
 
+    /// Upload one toon contract texture into a fresh
+    /// device-local sampled image (R8G8B8A8_UNORM: the
+    /// authored bytes ARE the shader values; no sRGB
+    /// decode — the display transform happens once, at
+    /// the end of the fragment shader).
+    fn upload_image(&self, tex: &crate::toon::ToonImage) -> Result<ImageRes, RenderError> {
+        let image = self.create_image(
+            tex.width,
+            tex.height,
+            vk::Format::R8G8B8A8_UNORM,
+            vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+            vk::ImageAspectFlags::COLOR,
+        )?;
+        let staging = self.create_buffer(
+            tex.rgba.len() as u64,
+            vk::BufferUsageFlags::TRANSFER_SRC,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            true,
+        )?;
+        // SAFETY: staging is host-visible and mapped; the
+        // copy length is the texture's byte count, checked
+        // against the buffer size by construction.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                tex.rgba.as_ptr(),
+                staging.mapped.expect("staging mapped"),
+                tex.rgba.len(),
+            );
+        }
+        let handle = image.image;
+        let (width, height) = (tex.width, tex.height);
+        let src = staging.handle;
+        // SAFETY: the image and staging buffer are live;
+        // the barriers move the image UNDEFINED ->
+        // TRANSFER_DST -> SHADER_READ_ONLY around the copy,
+        // all inside one waited submission.
+        self.submit_and_wait(|cmd| unsafe {
+            let to_dst = vk::ImageMemoryBarrier::default()
+                .old_layout(vk::ImageLayout::UNDEFINED)
+                .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .image(handle)
+                .subresource_range(
+                    vk::ImageSubresourceRange::default()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .level_count(1)
+                        .layer_count(1),
+                )
+                .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE);
+            self.device.cmd_pipeline_barrier(
+                cmd,
+                vk::PipelineStageFlags::TOP_OF_PIPE,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[to_dst],
+            );
+            let region = vk::BufferImageCopy::default()
+                .image_subresource(
+                    vk::ImageSubresourceLayers::default()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .layer_count(1),
+                )
+                .image_extent(vk::Extent3D {
+                    width,
+                    height,
+                    depth: 1,
+                });
+            self.device.cmd_copy_buffer_to_image(
+                cmd,
+                src,
+                handle,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &[region],
+            );
+            let to_read = vk::ImageMemoryBarrier::default()
+                .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .image(handle)
+                .subresource_range(
+                    vk::ImageSubresourceRange::default()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .level_count(1)
+                        .layer_count(1),
+                )
+                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                .dst_access_mask(vk::AccessFlags::SHADER_READ);
+            self.device.cmd_pipeline_barrier(
+                cmd,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::FRAGMENT_SHADER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[to_read],
+            );
+        })?;
+        staging.destroy(&self.device);
+        Ok(image)
+    }
+
     fn shader_module(&self, bytes: &[u8]) -> Result<vk::ShaderModule, RenderError> {
         let words = ash::util::read_spv(&mut std::io::Cursor::new(bytes))
             .map_err(|e| be(format!("spv read: {e}")))?;
@@ -613,6 +743,49 @@ impl RenderBackend for VulkanBackend {
             )
         }
         .map_err(vk_err("create_sampler"))?;
+
+        // -- Toon textures + samplers (gap G1) ------------
+        // The scene's contract textures, or 1x1 dummies
+        // when the scene carries no toon data.
+        let dummy = |px: [u8; 4]| {
+            crate::toon::ToonImage::solid(1, 1, px).expect("1x1 toon dummy is well-formed")
+        };
+        let (packed_tex, ramp_tex, face_tex, sphere_tex) = match &scene.toon {
+            Some(toon) => (
+                toon.textures.packed.clone(),
+                toon.textures.ramp.clone(),
+                toon.textures.face_sdf.clone(),
+                toon.textures.sphere.clone(),
+            ),
+            None => (
+                dummy([255, 128, 0, 0]),
+                dummy([255, 255, 255, 255]),
+                dummy([128, 0, 0, 0]),
+                dummy([255, 255, 255, 255]),
+            ),
+        };
+        let toon_images = vec![
+            self.upload_image(&packed_tex)?,
+            self.upload_image(&ramp_tex)?,
+            self.upload_image(&face_tex)?,
+            self.upload_image(&sphere_tex)?,
+        ];
+        // SAFETY: sampler creation with fixed parameters.
+        let make_toon_sampler = |filter: vk::Filter| unsafe {
+            device.create_sampler(
+                &vk::SamplerCreateInfo::default()
+                    .mag_filter(filter)
+                    .min_filter(filter)
+                    .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                    .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                    .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE),
+                None,
+            )
+        };
+        let toon_linear_sampler =
+            make_toon_sampler(vk::Filter::LINEAR).map_err(vk_err("toon linear sampler"))?;
+        let toon_nearest_sampler =
+            make_toon_sampler(vk::Filter::NEAREST).map_err(vk_err("toon nearest sampler"))?;
 
         // -- Render passes --------------------------------
         let colour_attachment = vk::AttachmentDescription::default()
@@ -749,9 +922,13 @@ impl RenderBackend for VulkanBackend {
         let f = vk::ShaderStageFlags::FRAGMENT;
         let ubo = vk::DescriptorType::UNIFORM_BUFFER;
         let ssbo = vk::DescriptorType::STORAGE_BUFFER;
+        let cis = vk::DescriptorType::COMBINED_IMAGE_SAMPLER;
         let char_bindings = [
             binding(0, ubo, v | f),
-            binding(1, ssbo, v),
+            // Joint matrices: the vertex stage skins with
+            // them; the fragment stage's face branch reads
+            // the head joint's rotation (gap G1).
+            binding(1, ssbo, v | f),
             binding(2, ssbo, v),
             binding(3, ssbo, v),
             binding(4, ssbo, v),
@@ -763,7 +940,17 @@ impl RenderBackend for VulkanBackend {
             binding(10, ssbo, v),
             binding(11, ssbo, v),
             binding(12, ssbo, v),
-            binding(13, vk::DescriptorType::COMBINED_IMAGE_SAMPLER, f),
+            binding(13, cis, f),
+            // Toon contract (gap G1): packed (linear),
+            // UV rows, outline rows, ramp, face SDF,
+            // sphere map, packed again (NEAREST, ID only).
+            binding(14, cis, f),
+            binding(15, ssbo, v),
+            binding(16, ssbo, v),
+            binding(17, cis, f),
+            binding(18, cis, f),
+            binding(19, cis, f),
+            binding(20, cis, f),
         ];
         let set_bindings = [
             binding(0, ubo, v | f),
@@ -795,21 +982,27 @@ impl RenderBackend for VulkanBackend {
         }
         .map_err(vk_err("compute layout"))?;
 
+        // Pool sizes scale with the mesh count: per mesh
+        // the char set carries 14 SSBOs + 6 samplers and
+        // the compute set 12 SSBOs; the set-piece set adds
+        // one of each kind. Slack covers the shared UBO
+        // writes.
+        let mesh_count = scene.meshes.len() as u32;
         let pool_sizes = [
             vk::DescriptorPoolSize::default()
                 .ty(ubo)
-                .descriptor_count(8),
+                .descriptor_count(16),
             vk::DescriptorPoolSize::default()
                 .ty(ssbo)
-                .descriptor_count(160),
+                .descriptor_count(mesh_count * 26 + 16),
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .descriptor_count(8),
+                .descriptor_count(mesh_count * 6 + 8),
         ];
         let pool = unsafe {
             device.create_descriptor_pool(
                 &vk::DescriptorPoolCreateInfo::default()
-                    .max_sets(24)
+                    .max_sets(mesh_count * 2 + 8)
                     .pool_sizes(&pool_sizes),
                 None,
             )
@@ -829,6 +1022,28 @@ impl RenderBackend for VulkanBackend {
             f64::from(scene.sun[1]),
             f64::from(scene.sun[2]),
         );
+        let (toon0, toon1, head_forward, head_right) = match &scene.toon {
+            Some(toon) => {
+                let s = &toon.settings;
+                (
+                    [1.0, s.warm_cool, s.outline_width_m, s.rim_strength],
+                    [s.head_joint as f32, s.sdf_softness, 0.0, 0.0],
+                    [
+                        s.head_forward_local[0],
+                        s.head_forward_local[1],
+                        s.head_forward_local[2],
+                        0.0,
+                    ],
+                    [
+                        s.head_right_local[0],
+                        s.head_right_local[1],
+                        s.head_right_local[2],
+                        0.0,
+                    ],
+                )
+            }
+            None => ([0.0; 4], [-1.0, 0.08, 0.0, 0.0], [0.0; 4], [0.0; 4]),
+        };
         let uniforms = Uniforms {
             view_proj: scene.view_proj,
             light_view_proj: light_view_proj(sun_dir).to_f32_cols(),
@@ -836,6 +1051,11 @@ impl RenderBackend for VulkanBackend {
             fill: scene.fill,
             world: scene.world,
             camera_pos: scene.camera_pos,
+            view: scene.view,
+            toon0,
+            toon1,
+            head_forward,
+            head_right,
         };
         uniforms_buffer.write(&[uniforms]);
         let joints_buffer = self.create_buffer(
@@ -942,6 +1162,12 @@ impl RenderBackend for VulkanBackend {
             let targets = sbuf(bytemuck::cast_slice(target_data))?;
             let dpos = sbuf(bytemuck::cast_slice(dpos_data))?;
             let dnrm = sbuf(bytemuck::cast_slice(dnrm_data))?;
+            // Toon rows (gap G1): UV sets and outline
+            // normal + width. Always uploaded — the legacy
+            // path never reads them, and a mesh without
+            // UVs packs zeros (a defined sample point).
+            let uv_b = sbuf(bytemuck::cast_slice(&mesh.uv))?;
+            let outline_b = sbuf(bytemuck::cast_slice(&mesh.outline))?;
             let index_buffer = self.upload_buffer(bytemuck::cast_slice(&mesh.indices), usage)?;
             let out_positions = self.create_buffer(
                 (mesh.vertex_count as u64) * 16,
@@ -987,10 +1213,23 @@ impl RenderBackend for VulkanBackend {
             let dn_info = info(&dnrm);
             let t_info = info(&targets);
             let mw_info = info(&weight_buffers[mi]);
+            let uv_info = info(&uv_b);
+            let outline_info = info(&outline_b);
             let shadow_info = [vk::DescriptorImageInfo::default()
                 .sampler(shadow_sampler)
                 .image_view(shadow.view)
                 .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+            let toon_image_info = |index: usize, sampler: vk::Sampler| {
+                [vk::DescriptorImageInfo::default()
+                    .sampler(sampler)
+                    .image_view(toon_images[index].view)
+                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)]
+            };
+            let packed_info = toon_image_info(0, toon_linear_sampler);
+            let ramp_info = toon_image_info(1, toon_linear_sampler);
+            let face_info = toon_image_info(2, toon_linear_sampler);
+            let sphere_info = toon_image_info(3, toon_linear_sampler);
+            let packed_id_info = toon_image_info(0, toon_nearest_sampler);
             let set = char_sets[mi];
             let write = |binding: u32, ty: vk::DescriptorType| {
                 vk::WriteDescriptorSet::default()
@@ -1013,6 +1252,13 @@ impl RenderBackend for VulkanBackend {
                 write(11, ssbo).buffer_info(&t_info),
                 write(12, ssbo).buffer_info(&mw_info),
                 write(13, vk::DescriptorType::COMBINED_IMAGE_SAMPLER).image_info(&shadow_info),
+                write(14, cis).image_info(&packed_info),
+                write(15, ssbo).buffer_info(&uv_info),
+                write(16, ssbo).buffer_info(&outline_info),
+                write(17, cis).image_info(&ramp_info),
+                write(18, cis).image_info(&face_info),
+                write(19, cis).image_info(&sphere_info),
+                write(20, cis).image_info(&packed_id_info),
             ];
             // SAFETY: all referenced buffers/views are live
             // and owned by this scene.
@@ -1052,7 +1298,7 @@ impl RenderBackend for VulkanBackend {
                 vertex_count: mesh.vertex_count,
                 statics: vec![
                     positions, normals, color0, color1, joints_b, weights_b, ranges, targets, dpos,
-                    dnrm,
+                    dnrm, uv_b, outline_b,
                 ],
                 out_positions,
                 out_normals,
@@ -1165,6 +1411,14 @@ impl RenderBackend for VulkanBackend {
         )))?;
         let skin_comp =
             self.shader_module(include_bytes!(concat!(env!("OUT_DIR"), "/skin.comp.spv")))?;
+        let outline_vert = self.shader_module(include_bytes!(concat!(
+            env!("OUT_DIR"),
+            "/outline.vert.spv"
+        )))?;
+        let outline_frag = self.shader_module(include_bytes!(concat!(
+            env!("OUT_DIR"),
+            "/outline.frag.spv"
+        )))?;
 
         let char_push = vk::PushConstantRange::default()
             .stage_flags(v | f)
@@ -1216,11 +1470,26 @@ impl RenderBackend for VulkanBackend {
             .cull_mode(vk::CullModeFlags::NONE)
             .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
             .line_width(1.0);
+        // The outline hull (Amendment A4): front faces
+        // culled, so only the displaced shell's far side
+        // rasterizes around the silhouette.
+        let raster_front_cull = vk::PipelineRasterizationStateCreateInfo::default()
+            .polygon_mode(vk::PolygonMode::FILL)
+            .cull_mode(vk::CullModeFlags::FRONT)
+            .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
+            .line_width(1.0);
         let multisample = vk::PipelineMultisampleStateCreateInfo::default()
             .rasterization_samples(vk::SampleCountFlags::TYPE_1);
         let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
             .depth_test_enable(true)
             .depth_write_enable(true)
+            .depth_compare_op(vk::CompareOp::LESS);
+        // The hull tests against the body's depth but
+        // does not write its own (it must not z-fight or
+        // occlude the surface it rings).
+        let depth_stencil_no_write = vk::PipelineDepthStencilStateCreateInfo::default()
+            .depth_test_enable(true)
+            .depth_write_enable(false)
             .depth_compare_op(vk::CompareOp::LESS);
         let blend_attachment = vk::PipelineColorBlendAttachmentState::default()
             .color_write_mask(vk::ColorComponentFlags::RGBA);
@@ -1255,16 +1524,18 @@ impl RenderBackend for VulkanBackend {
                              vertex_input: &vk::PipelineVertexInputStateCreateInfo<'_>,
                              layout: vk::PipelineLayout,
                              pass: vk::RenderPass,
-                             with_blend: bool|
+                             with_blend: bool,
+                             raster_state: &vk::PipelineRasterizationStateCreateInfo<'_>,
+                             depth_state: &vk::PipelineDepthStencilStateCreateInfo<'_>|
          -> Result<vk::Pipeline, RenderError> {
             let info = vk::GraphicsPipelineCreateInfo::default()
                 .stages(stages)
                 .vertex_input_state(vertex_input)
                 .input_assembly_state(&input_assembly)
                 .viewport_state(&viewport_state)
-                .rasterization_state(&raster)
+                .rasterization_state(raster_state)
                 .multisample_state(&multisample)
-                .depth_stencil_state(&depth_stencil)
+                .depth_stencil_state(depth_state)
                 .color_blend_state(if with_blend { &blend } else { &no_blend })
                 .dynamic_state(&dynamic)
                 .layout(layout)
@@ -1287,6 +1558,8 @@ impl RenderBackend for VulkanBackend {
             char_pipeline_layout,
             render_pass,
             true,
+            &raster,
+            &depth_stencil,
         )?;
         let char_depth_pipeline = make_graphics(
             &[stage(skin_vert, v), stage(depth_frag, f)],
@@ -1294,6 +1567,17 @@ impl RenderBackend for VulkanBackend {
             char_pipeline_layout,
             shadow_pass,
             false,
+            &raster,
+            &depth_stencil,
+        )?;
+        let outline_pipeline = make_graphics(
+            &[stage(outline_vert, v), stage(outline_frag, f)],
+            &empty_vertex,
+            char_pipeline_layout,
+            render_pass,
+            true,
+            &raster_front_cull,
+            &depth_stencil_no_write,
         )?;
         let set_pipeline = make_graphics(
             &[stage(set_vert, v), stage(set_frag, f)],
@@ -1301,6 +1585,8 @@ impl RenderBackend for VulkanBackend {
             set_pipeline_layout,
             render_pass,
             true,
+            &raster,
+            &depth_stencil,
         )?;
         let set_depth_pipeline = make_graphics(
             &[stage(setdepth_vert, v), stage(depth_frag, f)],
@@ -1308,6 +1594,8 @@ impl RenderBackend for VulkanBackend {
             set_pipeline_layout,
             shadow_pass,
             false,
+            &raster,
+            &depth_stencil,
         )?;
         // SAFETY: compute pipeline from this crate's module.
         let compute_pipeline = unsafe {
@@ -1338,6 +1626,8 @@ impl RenderBackend for VulkanBackend {
                 set_frag,
                 setdepth_vert,
                 skin_comp,
+                outline_vert,
+                outline_frag,
             ] {
                 device.destroy_shader_module(module, None);
             }
@@ -1365,9 +1655,17 @@ impl RenderBackend for VulkanBackend {
             pool,
             char_pipeline,
             char_depth_pipeline,
+            outline_pipeline,
             set_pipeline,
             set_depth_pipeline,
             compute_pipeline,
+            toon_images,
+            toon_linear_sampler,
+            toon_nearest_sampler,
+            outline_enabled: scene
+                .toon
+                .as_ref()
+                .is_some_and(|t| t.settings.outline_width_m > 0.0),
             char_pipeline_layout,
             set_pipeline_layout,
             compute_pipeline_layout,
@@ -1644,6 +1942,43 @@ impl RenderBackend for VulkanBackend {
                 );
                 device.cmd_draw_indexed(cmd, mesh.index_count, 1, 0, 0, 0);
             }
+            if scene.outline_enabled {
+                // Inverted-hull outlines (Amendment A4),
+                // main pass only — the hull never casts
+                // into the shadow map.
+                device.cmd_bind_pipeline(
+                    cmd,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    scene.outline_pipeline,
+                );
+                for (mi, mesh) in scene.meshes.iter().enumerate() {
+                    if !visible_meshes.get(mi).copied().unwrap_or(false) {
+                        continue;
+                    }
+                    device.cmd_bind_descriptor_sets(
+                        cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        scene.char_pipeline_layout,
+                        0,
+                        &[mesh.set],
+                        &[],
+                    );
+                    device.cmd_push_constants(
+                        cmd,
+                        scene.char_pipeline_layout,
+                        vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                        0,
+                        bytemuck::bytes_of(&scene.mesh_pushes[mi]),
+                    );
+                    device.cmd_bind_index_buffer(
+                        cmd,
+                        mesh.index_buffer.handle,
+                        0,
+                        vk::IndexType::UINT32,
+                    );
+                    device.cmd_draw_indexed(cmd, mesh.index_count, 1, 0, 0, 0);
+                }
+            }
             device.cmd_end_render_pass(cmd);
 
             // Readback copy (colour is TRANSFER_SRC_OPTIMAL
@@ -1797,11 +2132,17 @@ impl Drop for VulkanBackend {
                 for pipeline in [
                     scene.char_pipeline,
                     scene.char_depth_pipeline,
+                    scene.outline_pipeline,
                     scene.set_pipeline,
                     scene.set_depth_pipeline,
                     scene.compute_pipeline,
                 ] {
                     device.destroy_pipeline(pipeline, None);
+                }
+                device.destroy_sampler(scene.toon_linear_sampler, None);
+                device.destroy_sampler(scene.toon_nearest_sampler, None);
+                for image in scene.toon_images {
+                    image.destroy(device);
                 }
                 for layout in [
                     scene.char_pipeline_layout,

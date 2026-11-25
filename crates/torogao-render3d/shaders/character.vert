@@ -48,6 +48,9 @@ layout(std430, set = 0, binding = 11) readonly buffer MorphTarget {
 layout(std430, set = 0, binding = 12) readonly buffer MorphWeights {
     float in_morph_weights[];
 };
+layout(std430, set = 0, binding = 15) readonly buffer Uvs {
+    vec4 in_uv[];
+};
 
 layout(push_constant) uniform Push {
     vec4 base_color;
@@ -61,12 +64,17 @@ layout(location = 0) out vec3 v_albedo;
 layout(location = 1) out vec3 v_normal;
 layout(location = 2) out vec3 v_world_pos;
 layout(location = 3) out vec4 v_color1;
+layout(location = 4) out vec4 v_uvs;
 
 void main() {
     uint v = uint(gl_VertexIndex);
     vec3 pos;
     vec3 nrm;
     skin_vertex(v, pos, nrm);
+    // xy: TEXCOORD_0 (face SDF space); zw: TEXCOORD_1
+    // (packed-lightmap space). Consumed by the toon
+    // model only; the legacy path ignores them.
+    v_uvs = in_uv[v];
     // Binding 4 carries the mesh's PAINT set: COLOR_1
     // when the mesh has one, else COLOR_0 (the backend
     // packs it so; measured on Prima, COLOR_0 is constant
