@@ -39,3 +39,7 @@ path = "src/bin/cast.rs"
 [[bin]]
 name = "render3d-toon-still"
 path = "src/bin/toon_still.rs"
+
+[[bin]]
+name = "render3d-splat-bench"
+path = "src/bin/splat_bench.rs"
