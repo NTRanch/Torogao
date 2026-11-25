@@ -178,6 +178,15 @@ struct PieceGpu {
     index_count: u32,
 }
 
+/// A packed splat layer's GPU side: the projected,
+/// sorted quad stream (DESIGN.md §3), drawn in one
+/// indexed call.
+struct SplatGpu {
+    vertex_buffer: Buffer,
+    index_buffer: Buffer,
+    index_count: u32,
+}
+
 struct SceneGpu {
     colour: ImageRes,
     depth: ImageRes,
@@ -200,6 +209,15 @@ struct SceneGpu {
     set_pipeline: vk::Pipeline,
     set_depth_pipeline: vk::Pipeline,
     compute_pipeline: vk::Pipeline,
+    /// The splat pipeline: projected Gaussian quads,
+    /// film's "over" blend, depth test on, depth write
+    /// off. Drawn between the opaque block and the
+    /// film overlay (DESIGN.md §1). Always created;
+    /// with no splat layer it simply never draws.
+    splat_pipeline: vk::Pipeline,
+    splat_pipeline_layout: vk::PipelineLayout,
+    /// The scene's splat layer, when it carries one.
+    splats: Option<SplatGpu>,
     /// Toon contract textures (packed, ramp, face SDF,
     /// sphere) — the scene's own, or 1x1 dummies when the
     /// scene carries no toon data (descriptors must stay
@@ -1407,6 +1425,25 @@ impl RenderBackend for VulkanBackend {
                 index_count: piece.indices.len() as u32,
             });
         }
+        // -- Splat layer -------------------------------
+        let splats_gpu = match &scene.splats {
+            Some(packed) if packed.splat_count > 0 => {
+                let vertex_buffer = self.upload_buffer(
+                    bytemuck::cast_slice(&packed.vertices),
+                    vk::BufferUsageFlags::VERTEX_BUFFER,
+                )?;
+                let index_buffer = self.upload_buffer(
+                    bytemuck::cast_slice(&packed.indices),
+                    vk::BufferUsageFlags::INDEX_BUFFER,
+                )?;
+                Some(SplatGpu {
+                    vertex_buffer,
+                    index_buffer,
+                    index_count: packed.indices.len() as u32,
+                })
+            }
+            _ => None,
+        };
         let set_set = unsafe {
             device.allocate_descriptor_sets(
                 &vk::DescriptorSetAllocateInfo::default()
@@ -1480,6 +1517,10 @@ impl RenderBackend for VulkanBackend {
             env!("OUT_DIR"),
             "/outline.frag.spv"
         )))?;
+        let splat_vert =
+            self.shader_module(include_bytes!(concat!(env!("OUT_DIR"), "/splat.vert.spv")))?;
+        let splat_frag =
+            self.shader_module(include_bytes!(concat!(env!("OUT_DIR"), "/splat.frag.spv")))?;
 
         let char_push = vk::PushConstantRange::default()
             .stage_flags(v | f)
@@ -1514,6 +1555,14 @@ impl RenderBackend for VulkanBackend {
             )
         }
         .map_err(vk_err("compute pipeline layout"))?;
+        // The splat pipeline's layout is empty: the
+        // quad stream is fully baked at pack time, so
+        // the shaders read no descriptors, no uniforms,
+        // no push constants.
+        let splat_pipeline_layout = unsafe {
+            device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default(), None)
+        }
+        .map_err(vk_err("splat pipeline layout"))?;
 
         let stage = |module: vk::ShaderModule, stage_flags: vk::ShaderStageFlags| {
             vk::PipelineShaderStageCreateInfo::default()
@@ -1598,6 +1647,38 @@ impl RenderBackend for VulkanBackend {
         let set_vertex = vk::PipelineVertexInputStateCreateInfo::default()
             .vertex_binding_descriptions(std::slice::from_ref(&set_binding))
             .vertex_attribute_descriptions(&set_attrs);
+        // Splat quad stream (splat::SplatVertex is the
+        // contract): clip position, conic + opacity,
+        // colour, pixel offset.
+        let splat_binding = vk::VertexInputBindingDescription::default()
+            .binding(0)
+            .stride(std::mem::size_of::<crate::splat::SplatVertex>() as u32)
+            .input_rate(vk::VertexInputRate::VERTEX);
+        let splat_attrs = [
+            vk::VertexInputAttributeDescription::default()
+                .binding(0)
+                .location(0)
+                .format(vk::Format::R32G32B32A32_SFLOAT)
+                .offset(0),
+            vk::VertexInputAttributeDescription::default()
+                .binding(0)
+                .location(1)
+                .format(vk::Format::R32G32B32A32_SFLOAT)
+                .offset(16),
+            vk::VertexInputAttributeDescription::default()
+                .binding(0)
+                .location(2)
+                .format(vk::Format::R32G32B32A32_SFLOAT)
+                .offset(32),
+            vk::VertexInputAttributeDescription::default()
+                .binding(0)
+                .location(3)
+                .format(vk::Format::R32G32_SFLOAT)
+                .offset(48),
+        ];
+        let splat_vertex = vk::PipelineVertexInputStateCreateInfo::default()
+            .vertex_binding_descriptions(std::slice::from_ref(&splat_binding))
+            .vertex_attribute_descriptions(&splat_attrs);
 
         let make_graphics = |stages: &[vk::PipelineShaderStageCreateInfo<'_>],
                              vertex_input: &vk::PipelineVertexInputStateCreateInfo<'_>,
@@ -1689,6 +1770,19 @@ impl RenderBackend for VulkanBackend {
             &raster,
             &depth_stencil,
         )?;
+        // The splat pipeline: the film blend state and
+        // no depth write, no descriptors — environment
+        // splats composite over the opaque scene and
+        // under the subject's own layers (DESIGN.md §1).
+        let splat_pipeline = make_graphics(
+            &[stage(splat_vert, v), stage(splat_frag, f)],
+            &splat_vertex,
+            splat_pipeline_layout,
+            render_pass,
+            &film_blend,
+            &raster,
+            &depth_stencil_no_write,
+        )?;
         // SAFETY: compute pipeline from this crate's module.
         let compute_pipeline = unsafe {
             device
@@ -1720,6 +1814,8 @@ impl RenderBackend for VulkanBackend {
                 skin_comp,
                 outline_vert,
                 outline_frag,
+                splat_vert,
+                splat_frag,
             ] {
                 device.destroy_shader_module(module, None);
             }
@@ -1752,6 +1848,9 @@ impl RenderBackend for VulkanBackend {
             set_pipeline,
             set_depth_pipeline,
             compute_pipeline,
+            splat_pipeline,
+            splat_pipeline_layout,
+            splats: splats_gpu,
             toon_images,
             albedo_images,
             albedo_dummy,
@@ -2043,6 +2142,28 @@ impl RenderBackend for VulkanBackend {
                 );
                 device.cmd_draw_indexed(cmd, mesh.index_count, 1, 0, 0, 0);
             }
+            if let Some(splats) = &scene.splats {
+                // Splat pass (DESIGN.md §1): the
+                // environment composites over the
+                // opaque scene — depth-tested against
+                // it, writing no depth — before the
+                // film overlay and the outline hull,
+                // which are the subject's own layers
+                // and always draw over the environment.
+                device.cmd_bind_pipeline(
+                    cmd,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    scene.splat_pipeline,
+                );
+                device.cmd_bind_vertex_buffers(cmd, 0, &[splats.vertex_buffer.handle], &[0]);
+                device.cmd_bind_index_buffer(
+                    cmd,
+                    splats.index_buffer.handle,
+                    0,
+                    vk::IndexType::UINT32,
+                );
+                device.cmd_draw_indexed(cmd, splats.index_count, 1, 0, 0, 0);
+            }
             if scene.mesh_overlay.iter().any(|overlay| *overlay) {
                 // Alpha-overlay pass (EyeShadowFilm
                 // route): blend-class meshes composite
@@ -2268,6 +2389,10 @@ impl Drop for VulkanBackend {
                     piece.vertex_buffer.destroy(device);
                     piece.index_buffer.destroy(device);
                 }
+                if let Some(splats) = scene.splats {
+                    splats.vertex_buffer.destroy(device);
+                    splats.index_buffer.destroy(device);
+                }
                 scene.uniforms.destroy(device);
                 scene.joints.destroy(device);
                 for buffer in scene.weight_buffers {
@@ -2283,6 +2408,7 @@ impl Drop for VulkanBackend {
                     scene.set_pipeline,
                     scene.set_depth_pipeline,
                     scene.compute_pipeline,
+                    scene.splat_pipeline,
                 ] {
                     device.destroy_pipeline(pipeline, None);
                 }
@@ -2299,6 +2425,7 @@ impl Drop for VulkanBackend {
                     scene.char_pipeline_layout,
                     scene.set_pipeline_layout,
                     scene.compute_pipeline_layout,
+                    scene.splat_pipeline_layout,
                 ] {
                     device.destroy_pipeline_layout(layout, None);
                 }

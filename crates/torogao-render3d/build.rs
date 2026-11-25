@@ -54,4 +54,6 @@ fn main() {
     compile(&shader_dir, &out_dir, "set.frag", "fragment");
     compile(&shader_dir, &out_dir, "setdepth.vert", "vertex");
     compile(&shader_dir, &out_dir, "depthonly.frag", "fragment");
+    compile(&shader_dir, &out_dir, "splat.vert", "vertex");
+    compile(&shader_dir, &out_dir, "splat.frag", "fragment");
 }

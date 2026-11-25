@@ -23,6 +23,7 @@ use crate::math::{Mat4, V3};
 use crate::model::Model;
 use crate::morph::PackedMorphs;
 use crate::setscene::{ArcScene, projection};
+use crate::splat::PackedSplats;
 use crate::toon::{ToonData, ToonImage};
 
 /// One character mesh, upload-ready.
@@ -128,6 +129,13 @@ pub struct PackedScene {
     /// multiplies it into the albedo (the glTF base-colour
     /// rule) on both shading paths.
     pub albedos: Vec<ToonImage>,
+    /// A Gaussian splat layer (environment/reference
+    /// class), already projected and sorted for this
+    /// scene's camera by `splat::pack_splats`. `None`
+    /// keeps the render bit-identical to the pre-splat
+    /// renderer; `pack_scene` leaves this `None` and a
+    /// splat-aware caller fills it.
+    pub splats: Option<PackedSplats>,
     /// Direction to the sun + energy in w.
     pub sun: [f32; 4],
     /// Direction to the fill + energy in w.
@@ -359,6 +367,7 @@ pub fn pack_scene(model: &Model, scene: &ArcScene) -> PackedScene {
         view: scene.view.to_f32_cols(),
         toon: None,
         albedos: model.albedos.clone(),
+        splats: None,
         sun: [
             scene.sun.to_light.x as f32,
             scene.sun.to_light.y as f32,
