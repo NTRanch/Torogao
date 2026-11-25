@@ -23,7 +23,7 @@ use crate::math::{Mat4, V3};
 use crate::model::Model;
 use crate::morph::PackedMorphs;
 use crate::setscene::{ArcScene, projection};
-use crate::toon::ToonData;
+use crate::toon::{ToonData, ToonImage};
 
 /// One character mesh, upload-ready.
 #[derive(Debug, Clone)]
@@ -115,6 +115,12 @@ pub struct PackedScene {
     /// half-Lambert + GGX path bit-identical. `pack_scene`
     /// leaves this `None`; a toon-aware caller fills it.
     pub toon: Option<ToonData>,
+    /// The model's shared base-colour texture (Family B),
+    /// carried from the decoded GLB by `pack_scene`. When
+    /// present, the character shader multiplies it into
+    /// the albedo (the glTF base-colour rule) on both
+    /// shading paths.
+    pub albedo: Option<ToonImage>,
     /// Direction to the sun + energy in w.
     pub sun: [f32; 4],
     /// Direction to the fill + energy in w.
@@ -343,6 +349,7 @@ pub fn pack_scene(model: &Model, scene: &ArcScene) -> PackedScene {
         view_proj,
         view: scene.view.to_f32_cols(),
         toon: None,
+        albedo: model.albedo.clone(),
         sun: [
             scene.sun.to_light.x as f32,
             scene.sun.to_light.y as f32,

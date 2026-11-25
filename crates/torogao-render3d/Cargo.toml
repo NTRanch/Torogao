@@ -9,7 +9,7 @@ description = "Torogao's native 3D renderer (D-1216/D-1217): deterministic Vulka
 [dependencies]
 ash = "0.38"
 bytemuck = { version = "1", features = ["derive"] }
-gltf = { version = "1", features = ["extras"] }
+gltf = { version = "1", features = ["extras", "import"] }
 png = "0.18"
 serde = { workspace = true }
 serde_json = { workspace = true }

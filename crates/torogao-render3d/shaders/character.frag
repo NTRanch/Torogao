@@ -22,7 +22,8 @@ layout(std140, set = 0, binding = 0) uniform Uniforms {
     vec4 toon0; // x: toon enabled, y: warm_cool,
                 // z: outline width (m), w: rim strength
     vec4 toon1; // x: head joint index (-1 = face branch
-                // off), y: SDF softness, zw: reserved
+                // off), y: SDF softness, z: Family B
+                // albedo-texture flag, w: reserved
     vec4 head_forward; // xyz: head-local forward axis
     vec4 head_right;   // xyz: head-local right axis
 } u;
@@ -39,6 +40,10 @@ layout(set = 0, binding = 19) uniform sampler2D toon_sphere;
 // The packed texture again through a NEAREST sampler:
 // the material ID channel must never blend.
 layout(set = 0, binding = 20) uniform sampler2D toon_packed_id;
+// Family B: the scene's shared base-colour texture (the
+// character's atlas), sampled in TEXCOORD_0 space. Bound
+// always; sampled only when toon1.z flags it present.
+layout(set = 0, binding = 21) uniform sampler2D albedo_tex;
 
 layout(push_constant) uniform Push {
     vec4 base_color;
@@ -140,12 +145,21 @@ void main() {
     vec3 N = normalize(v_normal);
     vec3 V = normalize(u.camera_pos.xyz - v_world_pos);
     float shadow = shadow_factor(v_world_pos, N);
+    // Family B: the base-colour texture multiplies the
+    // vertex-paint albedo (the glTF base-colour rule:
+    // factor x texture x vertex colour), on both shading
+    // paths — the texture is a model property, not a toon
+    // feature.
+    vec3 albedo = v_albedo;
+    if (u.toon1.z > 0.5) {
+        albedo *= texture(albedo_tex, v_uvs.xy).rgb;
+    }
     vec3 linear;
     if (u.toon0.x > 0.5) {
-        linear = shade_toon(v_albedo, N, V, shadow);
+        linear = shade_toon(albedo, N, V, shadow);
     } else {
         linear = shade_point(
-            v_albedo, N, V, push.roughness,
+            albedo, N, V, push.roughness,
             u.world.rgb,
             u.sun.xyz, u.sun.w, shadow,
             u.fill.xyz, u.fill.w

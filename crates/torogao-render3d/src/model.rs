@@ -9,6 +9,7 @@ use serde::Deserialize;
 use crate::accessor::{read_f64s, read_indices, read_joints, read_rows};
 use crate::error::RenderError;
 use crate::math::Mat4;
+use crate::toon::ToonImage;
 
 /// One morph target's sparse deltas, merged over the
 /// position and normal sparsity maps (Blender exports the
@@ -106,7 +107,10 @@ pub struct Skin {
     pub inverse_bind: Vec<Mat4>,
 }
 
-/// A flat PBR material (Family A: no textures).
+/// A PBR material. Family B: the base colour may carry a
+/// texture (the character's shared atlas); `base_color_image`
+/// is the GLB image index it samples, resolved scene-wide by
+/// `resolve_albedo` after the material loop.
 #[derive(Debug, Clone)]
 pub struct Material {
     pub name: String,
@@ -114,6 +118,9 @@ pub struct Material {
     pub metallic: f32,
     pub roughness: f32,
     pub double_sided: bool,
+    /// GLB image index of the base-colour texture, when the
+    /// material carries one (TEXCOORD_0 space only in v1).
+    pub base_color_image: Option<usize>,
 }
 
 /// The whole decoded GLB.
@@ -123,6 +130,11 @@ pub struct Model {
     pub nodes: Vec<Node>,
     pub skin: Skin,
     pub materials: Vec<Material>,
+    /// The scene's shared base-colour texture (Family B):
+    /// the one image every textured material samples,
+    /// decoded to RGBA8 with row 0 at glTF v = 0 (the
+    /// image's top row). `None` for vertex-colour models.
+    pub albedo: Option<ToonImage>,
 }
 
 impl Model {
@@ -238,26 +250,41 @@ fn read_outline_normals(
 /// Load and decode a GLB from memory.
 pub fn load_model(bytes: &[u8]) -> Result<Model, RenderError> {
     let custom_outline = outline_normal_accessors(bytes);
-    let (document, buffers, _images) =
+    let (document, buffers, images) =
         gltf::import_slice(bytes).map_err(|e| RenderError::GltfParse(e.to_string()))?;
 
     // Materials first (meshes index into them).
     let mut materials = Vec::new();
     for material in document.materials() {
         let pbr = material.pbr_metallic_roughness();
-        if pbr.base_color_texture().is_some() {
-            return Err(RenderError::Missing(
-                "textured materials are Family B (rung 4); rung 1 is vertex-colour only",
-            ));
-        }
+        // Family B: a base-colour texture is accepted when
+        // it samples TEXCOORD_0 (the paint space the atlas
+        // is authored in). Any other UV set is a precise
+        // error, not a silent mis-sample.
+        let base_color_image = match pbr.base_color_texture() {
+            Some(info) => {
+                if info.tex_coord() != 0 {
+                    return Err(RenderError::Document(format!(
+                        "material {}: base-colour texture samples TEXCOORD_{}, \
+                         Family B v1 supports TEXCOORD_0 only",
+                        material.name().unwrap_or("?"),
+                        info.tex_coord()
+                    )));
+                }
+                Some(info.texture().source().index())
+            }
+            None => None,
+        };
         materials.push(Material {
             name: material.name().unwrap_or("").to_string(),
             base_color: pbr.base_color_factor(),
             metallic: pbr.metallic_factor(),
             roughness: pbr.roughness_factor(),
             double_sided: material.double_sided(),
+            base_color_image,
         });
     }
+    let albedo = resolve_albedo(&materials, &images)?;
     if materials.is_empty() {
         return Err(RenderError::Missing("materials"));
     }
@@ -516,7 +543,83 @@ pub fn load_model(bytes: &[u8]) -> Result<Model, RenderError> {
         nodes,
         skin,
         materials,
+        albedo,
     })
+}
+
+/// Convert one decoded GLB image to the renderer's RGBA8
+/// texture form. Rows pass through in decoded order: row 0
+/// is the image's top row, which is glTF v = 0 — the same
+/// order the backend uploads (the Family B proving test
+/// pins this orientation empirically). 8-bit formats only;
+/// wider formats are a precise error.
+fn image_to_rgba(data: &gltf::image::Data) -> Result<ToonImage, RenderError> {
+    use gltf::image::Format;
+    let px = (data.width as usize) * (data.height as usize);
+    let mut rgba = Vec::with_capacity(px * 4);
+    match data.format {
+        Format::R8G8B8A8 => rgba.extend_from_slice(&data.pixels),
+        Format::R8G8B8 => {
+            for rgb in data.pixels.chunks_exact(3) {
+                rgba.extend_from_slice(rgb);
+                rgba.push(255);
+            }
+        }
+        Format::R8 => {
+            for v in &data.pixels {
+                rgba.extend_from_slice(&[*v, *v, *v, 255]);
+            }
+        }
+        other => {
+            return Err(RenderError::Document(format!(
+                "base-colour image format {other:?} is not an 8-bit format; \
+                 Family B v1 accepts R8 / R8G8B8 / R8G8B8A8"
+            )));
+        }
+    }
+    ToonImage::new(data.width, data.height, rgba)
+}
+
+/// Resolve the materials' base-colour textures into the
+/// scene's one shared albedo (Family B v1): the estate's
+/// authoring route paints ONE atlas per character, sampled
+/// by every textured material, so the renderer binds a
+/// single scene-level texture — the same shape as the toon
+/// contract textures. Two different images across materials
+/// are a precise error naming both; per-material texture
+/// tables are a named extension, not a silent fallback.
+fn resolve_albedo(
+    materials: &[Material],
+    images: &[gltf::image::Data],
+) -> Result<Option<ToonImage>, RenderError> {
+    let mut shared: Option<(usize, &str)> = None;
+    for material in materials {
+        let Some(index) = material.base_color_image else {
+            continue;
+        };
+        match shared {
+            None => shared = Some((index, material.name.as_str())),
+            Some((first, first_name)) if first != index => {
+                return Err(RenderError::Document(format!(
+                    "materials {first_name} and {} sample different base-colour \
+                     images ({first} vs {index}); Family B v1 binds one shared \
+                     atlas per scene",
+                    material.name
+                )));
+            }
+            _ => {}
+        }
+    }
+    match shared {
+        None => Ok(None),
+        Some((index, _)) => {
+            let data = images.get(index).ok_or(RenderError::Document(format!(
+                "base-colour image index {index} out of range ({} images decoded)",
+                images.len()
+            )))?;
+            Ok(Some(image_to_rgba(data)?))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -532,5 +635,71 @@ mod tests {
             Err(RenderError::GltfParse(_))
         ));
         assert!(load_model(b"").is_err());
+    }
+
+    fn image(
+        format: gltf::image::Format,
+        width: u32,
+        height: u32,
+        pixels: Vec<u8>,
+    ) -> gltf::image::Data {
+        gltf::image::Data {
+            format,
+            width,
+            height,
+            pixels,
+        }
+    }
+
+    fn material(name: &str, base_color_image: Option<usize>) -> Material {
+        Material {
+            name: name.to_string(),
+            base_color: [1.0; 4],
+            metallic: 0.0,
+            roughness: 1.0,
+            double_sided: false,
+            base_color_image,
+        }
+    }
+
+    // Family B: the 8-bit conversions land byte-exact.
+    #[test]
+    fn image_conversion_formats() {
+        use gltf::image::Format;
+        let rgba = image_to_rgba(&image(Format::R8G8B8A8, 1, 1, vec![9, 8, 7, 6])).unwrap();
+        assert_eq!(rgba.rgba, vec![9, 8, 7, 6]);
+        let rgb = image_to_rgba(&image(Format::R8G8B8, 1, 1, vec![9, 8, 7])).unwrap();
+        assert_eq!(rgb.rgba, vec![9, 8, 7, 255]);
+        let gray = image_to_rgba(&image(Format::R8, 2, 1, vec![5, 6])).unwrap();
+        assert_eq!(gray.rgba, vec![5, 5, 5, 255, 6, 6, 6, 255]);
+        // A wide format is a precise error, never a panic
+        // or a silent truncation.
+        let wide = image_to_rgba(&image(Format::R16G16B16A16, 1, 1, vec![0; 8]));
+        assert!(matches!(wide, Err(RenderError::Document(_))));
+    }
+
+    // Family B: the shared-atlas rule — none, one shared,
+    // and the divergent case that must refuse.
+    #[test]
+    fn resolve_albedo_rule() {
+        use gltf::image::Format;
+        let images = vec![
+            image(Format::R8G8B8A8, 1, 1, vec![255, 0, 0, 255]),
+            image(Format::R8G8B8A8, 1, 1, vec![0, 0, 255, 255]),
+        ];
+        // No textured materials: no albedo.
+        let none = resolve_albedo(&[material("a", None), material("b", None)], &images).unwrap();
+        assert!(none.is_none());
+        // Two materials, one shared image: that image.
+        let one = resolve_albedo(&[material("a", Some(1)), material("b", Some(1))], &images)
+            .unwrap()
+            .unwrap();
+        assert_eq!(one.rgba, vec![0, 0, 255, 255]);
+        // Two materials, different images: refusal.
+        let divergent = resolve_albedo(&[material("a", Some(0)), material("b", Some(1))], &images);
+        assert!(matches!(divergent, Err(RenderError::Document(_))));
+        // An out-of-range image index: refusal.
+        let dangling = resolve_albedo(&[material("a", Some(7))], &images);
+        assert!(matches!(dangling, Err(RenderError::Document(_))));
     }
 }

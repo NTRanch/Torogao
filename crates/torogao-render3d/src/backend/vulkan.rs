@@ -72,7 +72,9 @@ struct Uniforms {
     /// (m), w: rim strength.
     toon0: [f32; 4],
     /// x: head joint index (-1 = face branch off),
-    /// y: SDF softness.
+    /// y: SDF softness, z: Family B albedo-texture flag
+    /// (1 = the scene carries a shared base-colour
+    /// texture), w: reserved.
     toon1: [f32; 4],
     head_forward: [f32; 4],
     head_right: [f32; 4],
@@ -196,6 +198,8 @@ struct SceneGpu {
     /// scene carries no toon data (descriptors must stay
     /// valid; the shader branch is off then).
     toon_images: Vec<ImageRes>,
+    /// The Family B albedo texture (or its white dummy).
+    albedo_image: ImageRes,
     toon_linear_sampler: vk::Sampler,
     toon_nearest_sampler: vk::Sampler,
     /// Whether the outline pass draws (toon data present
@@ -566,16 +570,26 @@ impl VulkanBackend {
         Ok(device_buffer)
     }
 
-    /// Upload one toon contract texture into a fresh
-    /// device-local sampled image (R8G8B8A8_UNORM: the
-    /// authored bytes ARE the shader values; no sRGB
-    /// decode — the display transform happens once, at
-    /// the end of the fragment shader).
-    fn upload_image(&self, tex: &crate::toon::ToonImage) -> Result<ImageRes, RenderError> {
+    /// Upload one texture into a fresh device-local
+    /// sampled image. The toon contract textures upload as
+    /// R8G8B8A8_UNORM: the authored bytes ARE the shader
+    /// values; no sRGB decode — the display transform
+    /// happens once, at the end of the fragment shader.
+    /// The Family B albedo uploads as R8G8B8A8_SRGB: a
+    /// glTF base-colour texture is sRGB-encoded by spec,
+    /// and the sampler's decode makes its values linear
+    /// like every other albedo input (vertex colour,
+    /// material factor), which is also what the Blender
+    /// side of the parity pair does with the same file.
+    fn upload_image(
+        &self,
+        tex: &crate::toon::ToonImage,
+        format: vk::Format,
+    ) -> Result<ImageRes, RenderError> {
         let image = self.create_image(
             tex.width,
             tex.height,
-            vk::Format::R8G8B8A8_UNORM,
+            format,
             vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
             vk::ImageAspectFlags::COLOR,
         )?;
@@ -765,11 +779,20 @@ impl RenderBackend for VulkanBackend {
             ),
         };
         let toon_images = vec![
-            self.upload_image(&packed_tex)?,
-            self.upload_image(&ramp_tex)?,
-            self.upload_image(&face_tex)?,
-            self.upload_image(&sphere_tex)?,
+            self.upload_image(&packed_tex, vk::Format::R8G8B8A8_UNORM)?,
+            self.upload_image(&ramp_tex, vk::Format::R8G8B8A8_UNORM)?,
+            self.upload_image(&face_tex, vk::Format::R8G8B8A8_UNORM)?,
+            self.upload_image(&sphere_tex, vk::Format::R8G8B8A8_UNORM)?,
         ];
+        // Family B: the scene's shared base-colour texture,
+        // or a white dummy when the model is vertex-colour
+        // only (the shader's albedo flag stays off then;
+        // the descriptor must still be valid).
+        let albedo_tex = match &scene.albedo {
+            Some(tex) => tex.clone(),
+            None => dummy([255, 255, 255, 255]),
+        };
+        let albedo_image = self.upload_image(&albedo_tex, vk::Format::R8G8B8A8_SRGB)?;
         // SAFETY: sampler creation with fixed parameters.
         let make_toon_sampler = |filter: vk::Filter| unsafe {
             device.create_sampler(
@@ -951,6 +974,8 @@ impl RenderBackend for VulkanBackend {
             binding(18, cis, f),
             binding(19, cis, f),
             binding(20, cis, f),
+            // Family B: the shared base-colour texture.
+            binding(21, cis, f),
         ];
         let set_bindings = [
             binding(0, ubo, v | f),
@@ -983,7 +1008,7 @@ impl RenderBackend for VulkanBackend {
         .map_err(vk_err("compute layout"))?;
 
         // Pool sizes scale with the mesh count: per mesh
-        // the char set carries 14 SSBOs + 6 samplers and
+        // the char set carries 14 SSBOs + 7 samplers and
         // the compute set 12 SSBOs; the set-piece set adds
         // one of each kind. Slack covers the shared UBO
         // writes.
@@ -997,7 +1022,7 @@ impl RenderBackend for VulkanBackend {
                 .descriptor_count(mesh_count * 26 + 16),
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .descriptor_count(mesh_count * 6 + 8),
+                .descriptor_count(mesh_count * 7 + 8),
         ];
         let pool = unsafe {
             device.create_descriptor_pool(
@@ -1022,7 +1047,7 @@ impl RenderBackend for VulkanBackend {
             f64::from(scene.sun[1]),
             f64::from(scene.sun[2]),
         );
-        let (toon0, toon1, head_forward, head_right) = match &scene.toon {
+        let (toon0, mut toon1, head_forward, head_right) = match &scene.toon {
             Some(toon) => {
                 let s = &toon.settings;
                 (
@@ -1044,6 +1069,10 @@ impl RenderBackend for VulkanBackend {
             }
             None => ([0.0; 4], [-1.0, 0.08, 0.0, 0.0], [0.0; 4], [0.0; 4]),
         };
+        // Family B: the albedo flag is a model property,
+        // independent of the toon branch — set it from the
+        // packed scene either way.
+        toon1[2] = if scene.albedo.is_some() { 1.0 } else { 0.0 };
         let uniforms = Uniforms {
             view_proj: scene.view_proj,
             light_view_proj: light_view_proj(sun_dir).to_f32_cols(),
@@ -1230,6 +1259,10 @@ impl RenderBackend for VulkanBackend {
             let face_info = toon_image_info(2, toon_linear_sampler);
             let sphere_info = toon_image_info(3, toon_linear_sampler);
             let packed_id_info = toon_image_info(0, toon_nearest_sampler);
+            let albedo_info = [vk::DescriptorImageInfo::default()
+                .sampler(toon_linear_sampler)
+                .image_view(albedo_image.view)
+                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
             let set = char_sets[mi];
             let write = |binding: u32, ty: vk::DescriptorType| {
                 vk::WriteDescriptorSet::default()
@@ -1259,6 +1292,7 @@ impl RenderBackend for VulkanBackend {
                 write(18, cis).image_info(&face_info),
                 write(19, cis).image_info(&sphere_info),
                 write(20, cis).image_info(&packed_id_info),
+                write(21, cis).image_info(&albedo_info),
             ];
             // SAFETY: all referenced buffers/views are live
             // and owned by this scene.
@@ -1660,6 +1694,7 @@ impl RenderBackend for VulkanBackend {
             set_depth_pipeline,
             compute_pipeline,
             toon_images,
+            albedo_image,
             toon_linear_sampler,
             toon_nearest_sampler,
             outline_enabled: scene
@@ -2144,6 +2179,7 @@ impl Drop for VulkanBackend {
                 for image in scene.toon_images {
                     image.destroy(device);
                 }
+                scene.albedo_image.destroy(device);
                 for layout in [
                     scene.char_pipeline_layout,
                     scene.set_pipeline_layout,
