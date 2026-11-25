@@ -49,6 +49,11 @@ layout(push_constant) uniform Push {
     vec4 base_color;
     float roughness;
     float metallic;
+    // Alpha-overlay pass flag (1 = blend class): the
+    // fragment's alpha leaves with the framebuffer blend
+    // instead of the opaque 1.0.
+    float overlay;
+    float _push_pad;
 } push;
 
 #include "shade.glsl"
@@ -149,11 +154,15 @@ void main() {
     // vertex-paint albedo (the glTF base-colour rule:
     // factor x texture x vertex colour), on both shading
     // paths — the texture is a model property, not a toon
-    // feature.
-    vec3 albedo = v_albedo;
+    // feature. The texel's alpha rides along: it is the
+    // alpha-overlay route's coverage (the EyeShadowFilm
+    // samples the face atlas, whose alpha channel is the
+    // film's authored alpha).
+    vec4 albedo_texel = vec4(1.0);
     if (u.toon1.z > 0.5) {
-        albedo *= texture(albedo_tex, v_uvs.xy).rgb;
+        albedo_texel = texture(albedo_tex, v_uvs.xy);
     }
+    vec3 albedo = v_albedo * albedo_texel.rgb;
     vec3 linear;
     if (u.toon0.x > 0.5) {
         linear = shade_toon(albedo, N, V, shadow);
@@ -165,5 +174,16 @@ void main() {
             u.fill.xyz, u.fill.w
         );
     }
-    out_colour = vec4(display_transform(linear), 1.0);
+    // Opaque fragments write alpha 1. Overlay fragments
+    // (drawn by the blend pipeline, after the opaque
+    // pass, no depth write) write their coverage: atlas
+    // alpha x material factor alpha. The factor alpha
+    // rides push.base_color.a, which is 1.0 when the
+    // paint came from COLOR_1 (the factor is baked into
+    // that paint; its alpha is not carried — no estate
+    // overlay material needs it).
+    float alpha = push.overlay > 0.5
+        ? clamp(albedo_texel.a * push.base_color.a, 0.0, 1.0)
+        : 1.0;
+    out_colour = vec4(display_transform(linear), alpha);
 }

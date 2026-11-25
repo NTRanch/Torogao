@@ -56,6 +56,11 @@ layout(push_constant) uniform Push {
     vec4 base_color;
     float roughness;
     float metallic;
+    // Alpha-overlay pass flag (1 = this mesh's material
+    // is blend class); consumed by the fragment stage,
+    // declared here so both stages share one block.
+    float overlay;
+    float _push_pad;
 } push;
 
 #include "skin.glsl"

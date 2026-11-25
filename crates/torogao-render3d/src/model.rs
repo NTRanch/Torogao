@@ -118,6 +118,15 @@ pub struct Material {
     pub metallic: f32,
     pub roughness: f32,
     pub double_sided: bool,
+    /// Alpha-overlay blend class: the material's glTF
+    /// `alphaMode` is BLEND (the EyeShadowFilm route,
+    /// Rung 6 §3 / A8.3). The backend draws meshes with
+    /// this material in the alpha-overlay pass — blended
+    /// over the opaque result, no depth write — and every
+    /// other material in the opaque pass. MASK is not an
+    /// overlay: it carries cutoff semantics, no estate
+    /// material uses it, and it renders opaque.
+    pub alpha_overlay: bool,
     /// GLB image index of the base-colour texture, when the
     /// material carries one (TEXCOORD_0 space only in v1).
     pub base_color_image: Option<usize>,
@@ -253,6 +262,15 @@ fn read_outline_normals(
     Ok(normals.to_vec())
 }
 
+/// The engine blend class for a glTF alpha mode: only
+/// BLEND routes to the alpha-overlay pass. OPAQUE is
+/// opaque; MASK renders opaque too (its cutoff is not
+/// implemented — no estate material uses it, and silently
+/// blending it would be a worse lie than naming this).
+fn alpha_overlay_for(mode: gltf::material::AlphaMode) -> bool {
+    mode == gltf::material::AlphaMode::Blend
+}
+
 /// Load and decode a GLB from memory.
 pub fn load_model(bytes: &[u8]) -> Result<Model, RenderError> {
     let custom_outline = outline_normal_accessors(bytes);
@@ -287,6 +305,7 @@ pub fn load_model(bytes: &[u8]) -> Result<Model, RenderError> {
             metallic: pbr.metallic_factor(),
             roughness: pbr.roughness_factor(),
             double_sided: material.double_sided(),
+            alpha_overlay: alpha_overlay_for(material.alpha_mode()),
             base_color_image,
             albedo_slot: None,
         });
@@ -657,9 +676,20 @@ mod tests {
             metallic: 0.0,
             roughness: 1.0,
             double_sided: false,
+            alpha_overlay: false,
             base_color_image,
             albedo_slot: None,
         }
+    }
+
+    // Alpha-overlay route: only the glTF BLEND alpha mode
+    // routes to the overlay pass; OPAQUE and MASK do not.
+    #[test]
+    fn alpha_overlay_only_for_blend_mode() {
+        use gltf::material::AlphaMode;
+        assert!(alpha_overlay_for(AlphaMode::Blend));
+        assert!(!alpha_overlay_for(AlphaMode::Opaque));
+        assert!(!alpha_overlay_for(AlphaMode::Mask));
     }
 
     // Family B: the 8-bit conversions land byte-exact.

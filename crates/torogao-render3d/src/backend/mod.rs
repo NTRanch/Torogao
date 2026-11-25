@@ -99,6 +99,10 @@ pub struct PackedMaterial {
     pub roughness: f32,
     /// Slot into `PackedScene::albedos` (Family B v2).
     pub albedo_slot: Option<usize>,
+    /// Alpha-overlay blend class (the material's glTF
+    /// `alphaMode` is BLEND): the backend draws this
+    /// material's meshes in the alpha-overlay pass.
+    pub alpha_overlay: bool,
 }
 
 /// The whole scene as packets.
@@ -315,6 +319,7 @@ pub fn pack_scene(model: &Model, scene: &ArcScene) -> PackedScene {
             metallic: m.metallic,
             roughness: m.roughness,
             albedo_slot: m.albedo_slot,
+            alpha_overlay: m.alpha_overlay,
         })
         .collect();
     let set_pieces = scene

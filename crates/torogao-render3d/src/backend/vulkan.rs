@@ -86,7 +86,11 @@ struct CharPush {
     base_color: [f32; 4],
     roughness: f32,
     metallic: f32,
-    _pad: [f32; 2],
+    /// Alpha-overlay flag for the fragment stage
+    /// (1.0 = the mesh's material is blend class), at
+    /// push-block offset 24 in the shaders' Push block.
+    overlay: f32,
+    _pad: f32,
 }
 
 /// Draw-data entry for one set piece (std430 layout of the
@@ -189,6 +193,9 @@ struct SceneGpu {
     pool: vk::DescriptorPool,
     char_pipeline: vk::Pipeline,
     char_depth_pipeline: vk::Pipeline,
+    /// The alpha-overlay pipeline: character shaders
+    /// with fixed-function blending and no depth write.
+    film_pipeline: vk::Pipeline,
     outline_pipeline: vk::Pipeline,
     set_pipeline: vk::Pipeline,
     set_depth_pipeline: vk::Pipeline,
@@ -207,6 +214,10 @@ struct SceneGpu {
     /// Whether the outline pass draws (toon data present
     /// and a positive outline width).
     outline_enabled: bool,
+    /// Per-mesh alpha-overlay partition (packed-mesh
+    /// order): true routes the mesh to the film pass
+    /// instead of the opaque character pass.
+    mesh_overlay: Vec<bool>,
     char_pipeline_layout: vk::PipelineLayout,
     set_pipeline_layout: vk::PipelineLayout,
     compute_pipeline_layout: vk::PipelineLayout,
@@ -1128,9 +1139,17 @@ impl RenderBackend for VulkanBackend {
                     },
                     roughness: material.roughness,
                     metallic: material.metallic,
-                    _pad: [0.0; 2],
+                    overlay: if material.alpha_overlay { 1.0 } else { 0.0 },
+                    _pad: 0.0,
                 }
             })
+            .collect();
+        // The draw partition for the alpha-overlay pass,
+        // in packed-mesh order.
+        let mesh_overlay: Vec<bool> = scene
+            .meshes
+            .iter()
+            .map(|mesh| scene.materials[mesh.material].alpha_overlay)
             .collect();
 
         // -- Meshes ---------------------------------------
@@ -1538,6 +1557,24 @@ impl RenderBackend for VulkanBackend {
         let blend = vk::PipelineColorBlendStateCreateInfo::default()
             .attachments(std::slice::from_ref(&blend_attachment));
         let no_blend = vk::PipelineColorBlendStateCreateInfo::default();
+        // The alpha-overlay blend (EyeShadowFilm route):
+        // the "over" operator — SRC_ALPHA /
+        // ONE_MINUS_SRC_ALPHA on colour, ONE /
+        // ONE_MINUS_SRC_ALPHA on alpha so the readback
+        // alpha stays a correct coverage composite. This
+        // is what the Blender route's DITHERED
+        // transparency approximates per pixel.
+        let film_blend_attachment = vk::PipelineColorBlendAttachmentState::default()
+            .blend_enable(true)
+            .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
+            .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .color_blend_op(vk::BlendOp::ADD)
+            .src_alpha_blend_factor(vk::BlendFactor::ONE)
+            .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .alpha_blend_op(vk::BlendOp::ADD)
+            .color_write_mask(vk::ColorComponentFlags::RGBA);
+        let film_blend = vk::PipelineColorBlendStateCreateInfo::default()
+            .attachments(std::slice::from_ref(&film_blend_attachment));
         let empty_vertex = vk::PipelineVertexInputStateCreateInfo::default();
         let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::default()
             .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
@@ -1566,7 +1603,7 @@ impl RenderBackend for VulkanBackend {
                              vertex_input: &vk::PipelineVertexInputStateCreateInfo<'_>,
                              layout: vk::PipelineLayout,
                              pass: vk::RenderPass,
-                             with_blend: bool,
+                             blend_state: &vk::PipelineColorBlendStateCreateInfo<'_>,
                              raster_state: &vk::PipelineRasterizationStateCreateInfo<'_>,
                              depth_state: &vk::PipelineDepthStencilStateCreateInfo<'_>|
          -> Result<vk::Pipeline, RenderError> {
@@ -1578,7 +1615,7 @@ impl RenderBackend for VulkanBackend {
                 .rasterization_state(raster_state)
                 .multisample_state(&multisample)
                 .depth_stencil_state(depth_state)
-                .color_blend_state(if with_blend { &blend } else { &no_blend })
+                .color_blend_state(blend_state)
                 .dynamic_state(&dynamic)
                 .layout(layout)
                 .render_pass(pass);
@@ -1599,7 +1636,7 @@ impl RenderBackend for VulkanBackend {
             &empty_vertex,
             char_pipeline_layout,
             render_pass,
-            true,
+            &blend,
             &raster,
             &depth_stencil,
         )?;
@@ -1608,16 +1645,29 @@ impl RenderBackend for VulkanBackend {
             &empty_vertex,
             char_pipeline_layout,
             shadow_pass,
-            false,
+            &no_blend,
             &raster,
             &depth_stencil,
+        )?;
+        // The alpha-overlay pipeline: the character
+        // shaders again, with the film blend state and
+        // no depth write (the hull's depth discipline —
+        // test against the body, never occlude).
+        let film_pipeline = make_graphics(
+            &[stage(char_vert, v), stage(char_frag, f)],
+            &empty_vertex,
+            char_pipeline_layout,
+            render_pass,
+            &film_blend,
+            &raster,
+            &depth_stencil_no_write,
         )?;
         let outline_pipeline = make_graphics(
             &[stage(outline_vert, v), stage(outline_frag, f)],
             &empty_vertex,
             char_pipeline_layout,
             render_pass,
-            true,
+            &blend,
             &raster_front_cull,
             &depth_stencil_no_write,
         )?;
@@ -1626,7 +1676,7 @@ impl RenderBackend for VulkanBackend {
             &set_vertex,
             set_pipeline_layout,
             render_pass,
-            true,
+            &blend,
             &raster,
             &depth_stencil,
         )?;
@@ -1635,7 +1685,7 @@ impl RenderBackend for VulkanBackend {
             &set_vertex,
             set_pipeline_layout,
             shadow_pass,
-            false,
+            &no_blend,
             &raster,
             &depth_stencil,
         )?;
@@ -1697,6 +1747,7 @@ impl RenderBackend for VulkanBackend {
             pool,
             char_pipeline,
             char_depth_pipeline,
+            film_pipeline,
             outline_pipeline,
             set_pipeline,
             set_depth_pipeline,
@@ -1710,6 +1761,7 @@ impl RenderBackend for VulkanBackend {
                 .toon
                 .as_ref()
                 .is_some_and(|t| t.settings.outline_width_m > 0.0),
+            mesh_overlay,
             char_pipeline_layout,
             set_pipeline_layout,
             compute_pipeline_layout,
@@ -1963,6 +2015,11 @@ impl RenderBackend for VulkanBackend {
                 if !visible_meshes.get(mi).copied().unwrap_or(false) {
                     continue;
                 }
+                // Blend-class meshes draw in the overlay
+                // pass below, never in the opaque pass.
+                if scene.mesh_overlay[mi] {
+                    continue;
+                }
                 device.cmd_bind_descriptor_sets(
                     cmd,
                     vk::PipelineBindPoint::GRAPHICS,
@@ -1985,6 +2042,51 @@ impl RenderBackend for VulkanBackend {
                     vk::IndexType::UINT32,
                 );
                 device.cmd_draw_indexed(cmd, mesh.index_count, 1, 0, 0, 0);
+            }
+            if scene.mesh_overlay.iter().any(|overlay| *overlay) {
+                // Alpha-overlay pass (EyeShadowFilm
+                // route): blend-class meshes composite
+                // over the opaque result — after every
+                // opaque character mesh, so the film
+                // blends over the face SDF surface it
+                // hugs whatever the mesh order, and
+                // before the outline hull. Depth test
+                // stays on, depth write off (the film
+                // pipeline's state). The shadow pass
+                // above is unchanged: it is material-blind
+                // and the film cast into it exactly as
+                // before this route existed.
+                device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, scene.film_pipeline);
+                for (mi, mesh) in scene.meshes.iter().enumerate() {
+                    if !visible_meshes.get(mi).copied().unwrap_or(false) {
+                        continue;
+                    }
+                    if !scene.mesh_overlay[mi] {
+                        continue;
+                    }
+                    device.cmd_bind_descriptor_sets(
+                        cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        scene.char_pipeline_layout,
+                        0,
+                        &[mesh.set],
+                        &[],
+                    );
+                    device.cmd_push_constants(
+                        cmd,
+                        scene.char_pipeline_layout,
+                        vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                        0,
+                        bytemuck::bytes_of(&scene.mesh_pushes[mi]),
+                    );
+                    device.cmd_bind_index_buffer(
+                        cmd,
+                        mesh.index_buffer.handle,
+                        0,
+                        vk::IndexType::UINT32,
+                    );
+                    device.cmd_draw_indexed(cmd, mesh.index_count, 1, 0, 0, 0);
+                }
             }
             if scene.outline_enabled {
                 // Inverted-hull outlines (Amendment A4),
@@ -2176,6 +2278,7 @@ impl Drop for VulkanBackend {
                 for pipeline in [
                     scene.char_pipeline,
                     scene.char_depth_pipeline,
+                    scene.film_pipeline,
                     scene.outline_pipeline,
                     scene.set_pipeline,
                     scene.set_depth_pipeline,
