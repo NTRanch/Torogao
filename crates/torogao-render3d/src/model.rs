@@ -108,9 +108,9 @@ pub struct Skin {
 }
 
 /// A PBR material. Family B: the base colour may carry a
-/// texture (the character's shared atlas); `base_color_image`
-/// is the GLB image index it samples, resolved scene-wide by
-/// `resolve_albedo` after the material loop.
+/// texture (a part atlas — face, hair, ...); `base_color_image`
+/// is the GLB image index it samples, and `albedo_slot` is its
+/// slot in `Model::albedos` after `resolve_albedos` runs.
 #[derive(Debug, Clone)]
 pub struct Material {
     pub name: String,
@@ -121,6 +121,10 @@ pub struct Material {
     /// GLB image index of the base-colour texture, when the
     /// material carries one (TEXCOORD_0 space only in v1).
     pub base_color_image: Option<usize>,
+    /// Slot into `Model::albedos` for this material's decoded
+    /// base-colour texture; `None` for untextured materials.
+    /// Filled by `resolve_albedos` after the material loop.
+    pub albedo_slot: Option<usize>,
 }
 
 /// The whole decoded GLB.
@@ -130,11 +134,13 @@ pub struct Model {
     pub nodes: Vec<Node>,
     pub skin: Skin,
     pub materials: Vec<Material>,
-    /// The scene's shared base-colour texture (Family B):
-    /// the one image every textured material samples,
-    /// decoded to RGBA8 with row 0 at glTF v = 0 (the
-    /// image's top row). `None` for vertex-colour models.
-    pub albedo: Option<ToonImage>,
+    /// The model's decoded base-colour textures (Family B
+    /// v2): one entry per distinct GLB image any material
+    /// samples, in first-use order, decoded to RGBA8 with
+    /// row 0 at glTF v = 0 (the image's top row). Materials
+    /// point here through `Material::albedo_slot`. Empty
+    /// for vertex-colour models.
+    pub albedos: Vec<ToonImage>,
 }
 
 impl Model {
@@ -282,9 +288,10 @@ pub fn load_model(bytes: &[u8]) -> Result<Model, RenderError> {
             roughness: pbr.roughness_factor(),
             double_sided: material.double_sided(),
             base_color_image,
+            albedo_slot: None,
         });
     }
-    let albedo = resolve_albedo(&materials, &images)?;
+    let albedos = resolve_albedos(&mut materials, &images)?;
     if materials.is_empty() {
         return Err(RenderError::Missing("materials"));
     }
@@ -543,7 +550,7 @@ pub fn load_model(bytes: &[u8]) -> Result<Model, RenderError> {
         nodes,
         skin,
         materials,
-        albedo,
+        albedos,
     })
 }
 
@@ -580,46 +587,38 @@ fn image_to_rgba(data: &gltf::image::Data) -> Result<ToonImage, RenderError> {
     ToonImage::new(data.width, data.height, rgba)
 }
 
-/// Resolve the materials' base-colour textures into the
-/// scene's one shared albedo (Family B v1): the estate's
-/// authoring route paints ONE atlas per character, sampled
-/// by every textured material, so the renderer binds a
-/// single scene-level texture — the same shape as the toon
-/// contract textures. Two different images across materials
-/// are a precise error naming both; per-material texture
-/// tables are a named extension, not a silent fallback.
-fn resolve_albedo(
-    materials: &[Material],
+/// Resolve the materials' base-colour textures (Family B
+/// v2): the estate's authoring route paints one atlas PER
+/// PART GROUP (face, hair, ...), so a character legitimately
+/// samples several images. Decode each distinct image once,
+/// in first-use order, and record every material's slot.
+/// An out-of-range index or a non-8-bit image is a precise
+/// error, never a silent fallback.
+fn resolve_albedos(
+    materials: &mut [Material],
     images: &[gltf::image::Data],
-) -> Result<Option<ToonImage>, RenderError> {
-    let mut shared: Option<(usize, &str)> = None;
-    for material in materials {
+) -> Result<Vec<ToonImage>, RenderError> {
+    let mut order: Vec<usize> = Vec::new();
+    let mut albedos: Vec<ToonImage> = Vec::new();
+    for material in materials.iter_mut() {
         let Some(index) = material.base_color_image else {
             continue;
         };
-        match shared {
-            None => shared = Some((index, material.name.as_str())),
-            Some((first, first_name)) if first != index => {
-                return Err(RenderError::Document(format!(
-                    "materials {first_name} and {} sample different base-colour \
-                     images ({first} vs {index}); Family B v1 binds one shared \
-                     atlas per scene",
-                    material.name
-                )));
+        let slot = match order.iter().position(|&i| i == index) {
+            Some(slot) => slot,
+            None => {
+                let data = images.get(index).ok_or(RenderError::Document(format!(
+                    "base-colour image index {index} out of range ({} images decoded)",
+                    images.len()
+                )))?;
+                albedos.push(image_to_rgba(data)?);
+                order.push(index);
+                order.len() - 1
             }
-            _ => {}
-        }
+        };
+        material.albedo_slot = Some(slot);
     }
-    match shared {
-        None => Ok(None),
-        Some((index, _)) => {
-            let data = images.get(index).ok_or(RenderError::Document(format!(
-                "base-colour image index {index} out of range ({} images decoded)",
-                images.len()
-            )))?;
-            Ok(Some(image_to_rgba(data)?))
-        }
-    }
+    Ok(albedos)
 }
 
 #[cfg(test)]
@@ -659,6 +658,7 @@ mod tests {
             roughness: 1.0,
             double_sided: false,
             base_color_image,
+            albedo_slot: None,
         }
     }
 
@@ -678,28 +678,37 @@ mod tests {
         assert!(matches!(wide, Err(RenderError::Document(_))));
     }
 
-    // Family B: the shared-atlas rule — none, one shared,
-    // and the divergent case that must refuse.
+    // Family B v2: per-material images — none, one shared,
+    // and two distinct images landing in first-use slots.
     #[test]
-    fn resolve_albedo_rule() {
+    fn resolve_albedos_rule() {
         use gltf::image::Format;
         let images = vec![
             image(Format::R8G8B8A8, 1, 1, vec![255, 0, 0, 255]),
             image(Format::R8G8B8A8, 1, 1, vec![0, 0, 255, 255]),
         ];
-        // No textured materials: no albedo.
-        let none = resolve_albedo(&[material("a", None), material("b", None)], &images).unwrap();
-        assert!(none.is_none());
-        // Two materials, one shared image: that image.
-        let one = resolve_albedo(&[material("a", Some(1)), material("b", Some(1))], &images)
-            .unwrap()
-            .unwrap();
-        assert_eq!(one.rgba, vec![0, 0, 255, 255]);
-        // Two materials, different images: refusal.
-        let divergent = resolve_albedo(&[material("a", Some(0)), material("b", Some(1))], &images);
-        assert!(matches!(divergent, Err(RenderError::Document(_))));
+        // No textured materials: no albedos, no slots.
+        let mut plain = vec![material("a", None), material("b", None)];
+        let none = resolve_albedos(&mut plain, &images).unwrap();
+        assert!(none.is_empty());
+        assert!(plain.iter().all(|m| m.albedo_slot.is_none()));
+        // Two materials, one shared image: one albedo, both
+        // materials in slot 0.
+        let mut shared = vec![material("a", Some(1)), material("b", Some(1))];
+        let one = resolve_albedos(&mut shared, &images).unwrap();
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].rgba, vec![0, 0, 255, 255]);
+        assert!(shared.iter().all(|m| m.albedo_slot == Some(0)));
+        // Two materials, different images: two albedos in
+        // first-use order, slots follow their materials.
+        let mut divergent = vec![material("a", Some(0)), material("b", Some(1))];
+        let two = resolve_albedos(&mut divergent, &images).unwrap();
+        assert_eq!(two.len(), 2);
+        assert_eq!(divergent[0].albedo_slot, Some(0));
+        assert_eq!(divergent[1].albedo_slot, Some(1));
         // An out-of-range image index: refusal.
-        let dangling = resolve_albedo(&[material("a", Some(7))], &images);
-        assert!(matches!(dangling, Err(RenderError::Document(_))));
+        let mut dangling = vec![material("a", Some(7))];
+        let err = resolve_albedos(&mut dangling, &images);
+        assert!(matches!(err, Err(RenderError::Document(_))));
     }
 }

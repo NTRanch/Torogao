@@ -115,11 +115,16 @@ fn textured_material_loads_renders_and_is_deterministic() {
     // (red quadrant first texel). The untextured twin
     // resolves none.
     let (textured, model) = render(&fixture.join("familyb_quad.glb"));
-    let albedo = model.albedo.as_ref().expect("textured model carries an albedo");
+    assert_eq!(model.albedos.len(), 1, "one shared atlas = one albedo slot");
+    let albedo = &model.albedos[0];
     assert_eq!((albedo.width, albedo.height), (8, 8));
-    assert_eq!(&albedo.rgba[0..4], &[255, 0, 0, 255], "row 0 starts with red");
+    assert_eq!(
+        &albedo.rgba[0..4],
+        &[255, 0, 0, 255],
+        "row 0 starts with red"
+    );
     let (plain, plain_model) = render(&fixture.join("familyb_quad_untextured.glb"));
-    assert!(plain_model.albedo.is_none());
+    assert!(plain_model.albedos.is_empty());
 
     // Determinism witness (D-1397).
     let (twin, _) = render(&fixture.join("familyb_quad.glb"));

@@ -97,6 +97,8 @@ pub struct PackedMaterial {
     pub base_color: [f32; 4],
     pub metallic: f32,
     pub roughness: f32,
+    /// Slot into `PackedScene::albedos` (Family B v2).
+    pub albedo_slot: Option<usize>,
 }
 
 /// The whole scene as packets.
@@ -115,12 +117,13 @@ pub struct PackedScene {
     /// half-Lambert + GGX path bit-identical. `pack_scene`
     /// leaves this `None`; a toon-aware caller fills it.
     pub toon: Option<ToonData>,
-    /// The model's shared base-colour texture (Family B),
-    /// carried from the decoded GLB by `pack_scene`. When
-    /// present, the character shader multiplies it into
-    /// the albedo (the glTF base-colour rule) on both
-    /// shading paths.
-    pub albedo: Option<ToonImage>,
+    /// The model's base-colour textures (Family B v2),
+    /// carried from the decoded GLB by `pack_scene`. Each
+    /// mesh's material selects its texture through
+    /// `PackedMaterial::albedo_slot`; the character shader
+    /// multiplies it into the albedo (the glTF base-colour
+    /// rule) on both shading paths.
+    pub albedos: Vec<ToonImage>,
     /// Direction to the sun + energy in w.
     pub sun: [f32; 4],
     /// Direction to the fill + energy in w.
@@ -311,6 +314,7 @@ pub fn pack_scene(model: &Model, scene: &ArcScene) -> PackedScene {
             base_color: m.base_color,
             metallic: m.metallic,
             roughness: m.roughness,
+            albedo_slot: m.albedo_slot,
         })
         .collect();
     let set_pieces = scene
@@ -349,7 +353,7 @@ pub fn pack_scene(model: &Model, scene: &ArcScene) -> PackedScene {
         view_proj,
         view: scene.view.to_f32_cols(),
         toon: None,
-        albedo: model.albedo.clone(),
+        albedos: model.albedos.clone(),
         sun: [
             scene.sun.to_light.x as f32,
             scene.sun.to_light.y as f32,

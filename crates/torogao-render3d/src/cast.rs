@@ -447,7 +447,7 @@ mod tests {
                 inverse_bind: Vec::new(),
             },
             materials: Vec::new(),
-            albedo: None,
+            albedos: Vec::new(),
         }
     }
 

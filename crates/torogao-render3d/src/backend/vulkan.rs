@@ -198,8 +198,10 @@ struct SceneGpu {
     /// scene carries no toon data (descriptors must stay
     /// valid; the shader branch is off then).
     toon_images: Vec<ImageRes>,
-    /// The Family B albedo texture (or its white dummy).
-    albedo_image: ImageRes,
+    /// The Family B albedo textures (one per slot).
+    albedo_images: Vec<ImageRes>,
+    /// White 1x1 bound for untextured materials.
+    albedo_dummy: ImageRes,
     toon_linear_sampler: vk::Sampler,
     toon_nearest_sampler: vk::Sampler,
     /// Whether the outline pass draws (toon data present
@@ -784,15 +786,17 @@ impl RenderBackend for VulkanBackend {
             self.upload_image(&face_tex, vk::Format::R8G8B8A8_UNORM)?,
             self.upload_image(&sphere_tex, vk::Format::R8G8B8A8_UNORM)?,
         ];
-        // Family B: the scene's shared base-colour texture,
-        // or a white dummy when the model is vertex-colour
-        // only (the shader's albedo flag stays off then;
-        // the descriptor must still be valid).
-        let albedo_tex = match &scene.albedo {
-            Some(tex) => tex.clone(),
-            None => dummy([255, 255, 255, 255]),
-        };
-        let albedo_image = self.upload_image(&albedo_tex, vk::Format::R8G8B8A8_SRGB)?;
+        // Family B v2: upload every per-material albedo,
+        // plus the white dummy bound for untextured
+        // materials (factor x white = factor, so a mesh
+        // needs no flag of its own; the scene flag below
+        // only says the model carries textures at all).
+        let mut albedo_images = Vec::new();
+        for tex in &scene.albedos {
+            albedo_images.push(self.upload_image(tex, vk::Format::R8G8B8A8_SRGB)?);
+        }
+        let albedo_dummy =
+            self.upload_image(&dummy([255, 255, 255, 255]), vk::Format::R8G8B8A8_SRGB)?;
         // SAFETY: sampler creation with fixed parameters.
         let make_toon_sampler = |filter: vk::Filter| unsafe {
             device.create_sampler(
@@ -1072,7 +1076,7 @@ impl RenderBackend for VulkanBackend {
         // Family B: the albedo flag is a model property,
         // independent of the toon branch — set it from the
         // packed scene either way.
-        toon1[2] = if scene.albedo.is_some() { 1.0 } else { 0.0 };
+        toon1[2] = if scene.albedos.is_empty() { 0.0 } else { 1.0 };
         let uniforms = Uniforms {
             view_proj: scene.view_proj,
             light_view_proj: light_view_proj(sun_dir).to_f32_cols(),
@@ -1259,9 +1263,13 @@ impl RenderBackend for VulkanBackend {
             let face_info = toon_image_info(2, toon_linear_sampler);
             let sphere_info = toon_image_info(3, toon_linear_sampler);
             let packed_id_info = toon_image_info(0, toon_nearest_sampler);
+            let albedo_view = scene.materials[scene.meshes[mi].material]
+                .albedo_slot
+                .map(|slot| albedo_images[slot].view)
+                .unwrap_or(albedo_dummy.view);
             let albedo_info = [vk::DescriptorImageInfo::default()
                 .sampler(toon_linear_sampler)
-                .image_view(albedo_image.view)
+                .image_view(albedo_view)
                 .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
             let set = char_sets[mi];
             let write = |binding: u32, ty: vk::DescriptorType| {
@@ -1694,7 +1702,8 @@ impl RenderBackend for VulkanBackend {
             set_depth_pipeline,
             compute_pipeline,
             toon_images,
-            albedo_image,
+            albedo_images,
+            albedo_dummy,
             toon_linear_sampler,
             toon_nearest_sampler,
             outline_enabled: scene
@@ -2179,7 +2188,10 @@ impl Drop for VulkanBackend {
                 for image in scene.toon_images {
                     image.destroy(device);
                 }
-                scene.albedo_image.destroy(device);
+                for image in scene.albedo_images {
+                    image.destroy(device);
+                }
+                scene.albedo_dummy.destroy(device);
                 for layout in [
                     scene.char_pipeline_layout,
                     scene.set_pipeline_layout,
