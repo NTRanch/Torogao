@@ -48,6 +48,8 @@ pub mod setscene;
 #[forbid(unsafe_code)]
 pub mod splat;
 #[forbid(unsafe_code)]
+pub mod splat_spec;
+#[forbid(unsafe_code)]
 pub mod toon;
 
 pub use error::RenderError;
