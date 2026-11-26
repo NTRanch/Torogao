@@ -1,0 +1,116 @@
+import { Button, LineEdit, ListView, VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+export struct GalleryItem {
+    label: string,
+    path: string,
+}
+
+// Torogao Mobile — phone shell. All behaviour lives in
+// torogao-mobile-core; this window only collects a cast pick, a
+// scene prompt, and a seat URL, and displays status + results.
+export component AppWindow inherits Window {
+    title: "Torogao Mobile";
+    preferred-width: 430px;
+    preferred-height: 780px;
+    background: #17141c;
+
+    in-out property <string> seat-url: "http://127.0.0.1:8188";
+    in-out property <string> prompt: "";
+    in-out property <int> selected-cast: 0;
+    in-out property <string> status: "Pick a cast member, write a scene, generate.";
+    in-out property <bool> busy: false;
+    in-out property <image> last-image;
+    in-out property <bool> has-image: false;
+    in property <[string]> cast-names;
+    in property <[GalleryItem]> gallery-items;
+
+    callback generate(int, string, string);
+    callback gallery-picked(int);
+
+    VerticalBox {
+        padding: 14px;
+        spacing: 10px;
+
+        Text {
+            text: "Torogao Mobile";
+            font-size: 24px;
+            font-weight: 700;
+            color: #e8b4b8;
+        }
+
+        Text {
+            text: "Cast";
+            font-size: 14px;
+            color: #b8aebf;
+        }
+
+        HorizontalBox {
+            spacing: 8px;
+            for name[index] in root.cast-names: Button {
+                text: name;
+                primary: root.selected-cast == index;
+                clicked => {
+                    root.selected-cast = index;
+                }
+            }
+        }
+
+        LineEdit {
+            text <=> root.prompt;
+            placeholder-text: "Scene — e.g. city night, rain, neon signs";
+        }
+
+        HorizontalBox {
+            spacing: 8px;
+            Text {
+                text: "Seat";
+                vertical-alignment: center;
+                color: #b8aebf;
+            }
+
+            LineEdit {
+                text <=> root.seat-url;
+                horizontal-stretch: 1;
+            }
+        }
+
+        Button {
+            text: root.busy ? "Generating…" : "Generate";
+            primary: true;
+            enabled: !root.busy;
+            clicked => {
+                root.generate(root.selected-cast, root.prompt, root.seat-url);
+            }
+        }
+
+        Text {
+            text: root.status;
+            wrap: word-wrap;
+            color: #d8cfdf;
+            font-size: 13px;
+        }
+
+        Image {
+            source: root.last-image;
+            visible: root.has-image;
+            height: 360px;
+            image-fit: contain;
+        }
+
+        Text {
+            text: "Gallery";
+            font-size: 14px;
+            color: #b8aebf;
+        }
+
+        ListView {
+            vertical-stretch: 1;
+            for item[index] in root.gallery-items: Button {
+                text: item.label;
+                clicked => {
+                    root.gallery-picked(index);
+                }
+            }
+        }
+    }
+}

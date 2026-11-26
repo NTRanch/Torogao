@@ -1,0 +1,12 @@
+[package]
+name = "torogao-mobile-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Shell-agnostic core for Torogao Mobile: canonical cast/style records, the ComfyUI generation client (wai is the generator, D-1525), and the local gallery. No UI assumptions; consumed unchanged by the Slint phone shell and the GPUI desktop shell."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+ureq = { version = "2", features = ["json"] }

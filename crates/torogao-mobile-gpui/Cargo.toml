@@ -1,0 +1,10 @@
+[package]
+name = "torogao-mobile-gpui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Torogao Mobile desktop shell (GPUI, Linux first): the same cast picker, scene prompt, generation status, and gallery over torogao-mobile-core that the Slint phone shell presents."
+
+[dependencies]
+torogao-mobile-core = { path = "../torogao-mobile-core" }
