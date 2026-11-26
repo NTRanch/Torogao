@@ -6,13 +6,19 @@
 //! through the core's gallery. The shell holds no prompt strings,
 //! no checkpoint name, and no HTTP of its own.
 
-#![forbid(unsafe_code)]
-#![deny(missing_docs)]
+// deny, not forbid: Slint's generated component code carries
+// #[allow(unsafe_code)] on its vtable statics, which a crate-level
+// forbid would overrule (E0453). Our own code holds the same line
+// under deny.
+#![deny(unsafe_code)]
+// No crate-level missing_docs deny here either: the generated
+// component API (include_modules!) is undocumented by construction.
+// This crate's own public items are documented by hand; the core
+// crate carries the deny for the shared surface.
 
 use std::path::PathBuf;
-use std::rc::Rc;
 
-use slint::{Image, Model, ModelRc, VecModel};
+use slint::{Image, ModelRc, VecModel};
 use torogao_mobile_core::{Gallery, SeatClient, CAST};
 
 slint::include_modules!();
@@ -129,9 +135,3 @@ fn android_main(app: slint::android::AndroidApp) {
     let _ = run(data_dir, SEAT_URL_ANDROID);
 }
 
-// Keep the Rc import used on all targets (the gallery model helper
-// builds through Rc-backed models on some Slint configurations).
-#[allow(dead_code)]
-fn _model_rc_anchor(m: VecModel<GalleryItem>) -> ModelRc<GalleryItem> {
-    ModelRc::from(Rc::new(m))
-}
