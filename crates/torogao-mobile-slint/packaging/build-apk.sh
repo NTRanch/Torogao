@@ -57,7 +57,7 @@ X64_SO="$WT/target/x86_64-linux-android/release/libtorogao_mobile_slint.so"
 [ -f "$ARM_SO" ] && [ -f "$X64_SO" ] || { echo "native libs missing" >&2; exit 1; }
 
 DEXES=$(find "$WT/target/aarch64-linux-android/release/build" \
-    -path '*i-slint-backend-android-activity-*/out/classes.dex')
+    -path '*i-slint-backend-android-activity/*/out/classes.dex')
 [ "$(printf '%s' "$DEXES" | grep -c .)" = "1" ] \
     || { echo "expected exactly one classes.dex, found: $DEXES" >&2; exit 1; }
 
