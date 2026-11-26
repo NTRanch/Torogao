@@ -6,7 +6,7 @@
 //!                      [--known-options <options.json>]
 //!   torogao-qc diff <reference_dir> <candidate_dir>
 //!                      [--threshold <0-255>] [--region-gap <0-16>]
-//!                      [--exclude-aa]
+//!                      [--exclude-aa] [--artifacts <dir>]
 //!
 //! The JSON report goes to stdout. Exit codes: 0 = the report
 //! passes (no fail-severity findings), 1 = fail-severity
@@ -56,7 +56,7 @@ fn usage() -> QcError {
         "QC-E-USAGE",
         "usage: torogao-qc inspect <spec.json> [--manifest <m>] [--known-options <o>] \
          | torogao-qc diff <reference_dir> <candidate_dir> [--threshold <0-255>] \
-         [--region-gap <0-16>] [--exclude-aa]",
+         [--region-gap <0-16>] [--exclude-aa] [--artifacts <dir>]",
     )
 }
 
@@ -139,6 +139,7 @@ fn run_diff(args: &[String]) -> Result<Report, QcError> {
         threshold,
         region_gap,
         exclude_aa,
+        artifacts: flag(&flags, "artifacts").map(PathBuf::from),
     };
     torogao_qc::diff::diff_dirs_with_options(
         &PathBuf::from(reference),

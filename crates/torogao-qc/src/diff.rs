@@ -23,7 +23,13 @@
 //!   unless the caller passes the explicit, recorded
 //!   `exclude_aa` choice, so default verdict math is
 //!   unchanged.
-
+//! - **P3** — with an artifacts directory declared, each
+//!   over frame in `worst_frames` also gets a heatmap and a
+//!   composite PNG whose filenames derive deterministically
+//!   from the frame's relative path; the report references
+//!   them by relative filename only, so the JSON stays
+//!   byte-identical across runs.
+//!
 //! Decoding uses the `image` crate's PNG support — the same
 //! dependency torogao-gen and torogao-rig already carry — so
 //! no new dependency enters the workspace for this verb.
@@ -50,6 +56,8 @@ pub struct DiffOptions {
     /// When true, AA-class pixels (P2) are excluded from the
     /// over fraction. Recorded in the report when used.
     pub exclude_aa: bool,
+    /// Optional directory for P3 heatmap/composite artefacts.
+    pub artifacts: Option<PathBuf>,
 }
 
 impl Default for DiffOptions {
@@ -58,6 +66,7 @@ impl Default for DiffOptions {
             threshold: PIXEL_THRESHOLD_DEFAULT,
             region_gap: 0,
             exclude_aa: false,
+            artifacts: None,
         }
     }
 }
@@ -106,6 +115,8 @@ struct FrameDiff {
     regions: Vec<Region>,
     regions_dropped: u64,
     aa_pixels: u64,
+    heatmap: Option<String>,
+    composite: Option<String>,
 }
 
 impl FrameDiff {
@@ -121,6 +132,8 @@ impl FrameDiff {
             regions: Vec::new(),
             regions_dropped: 0,
             aa_pixels: 0,
+            heatmap: None,
+            composite: None,
         }
     }
 
@@ -132,8 +145,8 @@ impl FrameDiff {
 
 
 /// Compares `reference` against `candidate` at `threshold`
-/// with default parameters (no region merging, no
-/// AA exclusion).
+/// with default patch-set parameters (no region merging, no
+/// AA exclusion, no artefacts).
 ///
 /// # Errors
 ///
@@ -233,6 +246,26 @@ pub fn diff_dirs_with_options(
             .then_with(|| frames[a].rel.cmp(&frames[b].rel))
     });
     let worst_idx: Vec<usize> = order.into_iter().take(WORST_FRAMES_MAX).collect();
+    if let Some(dir) = &options.artifacts {
+        std::fs::create_dir_all(dir).map_err(|err| {
+            QcError::new(
+                "QC-E-ARTIFACTS",
+                format!("cannot create artifacts dir {}: {err}", dir.display()),
+            )
+        })?;
+        for &idx in &worst_idx {
+            if !frames[idx].over {
+                continue;
+            }
+            let rel = frames[idx].rel.clone();
+            if let Some((heatmap, composite)) =
+                write_artifacts(reference, candidate, &rel, threshold, dir)?
+            {
+                frames[idx].heatmap = Some(heatmap);
+                frames[idx].composite = Some(composite);
+            }
+        }
+    }
     let worst_json: Vec<serde_json::Value> = worst_idx
         .iter()
         .map(|&idx| {
@@ -245,6 +278,8 @@ pub fn diff_dirs_with_options(
                 "aa_pixels": f.aa_pixels,
                 "regions": f.regions_json(),
                 "regions_dropped": f.regions_dropped,
+                "heatmap": f.heatmap,
+                "composite": f.composite,
             })
         })
         .collect();
@@ -409,6 +444,8 @@ fn compare_one(
         regions,
         regions_dropped,
         aa_pixels,
+        heatmap: None,
+        composite: None,
     }
 }
 
@@ -657,6 +694,83 @@ fn merge_groups(components: &[Component], gap: u32) -> Vec<Component> {
         .into_iter()
         .filter_map(|root| by_root.remove(&root))
         .collect()
+}
+
+/// The flat colour AA-class pixels take in P3 artefacts.
+const AA_ARTEFACT_COLOUR: [u8; 4] = [0, 200, 255, 255];
+
+/// Writes the P3 heatmap and composite PNGs for one frame
+/// and returns their deterministic filenames. Returns `None`
+/// when the frame cannot be measured (missing, undecodable,
+/// or dimension-mismatched) — such frames carry no spatial
+/// evidence to draw.
+///
+/// # Errors
+///
+/// Typed `QC-E-ARTIFACTS` when a PNG cannot be written.
+fn write_artifacts(
+    reference: &Path,
+    candidate: &Path,
+    rel: &str,
+    threshold: u8,
+    dir: &Path,
+) -> Result<Option<(String, String)>, QcError> {
+    let (Ok(a), Ok(b)) = (
+        decode(&reference.join(rel)),
+        decode(&candidate.join(rel)),
+    ) else {
+        return Ok(None);
+    };
+    if a.dimensions() != b.dimensions() {
+        return Ok(None);
+    }
+    let (width, height) = a.dimensions();
+    let mut heat = image::RgbaImage::new(width, height);
+    let mut composite = b.clone();
+    for y in 0..height {
+        for x in 0..width {
+            let pa = a.get_pixel(x, y).0;
+            let pb = b.get_pixel(x, y).0;
+            let mut max_delta = 0u32;
+            for channel in 0..4 {
+                let delta = (i32::from(pa[channel]) - i32::from(pb[channel])).unsigned_abs();
+                max_delta = max_delta.max(delta);
+            }
+            if max_delta <= u32::from(threshold) {
+                continue;
+            }
+            let colour = if is_aa(&a, x, y) || is_aa(&b, x, y) {
+                AA_ARTEFACT_COLOUR
+            } else {
+                let t = f64::from(max_delta) / 255.0;
+                [255, (255.0 * (1.0 - t)).round() as u8, 0, 255]
+            };
+            heat.put_pixel(x, y, image::Rgba(colour));
+            let blended = [
+                ((u32::from(pb[0]) + u32::from(colour[0])) / 2) as u8,
+                ((u32::from(pb[1]) + u32::from(colour[1])) / 2) as u8,
+                ((u32::from(pb[2]) + u32::from(colour[2])) / 2) as u8,
+                255,
+            ];
+            composite.put_pixel(x, y, image::Rgba(blended));
+        }
+    }
+    let flat = rel.replace('/', "__");
+    let heatmap_name = format!("heatmap-{flat}");
+    let composite_name = format!("composite-{flat}");
+    heat.save(dir.join(&heatmap_name)).map_err(|err| {
+        QcError::new(
+            "QC-E-ARTIFACTS",
+            format!("cannot write heatmap for {rel}: {err}"),
+        )
+    })?;
+    composite.save(dir.join(&composite_name)).map_err(|err| {
+        QcError::new(
+            "QC-E-ARTIFACTS",
+            format!("cannot write composite for {rel}: {err}"),
+        )
+    })?;
+    Ok(Some((heatmap_name, composite_name)))
 }
 
 /// Decodes one PNG to RGBA8 under the frame bounds.

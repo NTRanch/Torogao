@@ -57,6 +57,7 @@ fn options() -> DiffOptions {
         threshold: 8,
         region_gap: 0,
         exclude_aa: false,
+        artifacts: None,
     }
 }
 
@@ -91,6 +92,7 @@ fn region_gap_merges_and_is_recorded() {
         threshold: 8,
         region_gap: 16,
         exclude_aa: false,
+        artifacts: None,
     };
     let report = diff_dirs_with_options(&reference, &candidate, &opts).expect("diff");
     let json = report.to_json();
@@ -141,6 +143,7 @@ fn region_gap_past_bound_is_a_typed_error() {
         threshold: 8,
         region_gap: 17,
         exclude_aa: false,
+        artifacts: None,
     };
     let err = diff_dirs_with_options(&reference, &candidate, &opts).expect_err("must refuse");
     assert_eq!(err.code(), "QC-E-REGION-GAP");
@@ -212,6 +215,7 @@ fn exclude_aa_changes_the_verdict_only_via_the_flag() {
         threshold: 8,
         region_gap: 0,
         exclude_aa: true,
+        artifacts: None,
     };
     let report = diff_dirs_with_options(&reference, &candidate, &opts).expect("diff");
     let json = report.to_json();
@@ -225,4 +229,48 @@ fn exclude_aa_changes_the_verdict_only_via_the_flag() {
     assert_eq!(json["worst_frames"][0]["aa_pixels"], serde_json::json!(62));
     assert_eq!(json["frames_over"], serde_json::json!(0));
     assert_eq!(json["findings"].as_array().map(|a| a.len()), Some(0));
+}
+
+// ---- P3 adversarial: determinism across runs -----------------
+
+#[test]
+fn artifacts_have_deterministic_names_and_the_report_is_byte_identical_across_runs() {
+    let dir = tempdir("p3-artifacts");
+    let (reference, candidate) = two_block_pair(&dir);
+    let run = |artifacts: &Path| {
+        let opts = DiffOptions {
+            threshold: 8,
+            region_gap: 0,
+            exclude_aa: false,
+            artifacts: Some(artifacts.to_path_buf()),
+        };
+        diff_dirs_with_options(&reference, &candidate, &opts).expect("diff")
+    };
+    let (art1, art2) = (dir.join("art1"), dir.join("art2"));
+    let report1 = run(&art1);
+    let report2 = run(&art2);
+    // The JSON report is byte-identical across runs: artefact
+    // references are bare deterministic filenames, never
+    // paths, timestamps, or wall-clock values.
+    assert_eq!(report1.to_json_string(), report2.to_json_string());
+    let json = report1.to_json();
+    assert_eq!(
+        json["worst_frames"][0]["heatmap"],
+        serde_json::json!("heatmap-f000.png")
+    );
+    assert_eq!(
+        json["worst_frames"][0]["composite"],
+        serde_json::json!("composite-f000.png")
+    );
+    for art in [&art1, &art2] {
+        assert!(art.join("heatmap-f000.png").is_file());
+        assert!(art.join("composite-f000.png").is_file());
+    }
+    // Heatmap evidence: the changed block is opaque, an
+    // unchanged corner is transparent.
+    let heat = image::open(art1.join("heatmap-f000.png"))
+        .expect("open heatmap")
+        .into_rgba8();
+    assert_eq!(heat.get_pixel(8, 8).0[3], 255);
+    assert_eq!(heat.get_pixel(60, 60).0[3], 0);
 }
