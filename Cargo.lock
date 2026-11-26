@@ -4540,6 +4540,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "torogao-qc"
+version = "0.5.0"
+dependencies = [
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "torogao-rig"
 version = "0.5.0"
 dependencies = [

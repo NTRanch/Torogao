@@ -1,0 +1,22 @@
+[package]
+name = "torogao-qc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Render-QC checker for frozen scene specs (RENDER-QC-CONTRACT step 1): a static inspect pass with named QC codes over the spec and its asset manifest, plus a per-frame PNG snapshot diff. Deterministic, offline, fail-closed."
+
+[dependencies]
+serde_json = { workspace = true }
+sha2 = "0.10"
+
+[dev-dependencies]
+sha2 = "0.10"
+
+[lib]
+name = "torogao_qc"
+path = "src/lib.rs"
+
+[[bin]]
+name = "torogao-qc"
+path = "src/bin/torogao-qc.rs"

@@ -16,6 +16,7 @@ members = [
     "crates/torogao-osc",
     "crates/torogao-paint",
     "crates/torogao-pen",
+    "crates/torogao-qc",
     "crates/torogao-rig",
     "crates/torogao-session",
     "crates/torogao-tui",
