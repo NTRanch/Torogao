@@ -3,8 +3,12 @@
      The activity is the platform NativeActivity; it loads
      libtorogao_mobile_slint.so and calls android_main. The package
      carries classes.dex (Slint's Android Java helper, built and
-     dexed by the i-slint-backend-android-activity build script), so
-     hasCode stays at its default (true). INTERNET is the only
+     dexed by the i-slint-backend-android-activity build script and
+     EMBEDDED in the native library, which loads it in memory at
+     runtime — the APK itself carries no dex (hasCode=false).
+     Packaging the dex as well splits Slint's package-private Java
+     classes across two class loaders and the helper dies with
+     IllegalAccessError; proven on the AVD, 2026-11-26). INTERNET is the only
      permission: the app is a client of the estate ComfyUI seat. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="ai.ntranch.torogao.mobile"
@@ -16,7 +20,7 @@
 
     <application
         android:label="Torogao Mobile"
-        android:hasCode="true">
+        android:hasCode="false">
         <activity
             android:name="android.app.NativeActivity"
             android:exported="true"

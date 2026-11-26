@@ -5,7 +5,7 @@
 # Adapted from crates/torogao-coin-android/packaging/build-apk.sh
 # (the estate's proven hand-rolled pipeline: aapt2 link -> zip the
 # native libs in stored -> zipalign -> apksigner). Differences from
-# the coin spike: two ABIs, a classes.dex (Slint's Java helper), a
+# the coin spike: two ABIs, Slint's Java helper dex embedded in the .so (never packaged — see the manifest note), a
 # dedicated release keystore (never the debug key), and NDK 30 —
 # Slint's prebuilt Skia requires NDK r27+ libc++ symbols and its
 # android-activity build script needs the SDK platform jar and d8
@@ -56,10 +56,14 @@ ARM_SO="$WT/target/aarch64-linux-android/release/libtorogao_mobile_slint.so"
 X64_SO="$WT/target/x86_64-linux-android/release/libtorogao_mobile_slint.so"
 [ -f "$ARM_SO" ] && [ -f "$X64_SO" ] || { echo "native libs missing" >&2; exit 1; }
 
+# The backend's build script dexes its Java helper; the dex is
+# embedded in the .so and loaded in memory at runtime. It must NOT
+# also be packaged (class-loader split -> IllegalAccessError), but
+# its presence proves the backend build ran.
 DEXES=$(find "$WT/target/aarch64-linux-android/release/build" \
     -path '*i-slint-backend-android-activity/*/out/classes.dex')
 [ "$(printf '%s' "$DEXES" | grep -c .)" = "1" ] \
-    || { echo "expected exactly one classes.dex, found: $DEXES" >&2; exit 1; }
+    || { echo "expected exactly one embedded classes.dex, found: $DEXES" >&2; exit 1; }
 
 echo "== keystore =="
 if [ ! -f "$KS" ]; then
@@ -79,15 +83,14 @@ rm -rf "$WORK"
 mkdir -p "$WORK/stage/lib/arm64-v8a" "$WORK/stage/lib/x86_64"
 cp "$ARM_SO" "$WORK/stage/lib/arm64-v8a/"
 cp "$X64_SO" "$WORK/stage/lib/x86_64/"
-cp "$DEXES" "$WORK/stage/classes.dex"
 "$BT/aapt2" link \
     -I "$ANDROID_JAR_HOST" \
     --manifest "$HERE/AndroidManifest.xml" \
     --min-sdk-version 26 --target-sdk-version 36 \
     -o "$WORK/base.apk"
 
-echo "== zip native libs + dex (stored, page-aligned) =="
-( cd "$WORK/stage" && zip -q -0 -r "$WORK/base.apk" lib classes.dex )
+echo "== zip native libs (stored, page-aligned) =="
+( cd "$WORK/stage" && zip -q -0 -r "$WORK/base.apk" lib )
 
 echo "== zipalign + sign =="
 "$BT/zipalign" -f -p 4 "$WORK/base.apk" "$WORK/aligned.apk"
