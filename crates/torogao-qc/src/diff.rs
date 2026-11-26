@@ -5,17 +5,25 @@
 //! [`FRAME_OVER_FRACTION`], when its dimensions differ from
 //! the reference's, or when it exists on only one side.
 //!
-//! Patch P1 (C2 study, 2026-11-26) extends the verb without
-//! moving any existing verdict semantics: each measured
-//! frame's over-threshold mask is labelled into connected
-//! regions (8-connectivity), and each region's bbox, pixel
-//! count, and mean/max delta are recorded on the frame's
-//! `worst_frames` entry and on its `QC_SNAPSHOT_DIFF`
-//! finding. Region merging takes an explicit, recorded
-//! `region_gap` parameter — never an auto-derived one.
-//! Regions past [`REGIONS_PER_FRAME_MAX`] are counted into
-//! `regions_dropped`, never silently dropped.
+//! Patch set P1–P3 (C2 study, 2026-11-26) extends the verb
+//! without moving any existing verdict semantics:
 //!
+//! - **P1** — each measured frame's over-threshold mask is
+//!   labelled into connected regions (8-connectivity), and
+//!   each region's bbox, pixel count, and mean/max delta are
+//!   recorded on the frame's `worst_frames` entry and on its
+//!   `QC_SNAPSHOT_DIFF` finding. Region merging takes an
+//!   explicit, recorded `region_gap` parameter — never an
+//!   auto-derived one. Regions past
+//!   [`REGIONS_PER_FRAME_MAX`] are counted into
+//!   `regions_dropped`, never silently dropped.
+//! - **P2** — over-threshold pixels that match the
+//!   Vysniauskas anti-aliasing pattern are counted as
+//!   `aa_pixels`. They still count toward the over fraction
+//!   unless the caller passes the explicit, recorded
+//!   `exclude_aa` choice, so default verdict math is
+//!   unchanged.
+
 //! Decoding uses the `image` crate's PNG support — the same
 //! dependency torogao-gen and torogao-rig already carry — so
 //! no new dependency enters the workspace for this verb.
@@ -39,6 +47,9 @@ pub struct DiffOptions {
     /// are merged into one region. `0` means pure
     /// 8-connectivity. Bounded by [`REGION_GAP_MAX`].
     pub region_gap: u32,
+    /// When true, AA-class pixels (P2) are excluded from the
+    /// over fraction. Recorded in the report when used.
+    pub exclude_aa: bool,
 }
 
 impl Default for DiffOptions {
@@ -46,6 +57,7 @@ impl Default for DiffOptions {
         DiffOptions {
             threshold: PIXEL_THRESHOLD_DEFAULT,
             region_gap: 0,
+            exclude_aa: false,
         }
     }
 }
@@ -93,6 +105,7 @@ struct FrameDiff {
     detail: Option<String>,
     regions: Vec<Region>,
     regions_dropped: u64,
+    aa_pixels: u64,
 }
 
 impl FrameDiff {
@@ -107,18 +120,20 @@ impl FrameDiff {
             detail: Some(detail),
             regions: Vec::new(),
             regions_dropped: 0,
+            aa_pixels: 0,
         }
     }
 
     fn regions_json(&self) -> serde_json::Value {
-        Value::Array(self.regions.iter().map(Region::to_json).collect())
+        serde_json::Value::Array(self.regions.iter().map(Region::to_json).collect())
     }
 }
 
-use serde_json::Value;
+
 
 /// Compares `reference` against `candidate` at `threshold`
-/// with default parameters (no region merging).
+/// with default parameters (no region merging, no
+/// AA exclusion).
 ///
 /// # Errors
 ///
@@ -227,6 +242,7 @@ pub fn diff_dirs_with_options(
                 "over": f.over,
                 "over_fraction": round6(f.over_fraction),
                 "mean_abs_delta": f.mean_abs_delta.map(round6),
+                "aa_pixels": f.aa_pixels,
                 "regions": f.regions_json(),
                 "regions_dropped": f.regions_dropped,
             })
@@ -234,6 +250,9 @@ pub fn diff_dirs_with_options(
         .collect();
     report.extra.push(("threshold", json!(threshold)));
     report.extra.push(("region_gap", json!(options.region_gap)));
+    if options.exclude_aa {
+        report.extra.push(("exclude_aa", json!(true)));
+    }
     report.extra.push(("frames_compared", json!(frames.len())));
     report.extra.push(("frames_over", json!(frames_over)));
     report.extra.push(("worst_frames", json!(worst_json)));
@@ -351,17 +370,28 @@ fn compare_one(
     }
     let mut mask: Vec<bool> = Vec::with_capacity(pixels);
     let mut over_pixels: u64 = 0;
-    for &delta in &deltas {
+    let mut aa_pixels: u64 = 0;
+    for (idx, &delta) in deltas.iter().enumerate() {
         let over = delta > u32::from(threshold);
         mask.push(over);
         if over {
             over_pixels += 1;
+            let x = (idx as u32) % width;
+            let y = (idx as u32) / width;
+            if is_aa(&a, x, y) || is_aa(&b, x, y) {
+                aa_pixels += 1;
+            }
         }
     }
+    let effective_over = if options.exclude_aa {
+        over_pixels - aa_pixels
+    } else {
+        over_pixels
+    };
     let over_fraction = if pixels == 0 {
         0.0
     } else {
-        over_pixels as f64 / pixels as f64
+        effective_over as f64 / pixels as f64
     };
     let mean_abs_delta = if pixels == 0 {
         0.0
@@ -378,7 +408,61 @@ fn compare_one(
         detail: None,
         regions,
         regions_dropped,
+        aa_pixels,
     }
+}
+
+/// Luminance in the pixelmatch weighting (the Vysniauskas
+/// detector's brightness axis).
+fn luminance(px: [u8; 4]) -> f64 {
+    0.29889531 * f64::from(px[0])
+        + 0.56460213 * f64::from(px[1])
+        + 0.11348223 * f64::from(px[2])
+}
+
+/// The Vysniauskas anti-aliasing test: a pixel whose
+/// brightness lies strictly between its 3×3 neighbourhood's
+/// darkest and brightest pixels, where the darkest or the
+/// brightest neighbour colour has at least three siblings in
+/// the neighbourhood — the signature of a pixel blended
+/// between two solid regions rather than a real edge step.
+fn is_aa(img: &image::RgbaImage, x: u32, y: u32) -> bool {
+    let (width, height) = img.dimensions();
+    let center = img.get_pixel(x, y).0;
+    let center_lum = luminance(center);
+    let mut min_lum = f64::MAX;
+    let mut max_lum = f64::MIN;
+    let mut min_px = center;
+    let mut max_px = center;
+    let mut neighbours: Vec<[u8; 4]> = Vec::with_capacity(8);
+    for dy in -1i32..=1 {
+        for dx in -1i32..=1 {
+            if dx == 0 && dy == 0 {
+                continue;
+            }
+            let nx = i64::from(x) + i64::from(dx);
+            let ny = i64::from(y) + i64::from(dy);
+            if nx < 0 || ny < 0 || nx >= i64::from(width) || ny >= i64::from(height) {
+                continue;
+            }
+            let px = img.get_pixel(nx as u32, ny as u32).0;
+            neighbours.push(px);
+            let lum = luminance(px);
+            if lum < min_lum {
+                min_lum = lum;
+                min_px = px;
+            }
+            if lum > max_lum {
+                max_lum = lum;
+                max_px = px;
+            }
+        }
+    }
+    if center_lum <= min_lum || center_lum >= max_lum {
+        return false;
+    }
+    let siblings = |target: [u8; 4]| neighbours.iter().filter(|p| **p == target).count();
+    siblings(min_px) >= 3 || siblings(max_px) >= 3
 }
 
 /// Per-component aggregates before gap merging and capping.

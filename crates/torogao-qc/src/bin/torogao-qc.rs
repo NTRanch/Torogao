@@ -6,6 +6,7 @@
 //!                      [--known-options <options.json>]
 //!   torogao-qc diff <reference_dir> <candidate_dir>
 //!                      [--threshold <0-255>] [--region-gap <0-16>]
+//!                      [--exclude-aa]
 //!
 //! The JSON report goes to stdout. Exit codes: 0 = the report
 //! passes (no fail-severity findings), 1 = fail-severity
@@ -55,7 +56,7 @@ fn usage() -> QcError {
         "QC-E-USAGE",
         "usage: torogao-qc inspect <spec.json> [--manifest <m>] [--known-options <o>] \
          | torogao-qc diff <reference_dir> <candidate_dir> [--threshold <0-255>] \
-         [--region-gap <0-16>]",
+         [--region-gap <0-16>] [--exclude-aa]",
     )
 }
 
@@ -104,7 +105,15 @@ fn run_inspect(args: &[String]) -> Result<Report, QcError> {
 }
 
 fn run_diff(args: &[String]) -> Result<Report, QcError> {
-    let (positionals, flags) = split_flags(args)?;
+    // `--exclude-aa` is a boolean flag; the pair splitter
+    // only handles `--flag value`, so extract it first.
+    let exclude_aa = args.iter().any(|a| a == "--exclude-aa");
+    let rest: Vec<String> = args
+        .iter()
+        .filter(|a| *a != "--exclude-aa")
+        .cloned()
+        .collect();
+    let (positionals, flags) = split_flags(&rest)?;
     let [reference, candidate] = positionals.as_slice() else {
         return Err(usage());
     };
@@ -129,6 +138,7 @@ fn run_diff(args: &[String]) -> Result<Report, QcError> {
     let options = torogao_qc::diff::DiffOptions {
         threshold,
         region_gap,
+        exclude_aa,
     };
     torogao_qc::diff::diff_dirs_with_options(
         &PathBuf::from(reference),

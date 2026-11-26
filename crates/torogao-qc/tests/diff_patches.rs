@@ -56,6 +56,7 @@ fn options() -> DiffOptions {
     DiffOptions {
         threshold: 8,
         region_gap: 0,
+        exclude_aa: false,
     }
 }
 
@@ -89,6 +90,7 @@ fn region_gap_merges_and_is_recorded() {
     let opts = DiffOptions {
         threshold: 8,
         region_gap: 16,
+        exclude_aa: false,
     };
     let report = diff_dirs_with_options(&reference, &candidate, &opts).expect("diff");
     let json = report.to_json();
@@ -138,7 +140,89 @@ fn region_gap_past_bound_is_a_typed_error() {
     let opts = DiffOptions {
         threshold: 8,
         region_gap: 17,
+        exclude_aa: false,
     };
     let err = diff_dirs_with_options(&reference, &candidate, &opts).expect_err("must refuse");
     assert_eq!(err.code(), "QC-E-REGION-GAP");
+}
+
+// ---- P2 validation -------------------------------------------
+
+/// 64x64 frame split black|white at column 32; the candidate
+/// inserts a one-column grey blend at the boundary -- the
+/// classic anti-aliased edge. The blend column's pixels are
+/// over threshold (delta 127) but AA-class.
+fn aa_pair(dir: &Path) -> (PathBuf, PathBuf) {
+    let (reference, candidate) = pair_dirs(dir);
+    let mut ref_img = RgbaImage::from_pixel(64, 64, Rgba([0, 0, 0, 255]));
+    for y in 0..64 {
+        for x in 32..64 {
+            ref_img.put_pixel(x, y, Rgba([255, 255, 255, 255]));
+        }
+    }
+    ref_img.save(reference.join("f000.png")).expect("save png");
+    let mut cand_img = ref_img.clone();
+    for y in 0..64 {
+        cand_img.put_pixel(32, y, Rgba([128, 128, 128, 255]));
+    }
+    cand_img.save(candidate.join("f000.png")).expect("save png");
+    (reference, candidate)
+}
+
+#[test]
+fn aa_edge_pixels_are_counted_and_still_over_by_default() {
+    let dir = tempdir("p2-count");
+    let (reference, candidate) = aa_pair(&dir);
+    let report = diff_dirs_with_options(&reference, &candidate, &options()).expect("diff");
+    let json = report.to_json();
+    // The full blend column is over threshold; its interior
+    // rows are AA-class (the two frame-edge rows lack the
+    // three-sibling neighbourhood and are not).
+    assert_eq!(json["worst_frames"][0]["aa_pixels"], serde_json::json!(62));
+    assert_eq!(json["frames_over"], serde_json::json!(1));
+    assert_eq!(json["findings"].as_array().map(|a| a.len()), Some(1));
+    // The exclusion is recorded only when used.
+    assert!(json.get("exclude_aa").is_none());
+}
+
+#[test]
+fn default_verdict_math_matches_the_pre_patch_verb() {
+    let dir = tempdir("p2-regression");
+    let (reference, candidate) = two_block_pair(&dir);
+    let plain = torogao_qc::diff::diff_dirs(&reference, &candidate, 8).expect("plain diff");
+    let with_opts = diff_dirs_with_options(&reference, &candidate, &options()).expect("opts diff");
+    let (a, b) = (plain.to_json(), with_opts.to_json());
+    assert_eq!(a["summary"], b["summary"]);
+    assert_eq!(a["frames_over"], b["frames_over"]);
+    assert_eq!(
+        a["worst_frames"][0]["over_fraction"],
+        b["worst_frames"][0]["over_fraction"]
+    );
+    // A solid block edge is real change, not AA shimmer.
+    assert_eq!(b["worst_frames"][0]["aa_pixels"], serde_json::json!(0));
+}
+
+// ---- P2 adversarial ------------------------------------------
+
+#[test]
+fn exclude_aa_changes_the_verdict_only_via_the_flag() {
+    let dir = tempdir("p2-flag");
+    let (reference, candidate) = aa_pair(&dir);
+    let opts = DiffOptions {
+        threshold: 8,
+        region_gap: 0,
+        exclude_aa: true,
+    };
+    let report = diff_dirs_with_options(&reference, &candidate, &opts).expect("diff");
+    let json = report.to_json();
+    assert_eq!(json["exclude_aa"], serde_json::json!(true));
+    // Only the two frame-edge blend pixels remain over:
+    // 2/4096 = 0.000488, under the 0.1% frame fraction.
+    assert_eq!(
+        json["worst_frames"][0]["over_fraction"],
+        serde_json::json!(0.000488)
+    );
+    assert_eq!(json["worst_frames"][0]["aa_pixels"], serde_json::json!(62));
+    assert_eq!(json["frames_over"], serde_json::json!(0));
+    assert_eq!(json["findings"].as_array().map(|a| a.len()), Some(0));
 }
