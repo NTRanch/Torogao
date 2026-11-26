@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Torogao Mobile (Slint shell) — hand-written manifest, no Gradle.
+     The activity is the platform NativeActivity; it loads
+     libtorogao_mobile_slint.so and calls android_main. The package
+     carries classes.dex (Slint's Android Java helper, built and
+     dexed by the i-slint-backend-android-activity build script), so
+     hasCode stays at its default (true). INTERNET is the only
+     permission: the app is a client of the estate ComfyUI seat. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="ai.ntranch.torogao.mobile"
+    android:versionCode="1"
+    android:versionName="0.1.0">
+
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="36" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="Torogao Mobile"
+        android:hasCode="true">
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="true"
+            android:configChanges="orientation|keyboardHidden|screenSize">
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="torogao_mobile_slint" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

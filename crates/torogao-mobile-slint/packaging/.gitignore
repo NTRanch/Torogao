@@ -1,0 +1,9 @@
+# Signing material and build outputs never enter the repo. The
+# keystore is the app's update identity: it lives only on the build
+# host (back it up with the estate's other keys).
+torogao-mobile.keystore
+.keystore-pass
+.apk-work/
+torogao-mobile.apk
+torogao-mobile.apk.sha256
+*.idsig

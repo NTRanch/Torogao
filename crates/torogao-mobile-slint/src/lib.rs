@@ -125,7 +125,12 @@ pub fn run(data_dir: PathBuf, default_seat_url: &str) -> Result<(), slint::Platf
 
 /// Android entry point (NativeActivity). The activity hands us the
 /// app's private data path, which roots the gallery.
+///
+/// The item-level allow is the crate's one unsafe surface: the FFI
+/// entry point itself. In edition 2024 the `unsafe_code` lint also
+/// covers the `#[unsafe(no_mangle)]` attribute that exports it.
 #[cfg(target_os = "android")]
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 fn android_main(app: slint::android::AndroidApp) {
     let data_dir = app
