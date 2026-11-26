@@ -5,7 +5,7 @@
 //!   torogao-qc inspect <spec.json> [--manifest <manifest.json>]
 //!                      [--known-options <options.json>]
 //!   torogao-qc diff <reference_dir> <candidate_dir>
-//!                      [--threshold <0-255>]
+//!                      [--threshold <0-255>] [--region-gap <0-16>]
 //!
 //! The JSON report goes to stdout. Exit codes: 0 = the report
 //! passes (no fail-severity findings), 1 = fail-severity
@@ -54,7 +54,8 @@ fn usage() -> QcError {
     QcError::new(
         "QC-E-USAGE",
         "usage: torogao-qc inspect <spec.json> [--manifest <m>] [--known-options <o>] \
-         | torogao-qc diff <reference_dir> <candidate_dir> [--threshold <0-255>]",
+         | torogao-qc diff <reference_dir> <candidate_dir> [--threshold <0-255>] \
+         [--region-gap <0-16>]",
     )
 }
 
@@ -116,9 +117,22 @@ fn run_diff(args: &[String]) -> Result<Report, QcError> {
         })?,
         None => PIXEL_THRESHOLD_DEFAULT,
     };
-    torogao_qc::diff::diff_dirs(
+    let region_gap = match flag(&flags, "region-gap") {
+        Some(raw) => raw.parse::<u32>().map_err(|_| {
+            QcError::new(
+                "QC-E-USAGE",
+                format!("--region-gap must be an integer 0-16, got {raw:?}"),
+            )
+        })?,
+        None => 0,
+    };
+    let options = torogao_qc::diff::DiffOptions {
+        threshold,
+        region_gap,
+    };
+    torogao_qc::diff::diff_dirs_with_options(
         &PathBuf::from(reference),
         &PathBuf::from(candidate),
-        threshold,
+        &options,
     )
 }
