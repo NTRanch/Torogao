@@ -9,11 +9,8 @@ use std::path::{Path, PathBuf};
 use torogao_qc::diff::{DiffOptions, diff_dirs_with_options};
 
 fn tempdir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "torogao-qc-patches-{}-{}",
-        std::process::id(),
-        tag
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("torogao-qc-patches-{}-{}", std::process::id(), tag));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create tempdir");
     dir
@@ -74,7 +71,10 @@ fn two_blocks_produce_exact_region_records() {
         {"x": 40, "y": 40, "w": 4, "h": 4, "pixel_count": 16, "mean_delta": 100.0, "max_delta": 100},
     ]);
     assert_eq!(json["worst_frames"][0]["regions"], expected);
-    assert_eq!(json["worst_frames"][0]["regions_dropped"], serde_json::json!(0));
+    assert_eq!(
+        json["worst_frames"][0]["regions_dropped"],
+        serde_json::json!(0)
+    );
     assert_eq!(json["region_gap"], serde_json::json!(0));
     // The finding carries the same regions as structured data.
     assert_eq!(json["findings"][0]["data"]["regions"], expected);

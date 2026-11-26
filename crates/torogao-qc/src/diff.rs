@@ -142,8 +142,6 @@ impl FrameDiff {
     }
 }
 
-
-
 /// Compares `reference` against `candidate` at `threshold`
 /// with default patch-set parameters (no region merging, no
 /// AA exclusion, no artefacts).
@@ -353,32 +351,18 @@ fn collect_frames(dir: &Path) -> Result<BTreeSet<String>, QcError> {
 
 /// Compares one paired frame; absence and decode failure are
 /// measured outcomes (over, with a detail), never errors.
-fn compare_one(
-    reference: &Path,
-    candidate: &Path,
-    rel: &str,
-    options: &DiffOptions,
-) -> FrameDiff {
+fn compare_one(reference: &Path, candidate: &Path, rel: &str, options: &DiffOptions) -> FrameDiff {
     let threshold = options.threshold;
     let ref_path = reference.join(rel);
     let cand_path = candidate.join(rel);
     if !ref_path.is_file() {
-        return FrameDiff::unmeasured(
-            rel,
-            format!("frame {rel} exists only in the candidate"),
-        );
+        return FrameDiff::unmeasured(rel, format!("frame {rel} exists only in the candidate"));
     }
     if !cand_path.is_file() {
-        return FrameDiff::unmeasured(
-            rel,
-            format!("frame {rel} is missing from the candidate"),
-        );
+        return FrameDiff::unmeasured(rel, format!("frame {rel} is missing from the candidate"));
     }
     let (Ok(a), Ok(b)) = (decode(&ref_path), decode(&cand_path)) else {
-        return FrameDiff::unmeasured(
-            rel,
-            format!("frame {rel} could not be decoded on one side"),
-        );
+        return FrameDiff::unmeasured(rel, format!("frame {rel} could not be decoded on one side"));
     };
     if a.dimensions() != b.dimensions() {
         return FrameDiff::unmeasured(
@@ -452,9 +436,7 @@ fn compare_one(
 /// Luminance in the pixelmatch weighting (the Vysniauskas
 /// detector's brightness axis).
 fn luminance(px: [u8; 4]) -> f64 {
-    0.29889531 * f64::from(px[0])
-        + 0.56460213 * f64::from(px[1])
-        + 0.11348223 * f64::from(px[2])
+    0.29889531 * f64::from(px[0]) + 0.56460213 * f64::from(px[1]) + 0.11348223 * f64::from(px[2])
 }
 
 /// The Vysniauskas anti-aliasing test: a pixel whose
@@ -715,10 +697,7 @@ fn write_artifacts(
     threshold: u8,
     dir: &Path,
 ) -> Result<Option<(String, String)>, QcError> {
-    let (Ok(a), Ok(b)) = (
-        decode(&reference.join(rel)),
-        decode(&candidate.join(rel)),
-    ) else {
+    let (Ok(a), Ok(b)) = (decode(&reference.join(rel)), decode(&candidate.join(rel))) else {
         return Ok(None);
     };
     if a.dimensions() != b.dimensions() {
