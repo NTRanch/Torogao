@@ -49,6 +49,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod diff;
 pub mod error;
 pub mod inspect;
 pub mod limits;

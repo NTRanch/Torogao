@@ -9,9 +9,11 @@ description = "Render-QC checker for frozen scene specs (RENDER-QC-CONTRACT step
 [dependencies]
 serde_json = { workspace = true }
 sha2 = "0.10"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [dev-dependencies]
 sha2 = "0.10"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [lib]
 name = "torogao_qc"

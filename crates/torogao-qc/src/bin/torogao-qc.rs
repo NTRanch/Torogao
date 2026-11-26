@@ -17,6 +17,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 use torogao_qc::error::QcError;
+use torogao_qc::limits::PIXEL_THRESHOLD_DEFAULT;
 use torogao_qc::report::Report;
 
 fn main() -> ExitCode {
@@ -44,6 +45,7 @@ fn run() -> Result<Report, QcError> {
     let (verb, rest) = args.split_first().ok_or_else(usage)?;
     match verb.as_str() {
         "inspect" => run_inspect(rest),
+        "diff" => run_diff(rest),
         _ => Err(usage()),
     }
 }
@@ -97,5 +99,26 @@ fn run_inspect(args: &[String]) -> Result<Report, QcError> {
         &PathBuf::from(spec),
         flag(&flags, "manifest").map(PathBuf::from).as_deref(),
         &known,
+    )
+}
+
+fn run_diff(args: &[String]) -> Result<Report, QcError> {
+    let (positionals, flags) = split_flags(args)?;
+    let [reference, candidate] = positionals.as_slice() else {
+        return Err(usage());
+    };
+    let threshold = match flag(&flags, "threshold") {
+        Some(raw) => raw.parse::<u8>().map_err(|_| {
+            QcError::new(
+                "QC-E-USAGE",
+                format!("--threshold must be an integer 0-255, got {raw:?}"),
+            )
+        })?,
+        None => PIXEL_THRESHOLD_DEFAULT,
+    };
+    torogao_qc::diff::diff_dirs(
+        &PathBuf::from(reference),
+        &PathBuf::from(candidate),
+        threshold,
     )
 }
