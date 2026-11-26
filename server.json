@@ -3,7 +3,7 @@
   "name": "io.github.NTRanch/torogao",
   "title": "Torogao",
   "description": "Torogao CLI tools: registry, MCP/A2A servers, scenes, writer, tutorials, toolbox, and conversion.",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "websiteUrl": "https://github.com/NTRanch/torogao",
   "repository": {
     "url": "https://github.com/NTRanch/torogao",
@@ -16,7 +16,7 @@
       "transport": {
         "type": "stdio"
       },
-      "version": "0.5.2"
+      "version": "0.5.3"
     }
   ],
   "_meta": {
@@ -28,7 +28,7 @@
       },
       "io.github.NTRanch/torogao": {
         "agentCard": ".well-known/agent-card.json",
-        "versionNote": "Server version of record is 0.5.2 (D-1608): the torogao CLI crate in this repo (crates/torogao-cli/Cargo.toml) is 0.5.2, the release commit c8469a9 on main is 'release: torogao 0.5.2 (CLI package only)', and the installed binary at ~/.cargo/bin/torogao reports version 0.5.2 in its MCP server/discover serverInfo. The packages entry is the cargo package only; no mcpb bundle is asserted."
+        "versionNote": "Server version of record is 0.5.3 (supersedes the 0.5.2 note of D-1608): the torogao CLI crate in this repo (crates/torogao-cli/Cargo.toml) is 0.5.3, the release commit f07319a on main is 'release: torogao 0.5.3 (CLI package only) - lineage consolidation', merged into main at 993e5c2, and the installed binary at ~/.cargo/bin/torogao is the 0.5.3 build (probe of record at the consolidation landing: 57 tools, 0 malformed). The packages entry is the cargo package only; no mcpb bundle is asserted."
       }
     }
   }
