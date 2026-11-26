@@ -49,6 +49,11 @@ pub struct Finding {
     pub detail: String,
     /// RFC 6901 JSON Pointer to the spec node responsible.
     pub spec_ref: String,
+    /// Optional structured evidence attached to the finding
+    /// (for example a snapshot diff's change regions). Serialized
+    /// as `data` only when present, so findings without it keep
+    /// their published shape byte-for-byte.
+    pub data: Option<Value>,
 }
 
 impl Finding {
@@ -78,7 +83,7 @@ impl Finding {
     }
 
     fn to_json(&self, scene: &str) -> Value {
-        json!({
+        let mut value = json!({
             "code": self.code,
             "severity": self.severity.as_str(),
             "scene": scene,
@@ -87,7 +92,11 @@ impl Finding {
             "detail": self.detail,
             "message": Finding::message_for(self.code),
             "spec_ref": self.spec_ref,
-        })
+        });
+        if let Some(data) = &self.data {
+            value["data"] = data.clone();
+        }
+        value
     }
 }
 

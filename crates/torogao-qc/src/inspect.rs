@@ -64,6 +64,7 @@ pub fn inspect(
                 hit.pointer, hit.token
             ),
             spec_ref: hit.pointer.clone(),
+            data: None,
         });
     }
     walk_nan(&spec, &mut Vec::new(), &mut report);
@@ -176,6 +177,7 @@ fn walk_nan(value: &Value, segments: &mut Vec<String>, report: &mut Report) {
                         frame: None,
                         detail: format!("value at {at} is not finite"),
                         spec_ref: at,
+                        data: None,
                     });
                 }
             }
@@ -447,6 +449,7 @@ fn check_one_asset(
             frame: None,
             detail: format!("asset not found: {}", asset.rel),
             spec_ref: asset.spec_ref.clone(),
+            data: None,
         });
         return Ok(());
     }
@@ -463,6 +466,7 @@ fn check_one_asset(
                     asset.rel, pinned, actual
                 ),
                 spec_ref: asset.spec_ref.clone(),
+                data: None,
             });
         }
     }
@@ -488,6 +492,7 @@ fn check_options(
                 frame: None,
                 detail: format!("option {key:?} is not in the known option set"),
                 spec_ref: format!("/options/{}", escape_segment(key)),
+                data: None,
             });
         }
     }
@@ -613,6 +618,7 @@ fn check_geometry(spec: &serde_json::Map<String, Value>, report: &mut Report) {
                         frame: None,
                         detail: format!("text element {:?} bounds leave its container", element.id),
                         spec_ref: format!("/elements/{}", element.index),
+                        data: None,
                     });
                 }
             }
@@ -629,6 +635,7 @@ fn check_geometry(spec: &serde_json::Map<String, Value>, report: &mut Report) {
                     frame: None,
                     detail: format!("element {:?} bounds leave the frame", element.id),
                     spec_ref: format!("/elements/{}", element.index),
+                    data: None,
                 });
             }
         }
@@ -693,6 +700,7 @@ fn check_overlaps(
                 frame: None,
                 detail: format!("elements {:?} and {:?} overlap", a.id, b.id),
                 spec_ref: format!("/elements/{}", b.index),
+                data: None,
             });
         }
     }
@@ -738,6 +746,7 @@ fn check_sync(spec: &serde_json::Map<String, Value>, report: &mut Report) {
                     round2(drift_frames)
                 ),
                 spec_ref: format!("/cues/{index}"),
+                data: None,
             });
         }
     }
@@ -794,6 +803,7 @@ fn check_identity(
                         "locked identity parameter {param:?} of {id:?} is absent from the spec"
                     ),
                     spec_ref: format!("/characters/{index}"),
+                    data: None,
                 }),
                 Some(value) if !json_eq(value, locked_value) => {
                     report.push(Finding {
@@ -806,6 +816,7 @@ fn check_identity(
                              locked {locked_value}, spec {value}"
                         ),
                         spec_ref: format!("/characters/{index}/identity"),
+                        data: None,
                     });
                 }
                 _ => {}

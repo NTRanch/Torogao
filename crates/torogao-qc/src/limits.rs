@@ -57,3 +57,13 @@ pub const WORST_FRAMES_MAX: usize = 8;
 /// (0–255). Gates should pass their measured noise floor
 /// explicitly; this default only keeps the verb runnable.
 pub const PIXEL_THRESHOLD_DEFAULT: u8 = 8;
+
+/// Maximum change regions recorded per frame in a diff
+/// (P1); components past the cap are counted into the frame's
+/// `regions_dropped` -- counted, never silent.
+pub const REGIONS_PER_FRAME_MAX: usize = 64;
+
+/// Maximum accepted value of the diff verb's explicit
+/// `region_gap` parameter, in pixels. The gap is a declared,
+/// recorded input -- never auto-derived from the image.
+pub const REGION_GAP_MAX: u32 = 16;
