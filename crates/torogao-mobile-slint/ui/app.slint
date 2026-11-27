@@ -30,8 +30,10 @@ export struct SeatItem {
 
 export component AppWindow inherits Window {
     title: "Torogao Mobile";
-    width: 420px;
-    height: 780px;
+    // No declared width/height: a pinned logical size made the
+    // layout taller than the surface on Android (780px declared
+    // vs 731px visible at 1080x1920 @ 420 dpi), cropping the
+    // bottom of the UI. The platform sizes this window.
     background: #14101c;
 
     // Session state, mirrored from the core by the shell.
