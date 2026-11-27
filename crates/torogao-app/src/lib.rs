@@ -38,6 +38,10 @@ pub mod tools;
 pub mod video_bridge;
 pub mod vtuber;
 pub mod windowed;
+pub mod workbench;
+pub mod workbench_client;
+pub mod workbench_proof;
+pub mod workbench_window;
 
 pub use error::{AppError, AppResult};
 pub use scene::Scene;

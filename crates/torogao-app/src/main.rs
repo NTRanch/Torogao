@@ -16,6 +16,9 @@
 //!       --out <dir> [--force]
 //!   torogao-app --persona-audit
 //!   torogao-app --paint [document.tpaint]
+//!   torogao-app --workbench
+//!   torogao-app --workbench-proof [--workbench-character <id>]
+//!       [--workbench-seed <n>]
 
 #![forbid(unsafe_code)]
 
@@ -28,13 +31,16 @@ use torogao_app::paint_window::run_paint;
 use torogao_app::scene::NamedAssignment;
 use torogao_app::session_host::run_session_host;
 use torogao_app::windowed::run_windowed;
+use torogao_app::workbench_window::run_workbench;
 
 const USAGE: &str = "usage: torogao-app [model.inx] \
                      [--session-dir <dir>] [--session-port <port>] [--held-by <name>]\n       torogao-app --headless-eval <model.inx> \
                      [--param name=value ...] [--render out.png] [--state-hash] \
                      [--debug-physics]\n       torogao-app --session-serve <model.inx> --session-dir <dir> \
                      [--session-port <port>] [--held-by <name>]\n       torogao-app --session-replay <record-dir>\n       torogao-app --play-export <model.inx> --animation <name> --out <dir> [--force]\n       torogao-app --take-export <model.inx> --take <take.json> --out <dir> [--force]
-       torogao-app --paint [document.tpaint]";
+       torogao-app --paint [document.tpaint]
+       torogao-app --workbench
+       torogao-app --workbench-proof [--workbench-character <id>] [--workbench-seed <n>]";
 
 fn main() -> ExitCode {
     match run() {
@@ -64,6 +70,10 @@ fn run() -> Result<i32, AppError> {
     let mut persona_audit = false;
     let mut paint = false;
     let mut paint_path: Option<PathBuf> = None;
+    let mut workbench = false;
+    let mut workbench_proof = false;
+    let mut workbench_character = "prima".to_string();
+    let mut workbench_seed: u64 = 20261127;
     let mut animation: Option<String> = None;
     let mut out_dir: Option<PathBuf> = None;
     let mut force = false;
@@ -115,6 +125,24 @@ fn run() -> Result<i32, AppError> {
                         paint_path = Some(PathBuf::from(next));
                     }
                 }
+            }
+            "--workbench" => workbench = true,
+            "--workbench-proof" => workbench_proof = true,
+            "--workbench-character" => {
+                index += 1;
+                let value = args.get(index).ok_or_else(|| {
+                    AppError::Cli("--workbench-character requires an id argument".to_string())
+                })?;
+                workbench_character = value.clone();
+            }
+            "--workbench-seed" => {
+                index += 1;
+                let value = args.get(index).ok_or_else(|| {
+                    AppError::Cli("--workbench-seed requires a number argument".to_string())
+                })?;
+                workbench_seed = value.parse().map_err(|_| {
+                    AppError::Cli(format!("--workbench-seed: '{value}' is not a number"))
+                })?;
             }
             "--play-export" => play_export = true,
             "--take-export" => take_export = true,
@@ -181,6 +209,29 @@ fn run() -> Result<i32, AppError> {
     }
     if paint {
         return run_paint(paint_path.as_deref());
+    }
+    if workbench_proof {
+        let options = torogao_app::workbench_proof::ProofOptions {
+            character: workbench_character,
+            seed: workbench_seed,
+            scene_prompt: "standing in a sunlit library, holding an open book, gentle smile"
+                .to_string(),
+            edit_prompt: "make the dress deep crimson red, keep everything else unchanged"
+                .to_string(),
+            store_root: None,
+        };
+        return match torogao_app::workbench_proof::run_proof(&options) {
+            Ok(lines) => {
+                for line in lines {
+                    println!("{line}");
+                }
+                Ok(0)
+            }
+            Err(err) => Err(AppError::Cli(format!("workbench proof failed: {err}"))),
+        };
+    }
+    if workbench {
+        return run_workbench();
     }
     if let Some(record_dir) = session_replay {
         return match torogao_session::replay_record(&record_dir) {
