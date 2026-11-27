@@ -13,5 +13,11 @@ fn main() -> Result<(), slint::PlatformError> {
                 .unwrap_or_else(|| PathBuf::from("."));
             home.join(".local/share/torogao-mobile")
         });
-    torogao_mobile_slint::run(data_dir, torogao_mobile_slint::SEAT_URL_DESKTOP)
+    let exports_dir = data_dir.join("exports");
+    torogao_mobile_slint::run(
+        data_dir,
+        exports_dir,
+        torogao_mobile_slint::SEAT_URL_DESKTOP,
+        torogao_mobile_slint::SEAT_NAME_DESKTOP,
+    )
 }

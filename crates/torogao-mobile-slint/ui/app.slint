@@ -1,114 +1,536 @@
-import { Button, LineEdit, ListView, VerticalBox, HorizontalBox } from "std-widgets.slint";
+// Torogao Mobile — Slint phone shell UI.
+//
+// One window, four screens (Generate, Gallery, Seat, Settings)
+// over torogao-mobile-core's Session, an 18+ gate in front of
+// everything, and a helper card that renders the core helper
+// state machine: the area's girl (Prima — seat setup, Lana —
+// generation, Sirena — gallery), her line, and her proposed
+// action. The stills are admitted cast material (see the
+// release RECORD for provenance); the bob is code — a timer
+// stepping the portrait a pixel at a time — not a video.
+
+import { Button, LineEdit, ListView, ScrollView, SpinBox, VerticalBox, HorizontalBox } from "std-widgets.slint";
 
 export struct GalleryItem {
     label: string,
     path: string,
 }
 
-// Torogao Mobile — phone shell. All behaviour lives in
-// torogao-mobile-core; this window only collects a cast pick, a
-// scene prompt, and a seat URL, and displays status + results.
+export struct JobItem {
+    id: int,
+    text: string,
+    cancellable: bool,
+}
+
+export struct SeatItem {
+    name: string,
+    url: string,
+    active: bool,
+}
+
 export component AppWindow inherits Window {
     title: "Torogao Mobile";
-    preferred-width: 430px;
-    preferred-height: 780px;
-    background: #17141c;
+    width: 420px;
+    height: 780px;
+    background: #14101c;
 
-    in-out property <string> seat-url: "http://127.0.0.1:8188";
+    // Session state, mirrored from the core by the shell.
+    in-out property <bool> attested: false;
+    in-out property <int> screen: 0; // 0 generate, 1 gallery, 2 seat, 3 settings
+    in-out property <string> status: "";
+    in-out property <string> seat-status: "";
+    in-out property <[string]> cast-names;
+    in-out property <int> cast-index: 0;
     in-out property <string> prompt: "";
-    in-out property <int> selected-cast: 0;
-    in-out property <string> status: "Pick a cast member, write a scene, generate.";
-    in-out property <bool> busy: false;
+    in-out property <[JobItem]> jobs;
+    in-out property <[GalleryItem]> gallery-items;
+    in-out property <int> gallery-index: -1;
     in-out property <image> last-image;
     in-out property <bool> has-image: false;
-    in property <[string]> cast-names;
-    in property <[GalleryItem]> gallery-items;
+    in-out property <[SeatItem]> seats;
+    in-out property <string> seat-name: "";
+    in-out property <string> seat-url: "";
+    in-out property <int> recipe-steps: 28;
+    in-out property <string> recipe-cfg: "6.0";
+    in-out property <int> recipe-width: 832;
+    in-out property <int> recipe-height: 1344;
+    // Helper state, mirrored from the core state machine.
+    in-out property <string> helper-name: "Prima";
+    in-out property <string> helper-line: "";
+    in-out property <string> helper-action: "";
+    in-out property <bool> helper-has-action: false;
+    in-out property <int> helper-area: 0; // 0 seat setup, 1 generation, 2 gallery
+    in-out property <int> helper-bob: 0;
 
-    callback generate(int, string, string);
+    callback attest();
+    callback generate();
+    callback cancel-job(int);
     callback gallery-picked(int);
+    callback gallery-delete();
+    callback gallery-export();
+    callback save-seat();
+    callback activate-seat(int);
+    callback test-seat();
+    callback wake-seat();
+    callback apply-recipe();
+    callback helper-confirm();
+    callback helper-dismiss();
+    callback helper-begin(int);
+    callback nav(int);
+
+    // The helpers' breathing bob: code stepping the portrait.
+    Timer {
+        interval: 550ms;
+        running: true;
+        triggered => {
+            root.helper-bob = (root.helper-bob + 1).mod(4);
+        }
+    }
 
     VerticalBox {
-        padding: 14px;
+        padding: 12px;
         spacing: 10px;
 
         Text {
             text: "Torogao Mobile";
-            font-size: 24px;
-            font-weight: 700;
-            color: #e8b4b8;
+            font-size: 22px;
+            color: #e8e2f2;
         }
 
-        Text {
-            text: "Cast";
-            font-size: 14px;
-            color: #b8aebf;
-        }
-
-        HorizontalBox {
-            spacing: 8px;
-            for name[index] in root.cast-names: Button {
-                text: name;
-                primary: root.selected-cast == index;
-                clicked => {
-                    root.selected-cast = index;
+        // ---- Helper card ----
+        Rectangle {
+            background: #1e1830;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: #3a3157;
+            height: 148px;
+            HorizontalBox {
+                padding: 8px;
+                spacing: 10px;
+                Rectangle {
+                    width: 86px;
+                    clip: true;
+                    Image {
+                        source: @image-url("assets/prima.png");
+                        width: 86px;
+                        height: 132px;
+                        y: (root.helper-bob == 1 || root.helper-bob == 3) ? 1px : (root.helper-bob == 2 ? 2px : 0px);
+                        visible: root.helper-area == 0;
+                    }
+                    Image {
+                        source: @image-url("assets/lana.png");
+                        width: 86px;
+                        height: 132px;
+                        y: (root.helper-bob == 1 || root.helper-bob == 3) ? 1px : (root.helper-bob == 2 ? 2px : 0px);
+                        visible: root.helper-area == 1;
+                    }
+                    Image {
+                        source: @image-url("assets/sirena.png");
+                        width: 86px;
+                        height: 132px;
+                        y: (root.helper-bob == 1 || root.helper-bob == 3) ? 1px : (root.helper-bob == 2 ? 2px : 0px);
+                        visible: root.helper-area == 2;
+                    }
+                }
+                VerticalBox {
+                    spacing: 4px;
+                    Text {
+                        text: root.helper-name;
+                        color: #cfc6e8;
+                        font-size: 15px;
+                        font-weight: 700;
+                    }
+                    Text {
+                        text: root.helper-line;
+                        color: #e8e2f2;
+                        font-size: 13px;
+                        wrap: word-wrap;
+                        vertical-stretch: 1;
+                    }
+                    HorizontalBox {
+                        spacing: 8px;
+                        alignment: start;
+                        if root.helper-has-action: Button {
+                            text: root.helper-action;
+                            primary: true;
+                            clicked => {
+                                root.helper-confirm();
+                            }
+                        }
+                        Button {
+                            text: "Not now";
+                            clicked => {
+                                root.helper-dismiss();
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        LineEdit {
-            text <=> root.prompt;
-            placeholder-text: "Scene — e.g. city night, rain, neon signs";
+        // ---- 18+ gate ----
+        if !root.attested: VerticalBox {
+            spacing: 10px;
+            vertical-stretch: 1;
+            Text {
+                text: "Adults only";
+                font-size: 18px;
+                color: #e8e2f2;
+            }
+            Text {
+                text: "Torogao Mobile generates adult artwork with the cast of Torogao. You must be 18 or older to use it. Your confirmation is saved on this device and gates all generation.";
+                color: #bdb2d9;
+                font-size: 14px;
+                wrap: word-wrap;
+            }
+            Button {
+                text: "I am 18 or older";
+                primary: true;
+                clicked => {
+                    root.attest();
+                }
+            }
+            Text {
+                text: root.status;
+                color: #bdb2d9;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
         }
 
-        HorizontalBox {
+        // ---- Generate screen ----
+        if root.attested && root.screen == 0: VerticalBox {
             spacing: 8px;
+            vertical-stretch: 1;
             Text {
-                text: "Seat";
-                vertical-alignment: center;
-                color: #b8aebf;
+                text: "Cast";
+                color: #9a8fb5;
+                font-size: 13px;
             }
+            HorizontalBox {
+                spacing: 8px;
+                alignment: start;
+                for name[i] in root.cast-names: Button {
+                    text: name;
+                    primary: root.cast-index == i;
+                    clicked => {
+                        root.cast-index = i;
+                    }
+                }
+            }
+            Text {
+                text: "Scene";
+                color: #9a8fb5;
+                font-size: 13px;
+            }
+            LineEdit {
+                text <=> root.prompt;
+                placeholder-text: "e.g. city night, rain, neon signs";
+            }
+            HorizontalBox {
+                spacing: 8px;
+                alignment: start;
+                Button {
+                    text: "Generate";
+                    primary: true;
+                    clicked => {
+                        root.generate();
+                    }
+                }
+                Button {
+                    text: "Guided first still";
+                    clicked => {
+                        root.helper-begin(1);
+                    }
+                }
+            }
+            Text {
+                text: "Jobs";
+                color: #9a8fb5;
+                font-size: 13px;
+            }
+            ListView {
+                vertical-stretch: 1;
+                for job in root.jobs: HorizontalBox {
+                    spacing: 8px;
+                    padding-top: 3px;
+                    padding-bottom: 3px;
+                    Text {
+                        text: job.text;
+                        color: #cfc6e8;
+                        font-size: 13px;
+                        vertical-stretch: 0;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                    if job.cancellable: Button {
+                        text: "Cancel";
+                        clicked => {
+                            root.cancel-job(job.id);
+                        }
+                    }
+                }
+            }
+            Text {
+                text: root.status;
+                color: #bdb2d9;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
 
+        // ---- Gallery screen ----
+        if root.attested && root.screen == 1: VerticalBox {
+            spacing: 8px;
+            vertical-stretch: 1;
+            if root.has-image: Image {
+                source: root.last-image;
+                height: 300px;
+            }
+            HorizontalBox {
+                spacing: 8px;
+                alignment: start;
+                Button {
+                    text: "Delete";
+                    clicked => {
+                        root.gallery-delete();
+                    }
+                }
+                Button {
+                    text: "Export";
+                    clicked => {
+                        root.gallery-export();
+                    }
+                }
+            }
+            ListView {
+                vertical-stretch: 1;
+                for item[i] in root.gallery-items: Text {
+                    text: item.label;
+                    color: root.gallery-index == i ? #ffffff : #cfc6e8;
+                    font-size: 13px;
+                    TouchArea {
+                        clicked => {
+                            root.gallery-picked(i);
+                        }
+                    }
+                }
+            }
+            Text {
+                text: root.status;
+                color: #bdb2d9;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+
+        // ---- Seat screen ----
+        if root.attested && root.screen == 2: VerticalBox {
+            spacing: 8px;
+            vertical-stretch: 1;
+            Text {
+                text: "Seats";
+                color: #9a8fb5;
+                font-size: 13px;
+            }
+            ListView {
+                height: 110px;
+                for seat[i] in root.seats: HorizontalBox {
+                    spacing: 8px;
+                    padding-top: 3px;
+                    padding-bottom: 3px;
+                    Text {
+                        text: (seat.active ? "● " : "○ ") + seat.name + " — " + seat.url;
+                        color: #cfc6e8;
+                        font-size: 13px;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                    Button {
+                        text: "Use";
+                        clicked => {
+                            root.activate-seat(i);
+                        }
+                    }
+                }
+            }
+            Text {
+                text: "Seat name";
+                color: #9a8fb5;
+                font-size: 13px;
+            }
+            LineEdit {
+                text <=> root.seat-name;
+                placeholder-text: "Primo (tailnet)";
+            }
+            Text {
+                text: "Seat address (the facade, not raw ComfyUI)";
+                color: #9a8fb5;
+                font-size: 13px;
+            }
             LineEdit {
                 text <=> root.seat-url;
-                horizontal-stretch: 1;
+                placeholder-text: "http://100.107.128.71:8190";
             }
-        }
-
-        Button {
-            text: root.busy ? "Generating…" : "Generate";
-            primary: true;
-            enabled: !root.busy;
-            clicked => {
-                root.generate(root.selected-cast, root.prompt, root.seat-url);
+            HorizontalBox {
+                spacing: 8px;
+                alignment: start;
+                Button {
+                    text: "Save seat";
+                    primary: true;
+                    clicked => {
+                        root.save-seat();
+                    }
+                }
+                Button {
+                    text: "Test seat";
+                    clicked => {
+                        root.test-seat();
+                    }
+                }
+                Button {
+                    text: "Wake seat";
+                    clicked => {
+                        root.wake-seat();
+                    }
+                }
             }
-        }
-
-        Text {
-            text: root.status;
-            wrap: word-wrap;
-            color: #d8cfdf;
-            font-size: 13px;
-        }
-
-        Image {
-            source: root.last-image;
-            visible: root.has-image;
-            height: 360px;
-            image-fit: contain;
-        }
-
-        Text {
-            text: "Gallery";
-            font-size: 14px;
-            color: #b8aebf;
-        }
-
-        ListView {
-            vertical-stretch: 1;
-            for item[index] in root.gallery-items: Button {
-                text: item.label;
+            Button {
+                text: "Guided seat setup (with Prima)";
                 clicked => {
-                    root.gallery-picked(index);
+                    root.helper-begin(0);
+                }
+            }
+            Text {
+                text: root.seat-status;
+                color: #bdb2d9;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+            Text {
+                text: root.status;
+                color: #bdb2d9;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+
+        // ---- Settings screen ----
+        if root.attested && root.screen == 3: VerticalBox {
+            spacing: 8px;
+            vertical-stretch: 1;
+            Text {
+                text: "Recipe (bounded by the recipe of record)";
+                color: #9a8fb5;
+                font-size: 13px;
+            }
+            HorizontalBox {
+                spacing: 8px;
+                Text {
+                    text: "Steps (10–60)";
+                    color: #cfc6e8;
+                    font-size: 13px;
+                    width: 130px;
+                }
+                SpinBox {
+                    minimum: 10;
+                    maximum: 60;
+                    value <=> root.recipe-steps;
+                }
+            }
+            HorizontalBox {
+                spacing: 8px;
+                Text {
+                    text: "CFG (1.0–12.0)";
+                    color: #cfc6e8;
+                    font-size: 13px;
+                    width: 130px;
+                }
+                LineEdit {
+                    text <=> root.recipe-cfg;
+                    width: 90px;
+                }
+            }
+            HorizontalBox {
+                spacing: 8px;
+                Text {
+                    text: "Width (512–1024)";
+                    color: #cfc6e8;
+                    font-size: 13px;
+                    width: 130px;
+                }
+                SpinBox {
+                    minimum: 512;
+                    maximum: 1024;
+                    step-size: 8;
+                    value <=> root.recipe-width;
+                }
+            }
+            HorizontalBox {
+                spacing: 8px;
+                Text {
+                    text: "Height (512–1536)";
+                    color: #cfc6e8;
+                    font-size: 13px;
+                    width: 130px;
+                }
+                SpinBox {
+                    minimum: 512;
+                    maximum: 1536;
+                    step-size: 8;
+                    value <=> root.recipe-height;
+                }
+            }
+            Button {
+                text: "Apply recipe";
+                primary: true;
+                clicked => {
+                    root.apply-recipe();
+                }
+            }
+            Text {
+                text: root.attested ? "18+ attestation: recorded on this device." : "18+ attestation: not recorded.";
+                color: #bdb2d9;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+            Text {
+                text: root.status;
+                color: #bdb2d9;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+
+        // ---- Tab bar ----
+        if root.attested: HorizontalBox {
+            spacing: 8px;
+            Button {
+                text: "Generate";
+                primary: root.screen == 0;
+                clicked => {
+                    root.nav(0);
+                }
+            }
+            Button {
+                text: "Gallery";
+                primary: root.screen == 1;
+                clicked => {
+                    root.nav(1);
+                }
+            }
+            Button {
+                text: "Seat";
+                primary: root.screen == 2;
+                clicked => {
+                    root.nav(2);
+                }
+            }
+            Button {
+                text: "Settings";
+                primary: root.screen == 3;
+                clicked => {
+                    root.nav(3);
                 }
             }
         }
