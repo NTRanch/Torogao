@@ -28,18 +28,20 @@
 //!   below one UNORM level (1/255), contributes nothing
 //!   and is dropped — identically on every run.
 //!
-//! The layer transform is translation + uniform scale
-//! only. That is deliberate for the spike: rotating a
-//! cloud means rotating its SH coefficients (a band-wise
-//! Wigner rotation), which is production work named in
-//! the design; centres and covariances under the
-//! supported transform are exact.
+//! The layer transform is full TRS (programme Rung 3):
+//! `x' = t + s * R * x`. The rotation R moves centres,
+//! covariances (`Sigma' = R * Sigma * R^T`, through the
+//! splat quaternions) and the SH field (band-wise real
+//! Wigner-D, `crate::splat_rotate`) — the same R for
+//! all three. An identity rotation takes the Rung 1
+//! path untouched, so its packet is bit-identical.
 
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::RenderError;
 use crate::math::Mat4;
 use crate::setscene::ArcScene;
+use crate::splat_rotate::{Rotation, ShRotation, is_identity_quat, quat_mul};
 
 /// SH band-0 basis constant (Inria 3DGS reference).
 const SH_C0: f64 = 0.282_094_791_773_878_14;
@@ -337,12 +339,17 @@ pub fn sh_colour(splat: &Splat, dir: [f64; 3]) -> [f32; 3] {
     [colour[0] as f32, colour[1] as f32, colour[2] as f32]
 }
 
-/// Placement of a splat layer: translation + uniform
-/// scale (see the module docs for why rotation is
-/// excluded at this stage).
+/// Placement of a splat layer: `x' = t + s * R * x`
+/// (translation, rotation, uniform scale).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SplatTransform {
     pub translation: [f64; 3],
+    /// Rotation quaternion `(w, x, y, z)` — the splat
+    /// storage order, NOT the spec's glTF (x, y, z, w);
+    /// the spec compiler converts. Must be finite and
+    /// non-zero (normalised at pack); identity takes the
+    /// unrotated path exactly.
+    pub rotation: [f64; 4],
     pub scale: f64,
 }
 
@@ -350,9 +357,50 @@ impl Default for SplatTransform {
     fn default() -> Self {
         SplatTransform {
             translation: [0.0; 3],
+            rotation: crate::splat_rotate::IDENTITY_QUAT,
             scale: 1.0,
         }
     }
+}
+
+/// Rotate a whole cloud rigidly by `rotation`: centres
+/// `R * x`, splat frames `q_R * q` (so each covariance
+/// becomes `R * Sigma * R^T`), SH bands 1–3 by the
+/// Wigner-D matrices of R, band 0 untouched. f64
+/// arithmetic, cast back to the stored f32 form (the
+/// one rounding this adds is named in the rung record).
+pub fn rotate_cloud(cloud: &SplatCloud, rotation: &Rotation) -> SplatCloud {
+    let sh = ShRotation::new(&rotation.matrix);
+    let splats = cloud
+        .splats
+        .iter()
+        .map(|s| {
+            let pos = rotation.apply([
+                f64::from(s.pos[0]),
+                f64::from(s.pos[1]),
+                f64::from(s.pos[2]),
+            ]);
+            let rot = quat_mul(rotation.quat, s.rot.map(f64::from));
+            let mut rest = [0.0_f32; SH_REST_TOTAL];
+            for ch in 0..3 {
+                let span = ch * SH_REST_PER_CHANNEL..(ch + 1) * SH_REST_PER_CHANNEL;
+                let mut c = [0.0_f64; SH_REST_PER_CHANNEL];
+                for (dst, src) in c.iter_mut().zip(&s.rest[span.clone()]) {
+                    *dst = f64::from(*src);
+                }
+                for (dst, src) in rest[span].iter_mut().zip(sh.rotate_channel(&c)) {
+                    *dst = src as f32;
+                }
+            }
+            Splat {
+                pos: pos.map(|v| v as f32),
+                rot: rot.map(|v| v as f32),
+                rest,
+                ..*s
+            }
+        })
+        .collect();
+    SplatCloud { splats }
 }
 
 /// One projected splat quad vertex — the boundary's
@@ -451,6 +499,10 @@ fn covariance(rot: [f32; 4], scale: [f32; 3]) -> [[f64; 3]; 3] {
 /// `width` x `height` viewport. Pure: identical
 /// inputs give an identical packet (the determinism
 /// contract, DESIGN.md §3).
+///
+/// Panics if `transform.rotation` is zero or
+/// non-finite: that is a caller bug (the spec compiler
+/// refuses such rotations with a typed error first).
 pub fn pack_splats(
     cloud: &SplatCloud,
     transform: &SplatTransform,
@@ -458,6 +510,18 @@ pub fn pack_splats(
     width: u32,
     height: u32,
 ) -> PackedSplats {
+    // Rotation first (TRS: x' = t + s * R * x). The
+    // identity skips it, leaving the Rung 1 path —
+    // and so its packet — exactly as it was.
+    let rotated;
+    let cloud = if is_identity_quat(transform.rotation) {
+        cloud
+    } else {
+        let rotation = Rotation::from_quaternion(transform.rotation)
+            .expect("SplatTransform.rotation must be a finite, non-zero quaternion");
+        rotated = rotate_cloud(cloud, &rotation);
+        &rotated
+    };
     let view = scene.view;
     let view_proj = crate::setscene::projection(scene).multiply(view);
     let camera_world = view.inverse();
@@ -867,6 +931,29 @@ mod tests {
             first[2] > 0.9 && first[0] < 0.1,
             "far splat first: {first:?}"
         );
+    }
+
+    #[test]
+    fn pack_with_explicit_identity_rotation_equals_rung1_packet() {
+        // Programme Rung 3, gate 1: rotation by
+        // identity reproduces the Rung 1 packet
+        // bit-identically (the new path contains
+        // the old).
+        let cloud = room_corner_cloud();
+        let rung1 = pack_splats(&cloud, &SplatTransform::default(), &test_scene(), 512, 640);
+        let explicit = pack_splats(
+            &cloud,
+            &SplatTransform {
+                translation: [0.0; 3],
+                rotation: crate::splat_rotate::IDENTITY_QUAT,
+                scale: 1.0,
+            },
+            &test_scene(),
+            512,
+            640,
+        );
+        assert_eq!(rung1, explicit);
+        assert!(rung1.splat_count > 500, "room packs: {}", rung1.splat_count);
     }
 
     #[test]

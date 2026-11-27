@@ -33,19 +33,21 @@
 //! - **One splat layer.** The boundary packet carries
 //!   one layer; a spec naming two fails compilation
 //!   rather than silently dropping one.
-//! - **Translation + uniform scale.** The transform's
-//!   `rotation` field exists in the format from the
-//!   start (so specs do not change shape later), but a
-//!   non-identity rotation does not compile: rotating a
-//!   layer means rotating its SH field (Wigner-D), which
-//!   is Rung 3's machinery, and the error says so.
+//! - **Full TRS** (programme Rung 3). The transform's
+//!   `rotation` field (glTF quaternion order in the
+//!   spec) compiles: centres, covariances and the SH
+//!   field all rotate by the same R (Wigner-D bands
+//!   1-3, `crate::splat_rotate`). An identity rotation
+//!   takes the unrotated path and reproduces the
+//!   Rung 1 packet bit-identically.
 //! - **Axis maps** are changes of basis applied to
-//!   centres and covariances. The same SH caveat applies
-//!   to them in principle — an axis-mapped cloud's
-//!   view-dependent colour is exact only at band 0
-//!   until Rung 3 re-expresses the maps through the
-//!   SH-rotation machinery. The maps themselves (which
-//!   way is up in the asset) are exact.
+//!   centres and covariances, re-expressed through
+//!   the same rotation machinery (Rung 3): their SH
+//!   fields rotate too, closing the Rung 1 colour
+//!   caveat — an axis-mapped cloud's view-dependent
+//!   colour is no longer exact only at band 0. The
+//!   maps themselves (which way is up in the asset)
+//!   are exact.
 //!
 //! Everything here is a pure function of (spec, asset
 //! bytes, scene camera): the determinism contract of
@@ -141,6 +143,15 @@ impl AxisMap {
         }
         let m = self.matrix();
         let [aw, ax, ay, az] = self.quaternion();
+        // Rung 3: the map is a rotation, so the SH
+        // field rotates through the same machinery as
+        // a layer rotation (closing the Rung 1 colour
+        // caveat). Band 0 is invariant.
+        let sh = crate::splat_rotate::ShRotation::new(
+            &crate::splat_rotate::Rotation::from_quaternion(self.quaternion())
+                .expect("axis maps are unit quaternions")
+                .matrix,
+        );
         let splats = cloud
             .splats
             .iter()
@@ -162,7 +173,20 @@ impl AxisMap {
                     f64::from(s.rot[2]),
                     f64::from(s.rot[3]),
                 );
+                let mut rest = [0.0_f32; crate::splat::SH_REST_TOTAL];
+                for ch in 0..3 {
+                    let span = ch * crate::splat::SH_REST_PER_CHANNEL
+                        ..(ch + 1) * crate::splat::SH_REST_PER_CHANNEL;
+                    let mut c = [0.0_f64; crate::splat::SH_REST_PER_CHANNEL];
+                    for (dst, src) in c.iter_mut().zip(&s.rest[span.clone()]) {
+                        *dst = f64::from(*src);
+                    }
+                    for (dst, src) in rest[span].iter_mut().zip(sh.rotate_channel(&c)) {
+                        *dst = src as f32;
+                    }
+                }
                 Splat {
+                    rest,
                     pos: [out[0] as f32, out[1] as f32, out[2] as f32],
                     rot: [
                         (aw * w - ax * x - ay * y - az * z) as f32,
@@ -289,25 +313,27 @@ pub fn compile_splat_layer(
     width: u32,
     height: u32,
 ) -> Result<PackedSplats, RenderError> {
-    // Rotation: present in the format, not compilable
-    // until Rung 3 (SH rotation). Identity — in the
-    // spec's (x, y, z, w) order, (0, 0, 0, ±1) — is the
-    // only value that compiles at this rung.
-    if let Some(q) = layer.transform.rotation {
-        let norm = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt();
-        let identity = norm > 0.0
-            && (q[0] / norm).abs() < 1e-9
-            && (q[1] / norm).abs() < 1e-9
-            && (q[2] / norm).abs() < 1e-9
-            && ((q[3] / norm).abs() - 1.0).abs() < 1e-9;
-        if !identity {
-            return Err(spec_err(
-                "layer rotation is not identity; rotating a splat layer \
-                 requires SH rotation (programme Rung 3) and does not \
-                 compile at this rung",
-            ));
+    // Rotation (programme Rung 3): the spec field is
+    // the glTF quaternion (x, y, z, w); the storage
+    // order is (w, x, y, z) and the pack normalises.
+    // A non-finite or zero quaternion is not a
+    // rotation and does not compile.
+    let rotation = match layer.transform.rotation {
+        Some(q) => {
+            if !q.iter().all(|v| v.is_finite()) {
+                return Err(spec_err(format!(
+                    "layer rotation {q:?} has a non-finite component"
+                )));
+            }
+            if q.iter().all(|v| *v == 0.0) {
+                return Err(spec_err(
+                    "layer rotation is the zero quaternion (not a rotation)",
+                ));
+            }
+            [q[3], q[0], q[1], q[2]]
         }
-    }
+        None => crate::splat_rotate::IDENTITY_QUAT,
+    };
     if !(layer.transform.scale.is_finite() && layer.transform.scale > 0.0) {
         return Err(spec_err(format!(
             "layer scale {} is not a positive finite number",
@@ -346,6 +372,7 @@ pub fn compile_splat_layer(
     let cloud = axis.apply(&cloud);
     let transform = SplatTransform {
         translation: layer.transform.translation,
+        rotation,
         scale: layer.transform.scale,
     };
     Ok(pack_splats(&cloud, &transform, scene, width, height))
@@ -428,6 +455,7 @@ mod tests {
             &room_corner_cloud(),
             &SplatTransform {
                 translation: [0.25, 0.0, -0.5],
+                rotation: crate::splat_rotate::IDENTITY_QUAT,
                 scale: 1.5,
             },
             &scene,
@@ -493,15 +521,44 @@ mod tests {
     }
 
     #[test]
-    fn rotation_names_rung_3() {
+    fn rotation_compiles_and_matches_direct_pack() {
+        // Rung 3 supersedes the Rung 1 refusal this test
+        // used to pin (`rotation_names_rung_3`): a
+        // non-identity rotation now compiles, and the
+        // compiled packet is the direct packet of the
+        // same rotated layer — the wiring adds nothing.
+        // 90 deg about Y, spec order (x, y, z, w).
         let (dir, json) = spec_for_cloud(
             "rotation",
             r#", "transform": { "rotation": [0.0, 0.7071067811865476, 0.0, 0.7071067811865476] }"#,
         );
         let scene = test_scene();
-        let err = compile_scene_splats(json.as_bytes(), &dir, &scene, 512, 640)
-            .expect_err("rotation must fail at this rung");
-        assert!(format!("{err}").contains("Rung 3"), "{err}");
+        let compiled = compile_scene_splats(json.as_bytes(), &dir, &scene, 512, 640)
+            .expect("rotation compiles at Rung 3")
+            .expect("one layer");
+        let direct = pack_splats(
+            &room_corner_cloud(),
+            &SplatTransform {
+                translation: [0.0; 3],
+                // Storage order (w, x, y, z).
+                rotation: [
+                    std::f64::consts::FRAC_1_SQRT_2,
+                    0.0,
+                    std::f64::consts::FRAC_1_SQRT_2,
+                    0.0,
+                ],
+                scale: 1.0,
+            },
+            &scene,
+            512,
+            640,
+        );
+        assert!(
+            compiled.splat_count > 500,
+            "the rotated room must actually pack ({} splats)",
+            compiled.splat_count
+        );
+        assert_eq!(compiled, direct);
         // And an identity rotation compiles.
         let (dir2, json2) = spec_for_cloud(
             "rotation-id",
@@ -512,6 +569,18 @@ mod tests {
                 .expect("identity rotation compiles")
                 .is_some()
         );
+    }
+
+    #[test]
+    fn rotation_zero_quaternion_does_not_compile() {
+        let (dir, json) = spec_for_cloud(
+            "rotation-zero",
+            r#", "transform": { "rotation": [0.0, 0.0, 0.0, 0.0] }"#,
+        );
+        let scene = test_scene();
+        let err = compile_scene_splats(json.as_bytes(), &dir, &scene, 512, 640)
+            .expect_err("zero quaternion must fail");
+        assert!(format!("{err}").contains("zero quaternion"), "{err}");
     }
 
     #[test]

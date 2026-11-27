@@ -387,6 +387,7 @@ fn main() -> ExitCode {
     }
     let transform = SplatTransform {
         translation: [-mc[0] * scale, -floor_y * scale, -mc[2] * scale],
+        rotation: torogao_render3d::splat_rotate::IDENTITY_QUAT,
         scale,
     };
     let (width, height) = (512_u32, 640_u32);
