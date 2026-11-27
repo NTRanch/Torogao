@@ -29,7 +29,7 @@ use std::sync::{Arc, Mutex};
 
 use slint::{Image, ModelRc, Timer, TimerMode, VecModel};
 use torogao_mobile_core::helper::{
-    FlowId, GateContext, Helper, HelperArea, HelperEvent, HelperState, ProposedAction,
+    FlowId, GateContext, Helper, HelperArea, HelperEvent, HelperState, Pose, ProposedAction,
 };
 use torogao_mobile_core::queue::JobStatus;
 use torogao_mobile_core::{CAST, Gallery, RecipeSettings, SeatConfig, Session};
@@ -232,6 +232,16 @@ fn refresh_helper(ui: &AppWindow, shell: &Shell) {
     };
     ui.set_helper_action(label.into());
     ui.set_helper_has_action(has);
+    // The pose picks the Lane C strip the card plays (see
+    // app.slint): guiding covers the guided-flow poses, waiting
+    // the seat-wait poses, error the comfort pose.
+    ui.set_helper_pose(match helper.pose() {
+        Pose::Idle => 0,
+        Pose::Greet | Pose::Explain | Pose::Point => 1,
+        Pose::Think | Pose::Work => 2,
+        Pose::Cheer => 3,
+        Pose::Comfort => 4,
+    });
 }
 
 /// Run the shell. `data_dir` roots settings + gallery;

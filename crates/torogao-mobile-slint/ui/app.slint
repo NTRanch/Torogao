@@ -5,9 +5,12 @@
 // everything, and a helper card that renders the core helper
 // state machine: the area's girl (Prima — seat setup, Lana —
 // generation, Sirena — gallery), her line, and her proposed
-// action. The stills are admitted cast material (see the
-// release RECORD for provenance); the bob is code — a timer
-// stepping the portrait a pixel at a time — not a video.
+// action. The card plays Lane C's 12-frame helper strips
+// (144x288 frames on transparency, 200 ms/frame; provenance in
+// the helpers lane RECORD). The strips are CANDIDATE art wired
+// in mechanically — admission is the Owner's eye, not claimed
+// here. Playback is code: a timer steps the strip frame, the
+// core state machine picks girl + strip; not a video.
 
 import { Button, LineEdit, ListView, ScrollView, SpinBox, VerticalBox, HorizontalBox } from "std-widgets.slint";
 
@@ -63,7 +66,8 @@ export component AppWindow inherits Window {
     in-out property <string> helper-action: "";
     in-out property <bool> helper-has-action: false;
     in-out property <int> helper-area: 0; // 0 seat setup, 1 generation, 2 gallery
-    in-out property <int> helper-bob: 0;
+    in-out property <int> helper-pose: 0; // 0 idle, 1 guiding, 2 waiting, 3 success, 4 error
+    in-out property <int> helper-frame: 0; // strip frame, 0..11
 
     callback attest();
     callback generate();
@@ -81,12 +85,14 @@ export component AppWindow inherits Window {
     callback helper-begin(int);
     callback nav(int);
 
-    // The helpers' breathing bob: code stepping the portrait.
+    // Strip playback: step the helper strip at its authored
+    // 200 ms/frame. A plain frame advance — no flashing
+    // transitions (OE-1b discipline).
     Timer {
-        interval: 550ms;
+        interval: 200ms;
         running: true;
         triggered => {
-            root.helper-bob = (root.helper-bob + 1).mod(4);
+            root.helper-frame = (root.helper-frame + 1).mod(12);
         }
     }
 
@@ -114,25 +120,40 @@ export component AppWindow inherits Window {
                 Rectangle {
                     width: 86px;
                     clip: true;
+                    // One strip player per girl; the core pose
+                    // picks the strip, the timer picks the frame
+                    // (source-clip into the 1728x288 strip).
                     Image {
-                        source: @image-url("assets/prima.png");
-                        width: 86px;
+                        source: root.helper-pose == 1 ? @image-url("assets/helpers/prima-guiding.png") : root.helper-pose == 2 ? @image-url("assets/helpers/prima-waiting.png") : root.helper-pose == 3 ? @image-url("assets/helpers/prima-success.png") : root.helper-pose == 4 ? @image-url("assets/helpers/prima-error.png") : @image-url("assets/helpers/prima-idle.png");
+                        source-clip-x: root.helper-frame * 144;
+                        source-clip-width: 144;
+                        source-clip-height: 288;
+                        image-fit: fill;
+                        width: 66px;
                         height: 132px;
-                        y: (root.helper-bob == 1 || root.helper-bob == 3) ? 1px : (root.helper-bob == 2 ? 2px : 0px);
+                        x: 10px;
                         visible: root.helper-area == 0;
                     }
                     Image {
-                        source: @image-url("assets/lana.png");
-                        width: 86px;
+                        source: root.helper-pose == 1 ? @image-url("assets/helpers/lana-guiding.png") : root.helper-pose == 2 ? @image-url("assets/helpers/lana-waiting.png") : root.helper-pose == 3 ? @image-url("assets/helpers/lana-success.png") : root.helper-pose == 4 ? @image-url("assets/helpers/lana-error.png") : @image-url("assets/helpers/lana-idle.png");
+                        source-clip-x: root.helper-frame * 144;
+                        source-clip-width: 144;
+                        source-clip-height: 288;
+                        image-fit: fill;
+                        width: 66px;
                         height: 132px;
-                        y: (root.helper-bob == 1 || root.helper-bob == 3) ? 1px : (root.helper-bob == 2 ? 2px : 0px);
+                        x: 10px;
                         visible: root.helper-area == 1;
                     }
                     Image {
-                        source: @image-url("assets/sirena.png");
-                        width: 86px;
+                        source: root.helper-pose == 1 ? @image-url("assets/helpers/sirena-guiding.png") : root.helper-pose == 2 ? @image-url("assets/helpers/sirena-waiting.png") : root.helper-pose == 3 ? @image-url("assets/helpers/sirena-success.png") : root.helper-pose == 4 ? @image-url("assets/helpers/sirena-error.png") : @image-url("assets/helpers/sirena-idle.png");
+                        source-clip-x: root.helper-frame * 144;
+                        source-clip-width: 144;
+                        source-clip-height: 288;
+                        image-fit: fill;
+                        width: 66px;
                         height: 132px;
-                        y: (root.helper-bob == 1 || root.helper-bob == 3) ? 1px : (root.helper-bob == 2 ? 2px : 0px);
+                        x: 10px;
                         visible: root.helper-area == 2;
                     }
                 }
