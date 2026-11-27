@@ -197,6 +197,7 @@ fn shadow_receiving_carpet_darkens_under_the_character() {
             ramp: tex("ramp"),
             face_sdf: tex("face_sdf"),
             sphere: tex("sphere"),
+            params: None,
         },
         settings: ToonSettings {
             head_joint: manifest["head"]["joint_index"].as_i64().unwrap() as i32,

@@ -196,6 +196,7 @@ fn splats_composite_with_the_toon_character() {
             ramp: tex("ramp"),
             face_sdf: tex("face_sdf"),
             sphere: tex("sphere"),
+            params: None,
         },
         settings: ToonSettings {
             head_joint: manifest["head"]["joint_index"].as_i64().unwrap() as i32,
