@@ -4548,6 +4548,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "torogao-runtime"
+version = "0.5.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "torogao-author",
+ "torogao-format",
+]
+
+[[package]]
 name = "torogao-session"
 version = "0.5.0"
 dependencies = [

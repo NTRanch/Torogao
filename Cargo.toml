@@ -17,6 +17,7 @@ members = [
     "crates/torogao-paint",
     "crates/torogao-pen",
     "crates/torogao-rig",
+    "crates/torogao-runtime",
     "crates/torogao-session",
     "crates/torogao-tui",
     "crates/torogao-tui-bakeoff-core",
