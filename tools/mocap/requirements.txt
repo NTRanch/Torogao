@@ -1,0 +1,5 @@
+# Pinned from the verified primo install, 2026-11-27 (Python 3.12 venv).
+mediapipe==1.2.3
+numpy==2.5.5
+scipy==1.18.1
+opencv-python-headless==5.1.0.95
