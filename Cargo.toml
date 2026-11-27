@@ -6,6 +6,7 @@ members = [
     "crates/torogao-coin",
     "crates/torogao-coin-android",
     "crates/torogao-companion",
+    "crates/torogao-edit-broker",
     "crates/torogao-engine",
     "crates/torogao-format",
     "crates/torogao-gen",

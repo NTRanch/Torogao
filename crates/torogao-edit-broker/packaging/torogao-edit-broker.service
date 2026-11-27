@@ -1,0 +1,16 @@
+[Unit]
+Description=Torogao edit-route job broker (facade engine: ComfyUI edit queue owner)
+After=network.target
+
+[Service]
+# The broker is an engine behind the governed facade, not a
+# public surface: loopback only, and it starts no GPU work
+# until the first job arrives (the driver auto-starts
+# ComfyUI per job and leaves it running, as the route's
+# standing discipline has it).
+ExecStart=%h/.local/bin/torogao-edit-broker --port 8193 --driver %h/.local/share/pax/primo-local-edit-route-20261127/edit-local.py --work-dir %h/.local/share/torogao-edit-broker --comfy-url http://127.0.0.1:8189
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

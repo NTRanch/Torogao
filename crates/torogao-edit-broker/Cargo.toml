@@ -1,0 +1,19 @@
+[package]
+name = "torogao-edit-broker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "The edit-route job broker: one primo service owning the ComfyUI edit queue. Implements the facade engine contract (health/jobs/poll/interrupt) over the primo-local edit route, driving edit-local.py as a subprocess per job — FIFO, one job at a time, so lanes submit and poll instead of racing waiter scripts for idle gaps in a shared queue. Faithful config is the default; Turbo is offered only under its not-chain-safe label; Omni is not offered (proof verdict stands)."
+
+[dependencies]
+serde_json = { workspace = true }
+sha2 = "0.10"
+
+[lib]
+name = "torogao_edit_broker"
+path = "src/lib.rs"
+
+[[bin]]
+name = "torogao-edit-broker"
+path = "src/main.rs"

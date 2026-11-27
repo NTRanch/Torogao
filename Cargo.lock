@@ -4673,6 +4673,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "torogao-edit-broker"
+version = "0.5.0"
+dependencies = [
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "torogao-engine"
 version = "0.5.0"
 dependencies = [
