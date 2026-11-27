@@ -78,6 +78,23 @@ struct Uniforms {
     toon1: [f32; 4],
     head_forward: [f32; 4],
     head_right: [f32; 4],
+    // Gap-fix extension (2026-11-26): appended after the
+    // G1 fields, mirroring the character shader's block.
+    /// xyz: shadow tint colour, w: factor (GAP-6).
+    toon2: [f32; 4],
+    /// x: exposure, y: world saturation, z: world
+    /// value, w: value enhance (GAP-7).
+    toon3: [f32; 4],
+    /// xyz: blush colour, w: blush strength (GAP-9).
+    toon4: [f32; 4],
+    /// xyz: lip colour, w: lip strength (GAP-9).
+    toon5: [f32; 4],
+    /// x: nose strength (GAP-9), y: band frequency,
+    /// z: band mix, w: band offset (GAP-4).
+    toon6: [f32; 4],
+    /// x: band window lo, y: band window hi, z: band
+    /// view dependence (GAP-4), w: reserved.
+    toon7: [f32; 4],
 }
 
 #[repr(C)]
@@ -777,18 +794,28 @@ impl RenderBackend for VulkanBackend {
         let dummy = |px: [u8; 4]| {
             crate::toon::ToonImage::solid(1, 1, px).expect("1x1 toon dummy is well-formed")
         };
-        let (packed_tex, ramp_tex, face_tex, sphere_tex) = match &scene.toon {
+        let (packed_tex, ramp_tex, face_tex, sphere_tex, params_tex) = match &scene.toon {
             Some(toon) => (
                 toon.textures.packed.clone(),
                 toon.textures.ramp.clone(),
                 toon.textures.face_sdf.clone(),
                 toon.textures.sphere.clone(),
+                // Gap-fix: the per-ID parameter table,
+                // or the built-in defaults when the
+                // caller supplied none.
+                match &toon.textures.params {
+                    Some(params) => params.clone(),
+                    None => crate::toon::ToonParams::default()
+                        .to_image()
+                        .expect("default toon params are in range"),
+                },
             ),
             None => (
                 dummy([255, 128, 0, 0]),
                 dummy([255, 255, 255, 255]),
                 dummy([128, 0, 0, 0]),
                 dummy([255, 255, 255, 255]),
+                dummy([0, 0, 0, 255]),
             ),
         };
         let toon_images = vec![
@@ -796,6 +823,7 @@ impl RenderBackend for VulkanBackend {
             self.upload_image(&ramp_tex, vk::Format::R8G8B8A8_UNORM)?,
             self.upload_image(&face_tex, vk::Format::R8G8B8A8_UNORM)?,
             self.upload_image(&sphere_tex, vk::Format::R8G8B8A8_UNORM)?,
+            self.upload_image(&params_tex, vk::Format::R8G8B8A8_UNORM)?,
         ];
         // Family B v2: upload every per-material albedo,
         // plus the white dummy bound for untextured
@@ -991,6 +1019,12 @@ impl RenderBackend for VulkanBackend {
             binding(20, cis, f),
             // Family B: the shared base-colour texture.
             binding(21, cis, f),
+            // Gap-fix: per-ID parameter table (fragment),
+            // planar UV rows + shading-normal rows
+            // (vertex).
+            binding(22, cis, f),
+            binding(23, ssbo, v),
+            binding(24, ssbo, v),
         ];
         let set_bindings = [
             binding(0, ubo, v | f),
@@ -1023,7 +1057,7 @@ impl RenderBackend for VulkanBackend {
         .map_err(vk_err("compute layout"))?;
 
         // Pool sizes scale with the mesh count: per mesh
-        // the char set carries 14 SSBOs + 7 samplers and
+        // the char set carries 16 SSBOs + 8 samplers and
         // the compute set 12 SSBOs; the set-piece set adds
         // one of each kind. Slack covers the shared UBO
         // writes.
@@ -1034,10 +1068,10 @@ impl RenderBackend for VulkanBackend {
                 .descriptor_count(16),
             vk::DescriptorPoolSize::default()
                 .ty(ssbo)
-                .descriptor_count(mesh_count * 26 + 16),
+                .descriptor_count(mesh_count * 28 + 16),
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .descriptor_count(mesh_count * 7 + 8),
+                .descriptor_count(mesh_count * 8 + 8),
         ];
         let pool = unsafe {
             device.create_descriptor_pool(
@@ -1062,28 +1096,66 @@ impl RenderBackend for VulkanBackend {
             f64::from(scene.sun[1]),
             f64::from(scene.sun[2]),
         );
-        let (toon0, mut toon1, head_forward, head_right) = match &scene.toon {
-            Some(toon) => {
-                let s = &toon.settings;
-                (
-                    [1.0, s.warm_cool, s.outline_width_m, s.rim_strength],
-                    [s.head_joint as f32, s.sdf_softness, 0.0, 0.0],
-                    [
-                        s.head_forward_local[0],
-                        s.head_forward_local[1],
-                        s.head_forward_local[2],
-                        0.0,
-                    ],
-                    [
-                        s.head_right_local[0],
-                        s.head_right_local[1],
-                        s.head_right_local[2],
-                        0.0,
-                    ],
-                )
-            }
-            None => ([0.0; 4], [-1.0, 0.08, 0.0, 0.0], [0.0; 4], [0.0; 4]),
-        };
+        let (toon0, mut toon1, head_forward, head_right, toon2, toon3, toon4, toon5, toon6, toon7) =
+            match &scene.toon {
+                Some(toon) => {
+                    let s = &toon.settings;
+                    (
+                        [1.0, s.warm_cool, s.outline_width_m, s.rim_strength],
+                        [s.head_joint as f32, s.sdf_softness, 0.0, 0.0],
+                        [
+                            s.head_forward_local[0],
+                            s.head_forward_local[1],
+                            s.head_forward_local[2],
+                            0.0,
+                        ],
+                        [
+                            s.head_right_local[0],
+                            s.head_right_local[1],
+                            s.head_right_local[2],
+                            0.0,
+                        ],
+                        [
+                            s.shadow_tint[0],
+                            s.shadow_tint[1],
+                            s.shadow_tint[2],
+                            s.shadow_tint_factor,
+                        ],
+                        [
+                            s.exposure,
+                            s.world_saturation,
+                            s.world_value,
+                            s.value_enhance,
+                        ],
+                        [
+                            s.blush_color[0],
+                            s.blush_color[1],
+                            s.blush_color[2],
+                            s.blush_strength,
+                        ],
+                        [
+                            s.lip_color[0],
+                            s.lip_color[1],
+                            s.lip_color[2],
+                            s.lip_strength,
+                        ],
+                        [s.nose_strength, s.band_frequency, s.band_mix, s.band_offset],
+                        [s.band_window_lo, s.band_window_hi, s.band_view, 0.0],
+                    )
+                }
+                None => (
+                    [0.0; 4],
+                    [-1.0, 0.08, 0.0, 0.0],
+                    [0.0; 4],
+                    [0.0; 4],
+                    [0.0; 4],
+                    [1.0, 1.0, 1.0, 0.0],
+                    [0.0; 4],
+                    [0.0; 4],
+                    [0.0; 4],
+                    [0.0; 4],
+                ),
+            };
         // Family B: the albedo flag is a model property,
         // independent of the toon branch — set it from the
         // packed scene either way.
@@ -1100,6 +1172,12 @@ impl RenderBackend for VulkanBackend {
             toon1,
             head_forward,
             head_right,
+            toon2,
+            toon3,
+            toon4,
+            toon5,
+            toon6,
+            toon7,
         };
         uniforms_buffer.write(&[uniforms]);
         let joints_buffer = self.create_buffer(
@@ -1220,6 +1298,12 @@ impl RenderBackend for VulkanBackend {
             // UVs packs zeros (a defined sample point).
             let uv_b = sbuf(bytemuck::cast_slice(&mesh.uv))?;
             let outline_b = sbuf(bytemuck::cast_slice(&mesh.outline))?;
+            // Gap-fix rows: planar UV (GAP-4) and the
+            // shading normal (GAP-8). Always uploaded like
+            // the UV rows; absent channels pack zeros with
+            // the present flag down.
+            let planar_b = sbuf(bytemuck::cast_slice(&mesh.planar))?;
+            let toon_nrm_b = sbuf(bytemuck::cast_slice(&mesh.toon_normal))?;
             let index_buffer = self.upload_buffer(bytemuck::cast_slice(&mesh.indices), usage)?;
             let out_positions = self.create_buffer(
                 (mesh.vertex_count as u64) * 16,
@@ -1267,6 +1351,8 @@ impl RenderBackend for VulkanBackend {
             let mw_info = info(&weight_buffers[mi]);
             let uv_info = info(&uv_b);
             let outline_info = info(&outline_b);
+            let planar_info = info(&planar_b);
+            let toon_nrm_info = info(&toon_nrm_b);
             let shadow_info = [vk::DescriptorImageInfo::default()
                 .sampler(shadow_sampler)
                 .image_view(shadow.view)
@@ -1282,6 +1368,7 @@ impl RenderBackend for VulkanBackend {
             let face_info = toon_image_info(2, toon_linear_sampler);
             let sphere_info = toon_image_info(3, toon_linear_sampler);
             let packed_id_info = toon_image_info(0, toon_nearest_sampler);
+            let params_info = toon_image_info(4, toon_nearest_sampler);
             let albedo_view = scene.materials[scene.meshes[mi].material]
                 .albedo_slot
                 .map(|slot| albedo_images[slot].view)
@@ -1320,6 +1407,9 @@ impl RenderBackend for VulkanBackend {
                 write(19, cis).image_info(&sphere_info),
                 write(20, cis).image_info(&packed_id_info),
                 write(21, cis).image_info(&albedo_info),
+                write(22, cis).image_info(&params_info),
+                write(23, ssbo).buffer_info(&planar_info),
+                write(24, ssbo).buffer_info(&toon_nrm_info),
             ];
             // SAFETY: all referenced buffers/views are live
             // and owned by this scene.

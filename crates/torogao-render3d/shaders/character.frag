@@ -26,6 +26,22 @@ layout(std140, set = 0, binding = 0) uniform Uniforms {
                 // albedo-texture flag, w: reserved
     vec4 head_forward; // xyz: head-local forward axis
     vec4 head_right;   // xyz: head-local right axis
+    // Gap-fix extension (2026-11-26). Appended after the
+    // G1 fields; prefix-declaring shaders stay legal.
+    vec4 toon2; // xyz: shadow tint colour (GAP-6),
+                // w: shadow tint factor
+    vec4 toon3; // x: exposure, y: world saturation,
+                // z: world value, w: value enhance (GAP-7)
+    vec4 toon4; // xyz: blush colour, w: blush strength
+                // (GAP-9)
+    vec4 toon5; // xyz: lip colour, w: lip strength
+                // (GAP-9)
+    vec4 toon6; // x: nose strength (GAP-9), y: band
+                // frequency, z: band mix, w: band offset
+                // (GAP-4)
+    vec4 toon7; // x: band window lo, y: band window hi,
+                // z: band view dependence (GAP-4),
+                // w: reserved
 } u;
 layout(set = 0, binding = 13) uniform sampler2D shadow_map;
 // The joint matrices ride along in the fragment stage:
@@ -44,6 +60,9 @@ layout(set = 0, binding = 20) uniform sampler2D toon_packed_id;
 // character's atlas), sampled in TEXCOORD_0 space. Bound
 // always; sampled only when toon1.z flags it present.
 layout(set = 0, binding = 21) uniform sampler2D albedo_tex;
+// The per-ID parameter table (GAP-1/2/3/5 + hair
+// highlight colour), fetched by texelFetch in toon.glsl.
+layout(set = 0, binding = 22) uniform sampler2D toon_params_tex;
 
 layout(push_constant) uniform Push {
     vec4 base_color;
@@ -64,6 +83,11 @@ layout(location = 1) in vec3 v_normal;
 layout(location = 2) in vec3 v_world_pos;
 layout(location = 3) in vec4 v_color1;
 layout(location = 4) in vec4 v_uvs;
+// GAP-4/GAP-8 channels: xy = planar UV (TEXCOORD_2),
+// z = planar present flag.
+layout(location = 5) in vec3 v_planar;
+// xyz = skinned shading (toon) normal, w = present flag.
+layout(location = 6) in vec4 v_toon_normal;
 
 layout(location = 0) out vec4 out_colour;
 
@@ -91,10 +115,21 @@ float shadow_factor(vec3 world_pos, vec3 n) {
 // The toon model (toon.glsl carries the shared math).
 // v1 scope, declared: the SDF governs the SUN term only;
 // the fill still ramps by its own NdotL on faces.
-vec3 shade_toon(vec3 albedo, vec3 n, vec3 v, float shadow) {
+// `n_geom` is the mesh normal (shadow bias, sheen view
+// transform); `n` is the shading normal — the authored
+// toon normal when the mesh carries one (GAP-8).
+vec3 shade_toon(vec3 albedo, vec3 n_geom, vec3 n, vec3 v, float shadow,
+                bool front_facing) {
     vec4 packed_linear = texture(toon_packed, v_uvs.zw);
     float id_alpha = texture(toon_packed_id, v_uvs.zw).a;
     ToonSample ts = toon_decode(packed_linear, id_alpha);
+    ToonParams prm = toon_params(toon_params_tex, ts.id);
+    if (!front_facing) {
+        // Back faces take the per-ID back colour as
+        // their albedo; every ramp/spec/rim term below
+        // then applies over it (GAP-5).
+        albedo = prm.back_color;
+    }
     float ndl_sun = dot(n, u.sun.xyz);
     float ramp_u = ndl_sun * 0.5 + 0.5;
     if (ts.id == 1) {
@@ -117,37 +152,78 @@ vec3 shade_toon(vec3 albedo, vec3 n, vec3 v, float shadow) {
         float fdotl = dot(hf.xz, u.sun.xyz.xz);
         float sweep = 1.0 - (fdotl * 0.5 + 0.5);
         ramp_u = toon_face_lit(sdf.r, sweep, u.toon1.y);
-        albedo = mix(albedo, TOON_BLUSH_RGB, sdf.g * 0.55);
-        albedo *= 1.0 - sdf.b * 0.15;
-        albedo = mix(albedo, TOON_LIP_RGB, sdf.a * 0.6);
+        // Face tint set: ToonData settings since the
+        // gap-fix round (GAP-9), values unchanged.
+        albedo = mix(albedo, u.toon4.xyz, sdf.g * u.toon4.w);
+        albedo *= 1.0 - sdf.b * u.toon6.x;
+        albedo = mix(albedo, u.toon5.xyz, sdf.a * u.toon5.w);
     }
     vec3 ramp_sun = toon_ramp(toon_ramp_tex, ramp_u, ts.id, u.toon0.y);
     float fill_u = dot(n, u.fill.xyz) * 0.5 + 0.5;
     vec3 ramp_fill = toon_ramp(toon_ramp_tex, fill_u, ts.id, u.toon0.y);
-    vec3 col = albedo * u.world.rgb * ts.ao;
+    // The calibrated world colour (GAP-7): every
+    // material consumes the same rebalanced ambient.
+    vec3 world_c = toon_world_calibrate(u.world.rgb, u.toon3.y, u.toon3.z,
+                                         u.toon3.w);
+    vec3 col = albedo * world_c * ts.ao;
     col += albedo * ramp_sun * (u.sun.w * shadow * ts.ao);
     col += albedo * ramp_fill * (u.fill.w * ts.ao);
-    col += toon_spec(n, v, u.sun.xyz, ts.spec, ts.metal, albedo)
+    // SSS transition band (GAP-1): the per-ID tint in
+    // the ramp's transition zone, sun term only.
+    col += prm.sss_color
+        * (toon_sss_zone(ramp_u, prm.sss_width) * u.sun.w * shadow * ts.ao);
+    // Shadow tint injection (GAP-6): a scene-level tint
+    // in the shaded band the sun ramp lookup implies,
+    // applied after the sun/fill sum.
+    float shaded_mask = 1.0 - smoothstep(0.35, 0.65, ramp_u);
+    col += u.toon2.xyz * (shaded_mask * u.toon2.w * ts.ao);
+    col += toon_spec(n, v, u.sun.xyz, ts.spec, ts.metal, albedo,
+                     prm.spec_exponent, prm.spec_tint)
         * (u.sun.w * shadow);
-    col += toon_spec(n, v, u.fill.xyz, ts.spec, ts.metal, albedo) * u.fill.w;
-    // Rim, gated by the terminator so it lives at the
+    col += toon_spec(n, v, u.fill.xyz, ts.spec, ts.metal, albedo,
+                     prm.spec_exponent, prm.spec_tint)
+        * u.fill.w;
+    // Rim (GAP-2): per-ID colour/size/smooth from the
+    // parameter table; toon0.w stays the master strength.
+    // Still gated by the terminator so it lives at the
     // lit side's edge.
-    float fres = pow(1.0 - max(dot(n, v), 0.0), 3.0);
-    col += vec3(fres * (ndl_sun * 0.5 + 0.5) * u.toon0.w * u.sun.w
-        * shadow * ts.ao);
+    float rim = toon_rim_band(dot(n, v), prm.rim_size, prm.rim_smooth);
+    col += prm.rim_color
+        * (rim * (ndl_sun * 0.5 + 0.5) * u.toon0.w * u.sun.w
+            * shadow * ts.ao);
     if (ts.id == 2) {
-        // Hair: sphere-map sheen by view-space normal.
-        vec3 nv = normalize((u.view * vec4(n, 0.0)).xyz);
+        // Hair: sphere-map sheen by view-space normal
+        // (geometric normal — the sheen is view-locked
+        // by construction).
+        vec3 nv = normalize((u.view * vec4(n_geom, 0.0)).xyz);
         vec3 sheen = texture(toon_sphere, nv.xy * 0.5 + 0.5).rgb;
         col += albedo * sheen
             * (ts.spec * (ndl_sun * 0.5 + 0.5) * TOON_SHEEN_SCALE
                 * u.sun.w * shadow);
+        // Hair planar bands (GAP-4): the second,
+        // authored-placement highlight, driven by the
+        // planar along-length coordinate when the mesh
+        // carries TEXCOORD_2. View dependence fades the
+        // bands toward the camera-facing read by
+        // toon7.z.
+        if (v_planar.z > 0.5) {
+            float view_term = mix(1.0, pow(max(dot(n, v), 0.0), 1.5),
+                                  u.toon7.z);
+            float bands = toon_hair_bands(v_planar.y, u.toon6.y, u.toon6.z,
+                                          u.toon6.w, u.toon7.x, u.toon7.y);
+            col += prm.highlight_color
+                * (bands * prm.highlight_strength * ts.spec * view_term
+                    * u.sun.w * shadow);
+        }
     }
     return col;
 }
 
 void main() {
     vec3 N = normalize(v_normal);
+    // The shading normal (GAP-8): the authored toon
+    // normal when present, else the mesh normal.
+    vec3 Ns = (v_toon_normal.w > 0.5) ? normalize(v_toon_normal.xyz) : N;
     vec3 V = normalize(u.camera_pos.xyz - v_world_pos);
     float shadow = shadow_factor(v_world_pos, N);
     // Family B: the base-colour texture multiplies the
@@ -165,7 +241,12 @@ void main() {
     vec3 albedo = v_albedo * albedo_texel.rgb;
     vec3 linear;
     if (u.toon0.x > 0.5) {
-        linear = shade_toon(albedo, N, V, shadow);
+        linear = shade_toon(albedo, N, Ns, V, shadow, gl_FrontFacing);
+        // Display calibration (GAP-7): the exposure gain
+        // of the global configuration block, applied to
+        // the toon path before the shared display
+        // transform. Identity at 1.0.
+        linear *= u.toon3.x;
     } else {
         linear = shade_point(
             albedo, N, V, push.roughness,

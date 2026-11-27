@@ -57,6 +57,25 @@ pub struct Mesh {
     pub texcoord1: Vec<[f32; 2]>,
     /// Whether the GLB actually carried TEXCOORD_1.
     pub has_texcoord1: bool,
+    /// UV set 2 (TEXCOORD_2): the GAP-4 planar projection
+    /// for hair — x = across-lock coordinate, y =
+    /// along-length coordinate (0 at the root, increasing
+    /// toward the tips; band placement is authored in
+    /// this space, never in atlas space). Zeros when
+    /// absent.
+    pub texcoord2: Vec<[f32; 2]>,
+    /// Whether the GLB actually carried TEXCOORD_2.
+    pub has_texcoord2: bool,
+    /// Shading (toon) normal set (TEXCOORD_3, GAP-8):
+    /// xyz = the authored shading direction in bind
+    /// space, w = 1 for authored rows. A VEC3 accessor
+    /// loads with w = 1. Zero rows when absent. The
+    /// channel is a direction field, not UV data — it
+    /// rides a TEXCOORD set because that is the generic
+    /// per-vertex vec4 channel the interchange carries.
+    pub toon_normal: Vec<[f32; 4]>,
+    /// Whether the GLB actually carried TEXCOORD_3.
+    pub has_toon_normal: bool,
     /// Outline normals (Amendment A4): the smoothed second
     /// normal set the inverted-hull outline pass displaces
     /// along. Source order: the `_OUTLINE_NORMAL` custom
@@ -456,6 +475,48 @@ pub fn load_model(bytes: &[u8]) -> Result<Model, RenderError> {
                 Some(accessor) => (read_rows::<2>(&document, &buffers, &accessor)?, true),
                 None => (vec![[0.0, 0.0]; count], false),
             };
+            let (texcoord2, has_texcoord2) = match get(&Semantic::TexCoords(2)) {
+                Some(accessor) => (read_rows::<2>(&document, &buffers, &accessor)?, true),
+                None => (vec![[0.0, 0.0]; count], false),
+            };
+            let (toon_normal, has_toon_normal) = match get(&Semantic::TexCoords(3)) {
+                Some(accessor) => {
+                    // VEC3 or VEC4 float rows; VEC3 pads
+                    // w = 1 (authored). Any other shape is
+                    // a document error, not a silent zero.
+                    let dim = match accessor.dimensions() {
+                        gltf::accessor::Dimensions::Vec3 => 3usize,
+                        gltf::accessor::Dimensions::Vec4 => 4usize,
+                        other => {
+                            return Err(RenderError::Document(format!(
+                                "mesh {} primitive {prim_index}: TEXCOORD_3 must be VEC3/VEC4 float, got {other:?}",
+                                mesh_gltf.name().unwrap_or("?")
+                            )));
+                        }
+                    };
+                    let flat = read_f64s(&document, &buffers, &accessor)?;
+                    if flat.len() % dim != 0 {
+                        return Err(RenderError::Document(format!(
+                            "mesh {} primitive {prim_index}: TEXCOORD_3 component count {} not divisible by {dim}",
+                            mesh_gltf.name().unwrap_or("?"),
+                            flat.len()
+                        )));
+                    }
+                    let rows = flat
+                        .chunks_exact(dim)
+                        .map(|c| {
+                            [
+                                c[0] as f32,
+                                c[1] as f32,
+                                c[2] as f32,
+                                if dim == 4 { c[3] as f32 } else { 1.0 },
+                            ]
+                        })
+                        .collect::<Vec<[f32; 4]>>();
+                    (rows, true)
+                }
+                None => (vec![[0.0, 0.0, 0.0, 0.0]; count], false),
+            };
             let outline_normal = read_outline_normals(
                 &custom_outline,
                 mesh_gltf.index(),
@@ -475,6 +536,8 @@ pub fn load_model(bytes: &[u8]) -> Result<Model, RenderError> {
                 ("WEIGHTS_0", weights.len()),
                 ("TEXCOORD_0", texcoord0.len()),
                 ("TEXCOORD_1", texcoord1.len()),
+                ("TEXCOORD_2", texcoord2.len()),
+                ("TEXCOORD_3", toon_normal.len()),
                 ("OUTLINE_NORMAL", outline_normal.len()),
             ] {
                 if len != count {
@@ -553,6 +616,10 @@ pub fn load_model(bytes: &[u8]) -> Result<Model, RenderError> {
                 texcoord0,
                 texcoord1,
                 has_texcoord1,
+                texcoord2,
+                has_texcoord2,
+                toon_normal,
+                has_toon_normal,
                 outline_normal,
                 joints,
                 weights,
