@@ -19,6 +19,7 @@
 #![deny(missing_docs)]
 
 pub mod glb;
+pub mod hash;
 pub mod math;
 pub mod record;
 pub mod render;
@@ -26,7 +27,7 @@ pub mod store;
 
 pub use glb::{BaseMesh, GlbError};
 pub use record::{CharacterRecord, RecordError};
-pub use render::{Camera, PreviewImage, PreviewStats, RenderError};
+pub use render::{Camera, PoseMap, PreviewImage, PreviewStats, RenderError};
 pub use store::{LocalStore, StoreError};
 
 use std::path::Path;
@@ -105,11 +106,14 @@ pub struct ParamDef {
 pub enum ParamKey {
     /// An expression morph by target name.
     Morph(String),
-    /// `body_params.bust_size` (the `Body_Bust_Size` morph).
+    /// The `Body_Bust_Size` morph, edited as a body knob
+    /// (stored in the record's expressions, per the schema:
+    /// it is a morph the builder emits).
     Bust,
-    /// `body_params.height` (root scale).
+    /// `body_params.z_scale` (preview root scale).
     Height,
-    /// One Euler axis of one joint's pose override.
+    /// One Euler axis of one joint's pose override. Pose is
+    /// preview state, never record data.
     Pose(String, usize),
 }
 
@@ -155,9 +159,10 @@ impl LocalEngine {
         &self.store
     }
 
-    /// The parameter rows for a record, in UI order:
-    /// expressions (declaration order), body, pose.
-    pub fn params(&self, record: &CharacterRecord) -> Vec<ParamDef> {
+    /// The parameter rows for a record and the current
+    /// preview pose, in UI order: expressions (declaration
+    /// order), body, pose.
+    pub fn params(&self, record: &CharacterRecord, pose: &PoseMap) -> Vec<ParamDef> {
         let weights = record.morph_weights();
         let mut out = Vec::new();
         for name in &self.mesh.morph_names {
@@ -177,23 +182,23 @@ impl LocalEngine {
             key: ParamKey::Bust,
             group: "Body",
             label: "Bust size".to_string(),
-            value: record.body_params.get("bust_size").copied().unwrap_or(0.0),
+            value: record.expression_weight("Body_Bust_Size"),
             min: 0.0,
             max: 1.0,
         });
         out.push(ParamDef {
             key: ParamKey::Height,
             group: "Body",
-            label: "Height".to_string(),
-            value: record.height_scale(),
-            min: 0.85,
+            label: "Height (z-scale)".to_string(),
+            value: record.z_scale(),
+            min: 0.90,
             max: 1.15,
         });
         for (joint, axis, label) in POSE_AXES {
             if self.mesh.joint_index(joint).is_none() {
                 continue;
             }
-            let value = record.pose.get(*joint).map(|e| e[*axis]).unwrap_or(0.0);
+            let value = pose.get(*joint).map(|e| e[*axis]).unwrap_or(0.0);
             out.push(ParamDef {
                 key: ParamKey::Pose((*joint).to_string(), *axis),
                 group: "Pose",
@@ -206,47 +211,48 @@ impl LocalEngine {
         out
     }
 
-    /// Write one parameter value into a record. Near-zero
-    /// values remove the entry, keeping saved records sparse
-    /// and diffs honest.
-    pub fn apply_param(record: &mut CharacterRecord, key: &ParamKey, value: f32) {
+    /// Write one parameter value. Record keys write the
+    /// record (near-zero expression values remove the entry,
+    /// keeping saved records sparse and diffs honest); pose
+    /// keys write the preview pose map only — pose is never
+    /// record data.
+    pub fn apply_param(
+        record: &mut CharacterRecord,
+        pose: &mut PoseMap,
+        key: &ParamKey,
+        value: f32,
+    ) {
         match key {
-            ParamKey::Morph(name) => {
-                if value.abs() < 0.001 {
-                    record.expressions.remove(name);
-                } else {
-                    record.expressions.insert(name.clone(), value);
-                }
-            }
-            ParamKey::Bust => {
-                record.body_params.insert("bust_size".to_string(), value);
-            }
+            ParamKey::Morph(name) => record.set_expression(name, value),
+            ParamKey::Bust => record.set_expression("Body_Bust_Size", value),
             ParamKey::Height => {
-                record.body_params.insert("height".to_string(), value);
+                record.body_params.insert("z_scale".to_string(), value);
             }
             ParamKey::Pose(joint, axis) => {
-                let entry = record.pose.entry(joint.clone()).or_insert([0.0; 3]);
+                let entry = pose.entry(joint.clone()).or_insert([0.0; 3]);
                 entry[*axis] = value;
                 if entry.iter().all(|v| v.abs() < 0.01) {
-                    record.pose.remove(joint);
+                    pose.remove(joint);
                 }
             }
         }
     }
 
-    /// Render a preview of a record, fully on-device.
+    /// Render a preview of a record under a preview pose,
+    /// fully on-device.
     pub fn preview(
         &self,
         record: &CharacterRecord,
+        pose: &PoseMap,
         view: PreviewView,
         width: u32,
         height: u32,
     ) -> Result<(PreviewImage, PreviewStats), RenderError> {
         let camera = match view {
             PreviewView::Body => self.body_camera(),
-            PreviewView::Face => self.face_camera(record)?,
+            PreviewView::Face => self.face_camera(record, pose)?,
         };
-        render::render(&self.mesh, record, &camera, width, height)
+        render::render(&self.mesh, record, pose, &camera, width, height)
     }
 
     /// Full-body framing from the base's bind-pose bounds.
@@ -270,15 +276,16 @@ impl LocalEngine {
 
     /// Face framing on the head joint (bind pose if the joint
     /// is missing — which validation would have refused first
-    /// for any record that poses it).
-    pub fn face_camera(&self, record: &CharacterRecord) -> Result<Camera, RenderError> {
+    /// for any pose that names it).
+    pub fn face_camera(
+        &self,
+        record: &CharacterRecord,
+        pose: &PoseMap,
+    ) -> Result<Camera, RenderError> {
         let (min, max) = self.bounds();
         let height = max[1] - min[1];
-        let head = render::joint_world_position(&self.mesh, record, "mixamorig:Head")?.unwrap_or([
-            0.0,
-            min[1] + height * 0.93,
-            0.0,
-        ]);
+        let head = render::joint_world_position(&self.mesh, record, pose, "mixamorig:Head")?
+            .unwrap_or([0.0, min[1] + height * 0.93, 0.0]);
         Ok(Camera {
             eye: [
                 head[0] + height * 0.03,
@@ -311,25 +318,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn params_cover_the_whole_face_set() {
+    fn apply_param_bookkeeping() {
         // The engine is exercised against the real bundled base
-        // in tests/trial.rs; here: apply_param bookkeeping.
+        // in tests/trial.rs; here: apply_param bookkeeping —
+        // expressions land in the record, pose lands in the
+        // pose map and never in the record.
         let mut rec = record::prima_template();
-        LocalEngine::apply_param(&mut rec, &ParamKey::Morph("Fac_Mth_Smile".to_string()), 0.8);
-        assert_eq!(rec.expressions.get("Fac_Mth_Smile"), Some(&0.8));
-        LocalEngine::apply_param(&mut rec, &ParamKey::Morph("Fac_Mth_Smile".to_string()), 0.0);
-        assert!(!rec.expressions.contains_key("Fac_Mth_Smile"));
+        let mut pose = PoseMap::new();
         LocalEngine::apply_param(
             &mut rec,
+            &mut pose,
+            &ParamKey::Morph("Fac_Mth_Smile".to_string()),
+            0.8,
+        );
+        assert_eq!(rec.expression_weight("Fac_Mth_Smile"), 0.8);
+        LocalEngine::apply_param(
+            &mut rec,
+            &mut pose,
+            &ParamKey::Morph("Fac_Mth_Smile".to_string()),
+            0.0,
+        );
+        assert_eq!(rec.expression_weight("Fac_Mth_Smile"), 0.0);
+        assert!(rec.expressions.is_empty());
+        LocalEngine::apply_param(
+            &mut rec,
+            &mut pose,
             &ParamKey::Pose("mixamorig:Head".to_string(), 1),
             20.0,
         );
-        assert_eq!(rec.pose.get("mixamorig:Head"), Some(&[0.0, 20.0, 0.0]));
+        assert_eq!(pose.get("mixamorig:Head"), Some(&[0.0, 20.0, 0.0]));
         LocalEngine::apply_param(
             &mut rec,
+            &mut pose,
             &ParamKey::Pose("mixamorig:Head".to_string(), 1),
             0.0,
         );
-        assert!(!rec.pose.contains_key("mixamorig:Head"));
+        assert!(!pose.contains_key("mixamorig:Head"));
     }
 }

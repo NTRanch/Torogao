@@ -103,9 +103,20 @@ impl std::fmt::Display for RenderError {
 
 impl std::error::Error for RenderError {}
 
-/// Validate a record against the base: every morph it weights
-/// and every joint it poses must exist.
-pub fn validate_record(mesh: &BaseMesh, record: &CharacterRecord) -> Result<(), RenderError> {
+/// A pose override set: joint name -> Euler degrees
+/// `[x, y, z]` in the joint's local space. Pose is preview
+/// state, not record data — the schema keeps pose in clips,
+/// not in the character record — so the shell holds it beside
+/// the record and hands it to the preview.
+pub type PoseMap = BTreeMap<String, [f32; 3]>;
+
+/// Validate a record (and a preview pose) against the base:
+/// every morph it weights and every joint posed must exist.
+pub fn validate_record(
+    mesh: &BaseMesh,
+    record: &CharacterRecord,
+    pose: &PoseMap,
+) -> Result<(), RenderError> {
     let weights = record.morph_weights();
     let unknown: Vec<String> = weights
         .keys()
@@ -115,8 +126,7 @@ pub fn validate_record(mesh: &BaseMesh, record: &CharacterRecord) -> Result<(), 
     if !unknown.is_empty() {
         return Err(RenderError::UnknownMorphs(unknown));
     }
-    let unknown_j: Vec<String> = record
-        .pose
+    let unknown_j: Vec<String> = pose
         .keys()
         .filter(|name| mesh.joint_index(name).is_none())
         .cloned()
@@ -127,14 +137,18 @@ pub fn validate_record(mesh: &BaseMesh, record: &CharacterRecord) -> Result<(), 
     Ok(())
 }
 
-/// World matrix per node with the record's pose overrides and
-/// height scale applied.
-fn node_worlds(mesh: &BaseMesh, record: &CharacterRecord) -> Result<Vec<Mat4>, RenderError> {
+/// World matrix per node with the pose overrides and the
+/// record's z-scale applied.
+fn node_worlds(
+    mesh: &BaseMesh,
+    record: &CharacterRecord,
+    pose: &PoseMap,
+) -> Result<Vec<Mat4>, RenderError> {
     let n = mesh.node_local.len();
     let mut worlds: Vec<Option<Mat4>> = vec![None; n];
     fn resolve(
         mesh: &BaseMesh,
-        record: &CharacterRecord,
+        pose: &PoseMap,
         node: usize,
         worlds: &mut Vec<Option<Mat4>>,
         depth: usize,
@@ -152,7 +166,7 @@ fn node_worlds(mesh: &BaseMesh, record: &CharacterRecord) -> Result<Vec<Mat4>, R
         // onto the joint's bind rotation, in local space.
         let joint = mesh.joint_of_node[node];
         if joint >= 0 {
-            if let Some(euler) = record.pose.get(&mesh.joint_names[joint as usize]) {
+            if let Some(euler) = pose.get(&mesh.joint_names[joint as usize]) {
                 match mesh.node_trs[node] {
                     Some((t, r, s)) => {
                         let q = quat_mul(quat_from_euler_deg(*euler), r);
@@ -170,16 +184,16 @@ fn node_worlds(mesh: &BaseMesh, record: &CharacterRecord) -> Result<Vec<Mat4>, R
         let world = if parent < 0 {
             local
         } else {
-            let pw = resolve(mesh, record, parent as usize, worlds, depth + 1)?;
+            let pw = resolve(mesh, pose, parent as usize, worlds, depth + 1)?;
             pw.mul(&local)
         };
         worlds[node] = Some(world);
         Ok(world)
     }
     for i in 0..n {
-        resolve(mesh, record, i, &mut worlds, 0)?;
+        resolve(mesh, pose, i, &mut worlds, 0)?;
     }
-    let scale = Mat4::scale(record.height_scale());
+    let scale = Mat4::scale(record.z_scale());
     Ok(worlds
         .into_iter()
         .map(|w| scale.mul(&w.expect("every node resolved")))
@@ -187,8 +201,12 @@ fn node_worlds(mesh: &BaseMesh, record: &CharacterRecord) -> Result<Vec<Mat4>, R
 }
 
 /// Skin matrix per joint: `world * inverseBind`.
-fn skin_matrices(mesh: &BaseMesh, record: &CharacterRecord) -> Result<Vec<Mat4>, RenderError> {
-    let worlds = node_worlds(mesh, record)?;
+fn skin_matrices(
+    mesh: &BaseMesh,
+    record: &CharacterRecord,
+    pose: &PoseMap,
+) -> Result<Vec<Mat4>, RenderError> {
+    let worlds = node_worlds(mesh, record, pose)?;
     Ok(mesh
         .joint_nodes
         .iter()
@@ -202,12 +220,13 @@ fn skin_matrices(mesh: &BaseMesh, record: &CharacterRecord) -> Result<Vec<Mat4>,
 pub fn joint_world_position(
     mesh: &BaseMesh,
     record: &CharacterRecord,
+    pose: &PoseMap,
     joint_name: &str,
 ) -> Result<Option<[f32; 3]>, RenderError> {
     let Some(j) = mesh.joint_index(joint_name) else {
         return Ok(None);
     };
-    let worlds = node_worlds(mesh, record)?;
+    let worlds = node_worlds(mesh, record, pose)?;
     let w = worlds[mesh.joint_nodes[j]];
     Ok(Some([w.0[12], w.0[13], w.0[14]]))
 }
@@ -218,8 +237,9 @@ pub fn joint_world_position(
 pub fn deform(
     mesh: &BaseMesh,
     record: &CharacterRecord,
+    pose: &PoseMap,
 ) -> Result<(Vec<DeformedPrim>, PreviewStats), RenderError> {
-    validate_record(mesh, record)?;
+    validate_record(mesh, record, pose)?;
     let weights = record.morph_weights();
     let t0 = Instant::now();
     // Stage 1: morphs.
@@ -254,8 +274,8 @@ pub fn deform(
     let morph_ms = t0.elapsed().as_secs_f32() * 1000.0;
     // Stage 2: skinning.
     let t1 = Instant::now();
-    let skins = skin_matrices(mesh, record)?;
-    let root_scale = Mat4::scale(record.height_scale());
+    let skins = skin_matrices(mesh, record, pose)?;
+    let root_scale = Mat4::scale(record.z_scale());
     let mut stats = PreviewStats {
         morph_ms,
         vertices: mesh.vertex_count() as u32,
@@ -298,11 +318,12 @@ pub fn deform(
 pub fn render(
     mesh: &BaseMesh,
     record: &CharacterRecord,
+    pose: &PoseMap,
     camera: &Camera,
     width: u32,
     height: u32,
 ) -> Result<(PreviewImage, PreviewStats), RenderError> {
-    let (deformed, mut stats) = deform(mesh, record)?;
+    let (deformed, mut stats) = deform(mesh, record, pose)?;
     let t2 = Instant::now();
     let (w, h) = (width.max(1) as usize, height.max(1) as usize);
     let mut rgba = vec![0u8; w * h * 4];

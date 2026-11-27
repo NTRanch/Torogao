@@ -34,7 +34,7 @@ use torogao_mobile_core::helper::{
 use torogao_mobile_core::queue::JobStatus;
 use torogao_mobile_core::{CAST, Gallery, RecipeSettings, SeatConfig, Session};
 use torogao_mobile_local::record::CharacterRecord as LocalRecord;
-use torogao_mobile_local::{LocalEngine, ParamKey, PreviewView};
+use torogao_mobile_local::{LocalEngine, ParamKey, PoseMap, PreviewView};
 
 slint::include_modules!();
 
@@ -66,6 +66,30 @@ struct Shell {
     local_current: Mutex<Option<LocalRecord>>,
     local_param_keys: Mutex<Vec<ParamKey>>,
     local_dirty: Mutex<bool>,
+    // The preview pose: shell-side state beside the record.
+    // The schema keeps pose in clips, not in the character
+    // record, so it is edited live and never saved.
+    local_pose: Mutex<PoseMap>,
+}
+
+/// Format unix seconds as ISO-8601 UTC (`YYYY-MM-DDTHH:MM:SSZ`),
+/// the record schema's `updated_at` shape. Civil-date math
+/// after Howard Hinnant's public-domain algorithm.
+fn iso8601_utc(secs: u64) -> String {
+    let days = (secs / 86_400) as i64;
+    let rem = secs % 86_400;
+    let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
+    let yr = if mo <= 2 { y + 1 } else { y };
+    format!("{yr:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
 }
 
 impl Shell {
@@ -270,7 +294,7 @@ fn refresh_local(ui: &AppWindow, shell: &Shell) {
     ui.set_local_record_names(ModelRc::new(VecModel::from(
         records
             .iter()
-            .map(|r| slint::SharedString::from(format!("{} · rev {}", r.name, r.revision)))
+            .map(|r| slint::SharedString::from(format!("{} · rev {}", r.display_name, r.revision)))
             .collect::<Vec<_>>(),
     )));
     let mut current = shell
@@ -292,9 +316,14 @@ fn refresh_local(ui: &AppWindow, shell: &Shell) {
     if let Some(idx) = records.iter().position(|r| r.id == current.id) {
         ui.set_local_record_index(idx as i32);
     }
-    ui.set_local_name(current.name.clone().into());
-    ui.set_local_tags(current.prompt_identity.tags.clone().into());
-    let defs = engine.params(&current);
+    ui.set_local_name(current.display_name.clone().into());
+    ui.set_local_tags(current.prompt_identity.identity.clone().into());
+    let pose = shell
+        .local_pose
+        .lock()
+        .map(|p| p.clone())
+        .unwrap_or_default();
+    let defs = engine.params(&current, &pose);
     if let Ok(mut keys) = shell.local_param_keys.lock() {
         *keys = defs.iter().map(|d| d.key.clone()).collect();
     }
@@ -345,6 +374,7 @@ pub fn run(
         local_current: Mutex::new(None),
         local_param_keys: Mutex::new(Vec::new()),
         local_dirty: Mutex::new(false),
+        local_pose: Mutex::new(PoseMap::new()),
     });
 
     ui.set_cast_names(ModelRc::new(VecModel::from(
@@ -794,8 +824,11 @@ pub fn run(
                 if let Ok(mut d) = shell.local_dirty.lock() {
                     *d = false;
                 }
+                if let Ok(mut pose) = shell.local_pose.lock() {
+                    pose.clear();
+                }
                 ui.set_local_status(
-                    format!("Editing {} (revision {}).", rec.name, rec.revision).into(),
+                    format!("Editing {} (revision {}).", rec.display_name, rec.revision).into(),
                 );
             }
             refresh_local(&ui, &shell);
@@ -820,7 +853,7 @@ pub fn run(
             }
             let mut rec = torogao_mobile_local::record::prima_template();
             rec.id = id;
-            rec.name = format!("New character {n}");
+            rec.display_name = format!("New character {n}");
             match engine.store().save(&rec) {
                 Ok(_) => {
                     if let Ok(mut slot) = shell.local_current.lock() {
@@ -828,6 +861,9 @@ pub fn run(
                     }
                     if let Ok(mut d) = shell.local_dirty.lock() {
                         *d = false;
+                    }
+                    if let Ok(mut pose) = shell.local_pose.lock() {
+                        pose.clear();
                     }
                     ui.set_local_status(
                         "Created a new record from the Prima template — make it yours: name, tags, parameters."
@@ -858,13 +894,13 @@ pub fn run(
             };
             let name = ui.get_local_name().trim().to_string();
             if !name.is_empty() {
-                rec.name = name;
+                rec.display_name = name;
             }
-            rec.prompt_identity.tags = ui.get_local_tags().to_string();
+            rec.prompt_identity.identity = ui.get_local_tags().to_string();
             rec.revision += 1;
             rec.updated_at = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs().to_string())
+                .map(|d| iso8601_utc(d.as_secs()))
                 .unwrap_or_else(|_| "unknown".to_string());
             match engine.store().save(&rec) {
                 Ok(_) => {
@@ -901,7 +937,12 @@ pub fn run(
             };
             match engine.store().export(&rec, &shell.exports_dir) {
                 Ok(dest) => ui.set_local_status(
-                    format!("Exported the record to {}", dest.to_string_lossy()).into(),
+                    format!(
+                        "Exported the record to {} · sha256 {}",
+                        dest.to_string_lossy(),
+                        rec.sha256()
+                    )
+                    .into(),
                 ),
                 Err(e) => ui.set_local_status(format!("Export failed: {e}").into()),
             }
@@ -919,18 +960,28 @@ pub fn run(
                 .ok()
                 .and_then(|keys| keys.get(index as usize).cloned());
             let Some(key) = key else { return };
-            if let Ok(mut slot) = shell.local_current.lock() {
+            let is_pose = matches!(key, ParamKey::Pose(..));
+            if let (Ok(mut slot), Ok(mut pose)) =
+                (shell.local_current.lock(), shell.local_pose.lock())
+            {
                 if let Some(rec) = slot.as_mut() {
-                    LocalEngine::apply_param(rec, &key, value);
+                    LocalEngine::apply_param(rec, &mut pose, &key, value);
                 }
             }
-            if let Ok(mut d) = shell.local_dirty.lock() {
-                *d = true;
+            if is_pose {
+                ui.set_local_status(
+                    "Pose is preview-only — the record schema keeps pose in clips, not in the character record."
+                        .into(),
+                );
+            } else {
+                if let Ok(mut d) = shell.local_dirty.lock() {
+                    *d = true;
+                }
+                ui.set_local_status(
+                    "Unsaved edits — Preview applies them now; Save writes the record to this phone."
+                        .into(),
+                );
             }
-            ui.set_local_status(
-                "Unsaved edits — Preview applies them now; Save writes the record to this phone."
-                    .into(),
-            );
         });
     }
 
@@ -955,11 +1006,16 @@ pub fn run(
             } else {
                 PreviewView::Body
             };
+            let pose = shell
+                .local_pose
+                .lock()
+                .map(|p| p.clone())
+                .unwrap_or_default();
             ui.set_local_status("Rendering on this device…".into());
             let engine = Arc::clone(engine);
             let weak2 = weak.clone();
             std::thread::spawn(move || {
-                let result = engine.preview(&rec, view, 540, 720);
+                let result = engine.preview(&rec, &pose, view, 540, 720);
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = weak2.upgrade() else { return };
                     match result {

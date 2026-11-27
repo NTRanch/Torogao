@@ -12,7 +12,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use torogao_mobile_local::record::prima_template;
-use torogao_mobile_local::{LocalEngine, PreviewView};
+use torogao_mobile_local::{LocalEngine, PoseMap, PreviewView};
 
 fn crc32(data: &[u8]) -> u32 {
     let mut table = [0u32; 256];
@@ -87,7 +87,7 @@ fn main() {
 
     let neutral = prima_template();
     let (img, stats) = engine
-        .preview(&neutral, PreviewView::Body, 540, 720)
+        .preview(&neutral, &PoseMap::new(), PreviewView::Body, 540, 720)
         .expect("body preview");
     println!(
         "body neutral: morph {:.1} ms · skin {:.1} ms · raster {:.1} ms · {} tris",
@@ -101,7 +101,7 @@ fn main() {
     );
 
     let (img, stats) = engine
-        .preview(&neutral, PreviewView::Face, 540, 540)
+        .preview(&neutral, &PoseMap::new(), PreviewView::Face, 540, 540)
         .expect("face preview");
     println!("face neutral: raster {:.1} ms", stats.raster_ms);
     write_png(
@@ -112,17 +112,14 @@ fn main() {
     );
 
     let mut smiling = prima_template();
-    smiling.expressions.insert("Fac_Mth_Smile".to_string(), 1.0);
-    smiling
-        .expressions
-        .insert("Fac_Eye_Close".to_string(), 0.55);
-    smiling.expressions.insert("Fac_Ebr_Up".to_string(), 0.5);
-    smiling.body_params.insert("bust_size".to_string(), 0.7);
-    smiling
-        .pose
-        .insert("mixamorig:Head".to_string(), [4.0, 18.0, 0.0]);
+    smiling.set_expression("Fac_Mth_Smile", 1.0);
+    smiling.set_expression("Fac_Eye_Close", 0.55);
+    smiling.set_expression("Fac_Ebr_Up", 0.5);
+    smiling.set_expression("Body_Bust_Size", 0.7);
+    let mut pose = PoseMap::new();
+    pose.insert("mixamorig:Head".to_string(), [4.0, 18.0, 0.0]);
     let (img, stats) = engine
-        .preview(&smiling, PreviewView::Face, 540, 540)
+        .preview(&smiling, &pose, PreviewView::Face, 540, 540)
         .expect("face smile preview");
     println!("face smile+brows+blink: raster {:.1} ms", stats.raster_ms);
     write_png(
@@ -132,7 +129,7 @@ fn main() {
         &img.rgba,
     );
     let (img, _) = engine
-        .preview(&smiling, PreviewView::Body, 540, 720)
+        .preview(&smiling, &pose, PreviewView::Body, 540, 720)
         .expect("body smile preview");
     write_png(
         &out_dir.join("body-smile.png"),

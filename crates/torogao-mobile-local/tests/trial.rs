@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use torogao_mobile_local::record::prima_template;
 use torogao_mobile_local::render::{RenderError, deform, render};
-use torogao_mobile_local::{LocalEngine, PreviewView};
+use torogao_mobile_local::{LocalEngine, PoseMap, PreviewView};
 
 fn temp_engine(tag: &str) -> (PathBuf, LocalEngine) {
     let dir = std::env::temp_dir().join(format!(
@@ -54,7 +54,7 @@ fn bundled_base_census_matches_the_gated_artefact() {
 fn bind_pose_deform_round_trips() {
     let (dir, engine) = temp_engine("bind");
     let mesh = engine.mesh();
-    let (deformed, stats) = deform(mesh, &prima_template()).expect("bind deform");
+    let (deformed, stats) = deform(mesh, &prima_template(), &PoseMap::new()).expect("bind deform");
     assert_eq!(stats.vertices, 22_340);
     let mut worst = 0.0f32;
     for (pi, prim) in mesh.prims.iter().enumerate() {
@@ -77,9 +77,9 @@ fn smile_morph_moves_only_its_declared_vertices() {
     let (dir, engine) = temp_engine("smile");
     let mesh = engine.mesh();
     let mut rec = prima_template();
-    rec.expressions.insert("Fac_Mth_Smile".to_string(), 1.0);
-    let (smiling, _) = deform(mesh, &rec).expect("smile deform");
-    let (neutral, _) = deform(mesh, &prima_template()).expect("neutral deform");
+    rec.set_expression("Fac_Mth_Smile", 1.0);
+    let (smiling, _) = deform(mesh, &rec, &PoseMap::new()).expect("smile deform");
+    let (neutral, _) = deform(mesh, &prima_template(), &PoseMap::new()).expect("neutral deform");
     // The body prim (prim 0) carries the face set.
     let target = mesh.prims[0]
         .morphs
@@ -137,11 +137,11 @@ fn head_pose_moves_the_head_and_not_the_feet() {
     };
     let (hp, hv) = dominated_by(head_joint);
     let (fp, fv) = dominated_by(foot_joint);
-    let mut rec = prima_template();
-    rec.pose
-        .insert("mixamorig:Head".to_string(), [0.0, 30.0, 0.0]);
-    let (posed, _) = deform(mesh, &rec).expect("posed deform");
-    let (bind, _) = deform(mesh, &prima_template()).expect("bind deform");
+    let rec = prima_template();
+    let mut pose = PoseMap::new();
+    pose.insert("mixamorig:Head".to_string(), [0.0, 30.0, 0.0]);
+    let (posed, _) = deform(mesh, &rec, &pose).expect("posed deform");
+    let (bind, _) = deform(mesh, &prima_template(), &PoseMap::new()).expect("bind deform");
     let head_move = (0..3)
         .map(|i| (posed[hp].0[hv][i] - bind[hp].0[hv][i]).abs())
         .fold(0.0f32, f32::max);
@@ -163,16 +163,16 @@ fn head_pose_moves_the_head_and_not_the_feet() {
 fn unknown_names_refuse_by_name() {
     let (dir, engine) = temp_engine("refuse");
     let mut rec = prima_template();
-    rec.expressions.insert("Fac_Nope".to_string(), 1.0);
-    match engine.preview(&rec, PreviewView::Body, 64, 64) {
+    rec.set_expression("Fac_Nope", 1.0);
+    match engine.preview(&rec, &PoseMap::new(), PreviewView::Body, 64, 64) {
         Err(RenderError::UnknownMorphs(names)) => {
             assert_eq!(names, ["Fac_Nope"]);
         }
         other => panic!("expected UnknownMorphs, got {other:?}"),
     }
-    let mut rec = prima_template();
-    rec.pose.insert("mixamorig:Tail".to_string(), [0.0; 3]);
-    match engine.preview(&rec, PreviewView::Body, 64, 64) {
+    let mut pose = PoseMap::new();
+    pose.insert("mixamorig:Tail".to_string(), [0.0; 3]);
+    match engine.preview(&prima_template(), &pose, PreviewView::Body, 64, 64) {
         Err(RenderError::UnknownJoints(names)) => {
             assert_eq!(names, ["mixamorig:Tail"]);
         }
@@ -186,8 +186,8 @@ fn body_render_covers_and_smile_changes_the_face() {
     let (dir, engine) = temp_engine("render");
     let mesh = engine.mesh();
     let camera = engine.body_camera();
-    let (neutral, stats) =
-        render(mesh, &prima_template(), &camera, 360, 480).expect("neutral render");
+    let (neutral, stats) = render(mesh, &prima_template(), &PoseMap::new(), &camera, 360, 480)
+        .expect("neutral render");
     assert_eq!(stats.triangles, mesh.triangle_count() as u32);
     let bg = [23u8, 18, 33];
     let covered = neutral
@@ -201,13 +201,23 @@ fn body_render_covers_and_smile_changes_the_face() {
         "figure must cover a sane share of the frame (got {frac})"
     );
     // Smile vs neutral, face view: the mouth band must change.
-    let face_cam = engine.face_camera(&prima_template()).expect("face cam");
-    let (face_neutral, _) =
-        render(mesh, &prima_template(), &face_cam, 360, 360).expect("face neutral");
+    let face_cam = engine
+        .face_camera(&prima_template(), &PoseMap::new())
+        .expect("face cam");
+    let (face_neutral, _) = render(
+        mesh,
+        &prima_template(),
+        &PoseMap::new(),
+        &face_cam,
+        360,
+        360,
+    )
+    .expect("face neutral");
     let mut rec = prima_template();
-    rec.expressions.insert("Fac_Mth_Smile".to_string(), 1.0);
-    rec.expressions.insert("Fac_Eye_Close".to_string(), 0.6);
-    let (face_smile, _) = render(mesh, &rec, &face_cam, 360, 360).expect("face smile");
+    rec.set_expression("Fac_Mth_Smile", 1.0);
+    rec.set_expression("Fac_Eye_Close", 0.6);
+    let (face_smile, _) =
+        render(mesh, &rec, &PoseMap::new(), &face_cam, 360, 360).expect("face smile");
     let differing = face_neutral
         .rgba
         .iter()
