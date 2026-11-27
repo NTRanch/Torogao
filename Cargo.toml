@@ -14,6 +14,7 @@ members = [
     "crates/torogao-mobile-core",
     "crates/torogao-mobile-slint",
     "crates/torogao-mobile-gpui",
+    "crates/torogao-mobile-facade",
     "crates/torogao-modapp",
     "crates/torogao-motion-clip",
     "crates/torogao-osc",

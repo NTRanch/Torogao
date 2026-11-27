@@ -1,15 +1,22 @@
-//! The pure ComfyUI workflow builder.
+//! The pure ComfyUI-shaped workflow builder.
 //!
-//! Turns (cast member, user prompt, seed) into the workflow document
-//! the seat executes: checkpoint → positive/negative conditioning →
-//! empty latent → sampler → VAE decode → save. Pure and total — the
-//! same inputs always produce the same document, which is what makes
-//! the recipe testable without a seat.
+//! Turns (cast member, user prompt, seed, recipe settings) into
+//! the workflow document the facade accepts: checkpoint →
+//! positive/negative conditioning → empty latent → sampler →
+//! VAE decode → save. Pure and total — the same inputs always
+//! produce the same document, which is what makes the recipe
+//! testable without a seat, and what lets the facade verify the
+//! document's hash against the client's (the approval/hash
+//! discipline: a document altered in transit does not run).
+//!
+//! The document shape is the contract the facade speaks; the
+//! engine behind the facade (torogao-gen today, an on-device
+//! engine tomorrow) never sees it — the facade translates.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::cast::Character;
-use crate::style;
+use crate::style::{self, RecipeSettings};
 
 /// Longest user prompt accepted, in bytes. Prompts are a garnish on
 /// the canonical record, not a second style system.
@@ -48,11 +55,25 @@ pub fn compose_negative(character: &Character) -> String {
     }
 }
 
-/// Build the seat workflow document for one still.
-///
-/// Node ids are the document's own wiring and are stable: "1" is the
-/// checkpoint loader every other node references.
+/// Build the workflow document for one still, with the recipe
+/// of record.
 pub fn build_workflow(character: &Character, user_prompt: &str, seed: u64) -> Value {
+    build_workflow_with(character, user_prompt, seed, &RecipeSettings::of_record())
+}
+
+/// Build the workflow document for one still with explicit
+/// recipe settings (already validated against the bounds in
+/// [`crate::style`]; the facade re-validates seat-side).
+///
+/// Node ids are the document's own wiring and are stable: "1" is
+/// the checkpoint loader every other node references, "7" is
+/// the save node the history parser reads outputs from.
+pub fn build_workflow_with(
+    character: &Character,
+    user_prompt: &str,
+    seed: u64,
+    recipe: &RecipeSettings,
+) -> Value {
     json!({
         "1": {
             "class_type": "CheckpointLoaderSimple",
@@ -75,8 +96,8 @@ pub fn build_workflow(character: &Character, user_prompt: &str, seed: u64) -> Va
         "4": {
             "class_type": "EmptyLatentImage",
             "inputs": {
-                "width": style::WIDTH,
-                "height": style::HEIGHT,
+                "width": recipe.width,
+                "height": recipe.height,
                 "batch_size": 1
             }
         },
@@ -85,8 +106,8 @@ pub fn build_workflow(character: &Character, user_prompt: &str, seed: u64) -> Va
             "inputs": {
                 "model": ["1", 0],
                 "seed": seed,
-                "steps": style::STEPS,
-                "cfg": style::CFG,
+                "steps": recipe.steps,
+                "cfg": recipe.cfg,
                 "sampler_name": style::SAMPLER,
                 "scheduler": style::SCHEDULER,
                 "positive": ["2", 0],
@@ -107,6 +128,27 @@ pub fn build_workflow(character: &Character, user_prompt: &str, seed: u64) -> Va
             }
         }
     })
+}
+
+/// The canonical serialization of a workflow document — the
+/// bytes the approval hash covers. serde_json's default map
+/// ordering is sorted-key, so the same document serializes to
+/// the same bytes on both sides of the wire.
+pub fn canonical_workflow_bytes(workflow: &Value) -> Vec<u8> {
+    serde_json::to_vec(workflow).unwrap_or_default()
+}
+
+/// SHA-256 of the canonical workflow bytes, lowercase hex. The
+/// client sends this with the submission; the facade recomputes
+/// it over the document it received and refuses a mismatch.
+pub fn workflow_sha256(workflow: &Value) -> String {
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(canonical_workflow_bytes(workflow));
+    let mut out = String::with_capacity(64);
+    for b in digest {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -147,7 +189,10 @@ mod tests {
         assert_eq!(w["4"]["inputs"]["width"], style::WIDTH);
         assert_eq!(w["4"]["inputs"]["height"], style::HEIGHT);
         let pos = w["2"]["inputs"]["text"].as_str().unwrap_or("");
-        assert!(pos.contains("freckles"), "Lana's lock must reach the seat: {pos}");
+        assert!(
+            pos.contains("freckles"),
+            "Lana's lock must reach the seat: {pos}"
+        );
     }
 
     #[test]
@@ -156,5 +201,29 @@ mod tests {
             build_workflow(&PRIMA, "rain", 7),
             build_workflow(&PRIMA, "rain", 7)
         );
+    }
+
+    #[test]
+    fn recipe_settings_reach_the_document() {
+        let recipe = RecipeSettings {
+            steps: 40,
+            cfg: 7.5,
+            width: 768,
+            height: 1216,
+        };
+        let w = build_workflow_with(&PRIMA, "rain", 7, &recipe);
+        assert_eq!(w["5"]["inputs"]["steps"], 40);
+        assert_eq!(w["4"]["inputs"]["width"], 768);
+        assert_eq!(w["4"]["inputs"]["height"], 1216);
+    }
+
+    #[test]
+    fn workflow_hash_is_stable_and_content_sensitive() {
+        let a = build_workflow(&PRIMA, "rain", 7);
+        let b = build_workflow(&PRIMA, "rain", 7);
+        let c = build_workflow(&PRIMA, "rain", 8);
+        assert_eq!(workflow_sha256(&a), workflow_sha256(&b));
+        assert_ne!(workflow_sha256(&a), workflow_sha256(&c));
+        assert_eq!(workflow_sha256(&a).len(), 64);
     }
 }

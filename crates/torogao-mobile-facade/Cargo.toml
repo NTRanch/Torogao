@@ -1,0 +1,17 @@
+[package]
+name = "torogao-mobile-facade"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "The governed facade in front of Torogao Mobile's generation engines. Speaks the bounded workflow contract the mobile core uses (submit, poll history, fetch image) and enforces the governance seat-side: the workflow approval hash, the checkpoint and recipe-of-record checks, the prompt cap, and the content screen — the same code the core enforces client-side, so a tampered client cannot talk the seat into what the app refused. Engine-agnostic: torogao-gen is the engine of record (D-867/D-968) behind the engine contract (submit job, poll job, fetch image); an on-device engine can register behind the same seam."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+torogao-mobile-core = { path = "../torogao-mobile-core" }
+ureq = { version = "2", features = ["json"] }
+
+[[bin]]
+name = "torogao-mobile-facade"
+path = "src/main.rs"

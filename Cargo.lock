@@ -9393,6 +9393,17 @@ version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "ureq",
+]
+
+[[package]]
+name = "torogao-mobile-facade"
+version = "0.5.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "torogao-mobile-core",
  "ureq",
 ]
 
