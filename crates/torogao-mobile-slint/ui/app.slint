@@ -172,6 +172,17 @@ export component AppWindow inherits Window {
             }
         }
 
+        // The screens live in a scroll view: the seat and
+        // settings screens are taller than shorter displays
+        // (1080x1920 @ 420 dpi) and their lower controls fell
+        // off the bottom edge of the unpinned column.
+        screens-scroll := ScrollView {
+            vertical-stretch: 1;
+            VerticalBox {
+                width: screens-scroll.width - 16px;
+                alignment: start;
+                spacing: 10px;
+                padding: 0px;
         // ---- 18+ gate ----
         if !root.attested: VerticalBox {
             spacing: 10px;
@@ -254,7 +265,7 @@ export component AppWindow inherits Window {
                 font-size: 13px;
             }
             ListView {
-                vertical-stretch: 1;
+                height: 260px;
                 for job in root.jobs: HorizontalBox {
                     spacing: 8px;
                     padding-top: 3px;
@@ -308,7 +319,7 @@ export component AppWindow inherits Window {
                 }
             }
             ListView {
-                vertical-stretch: 1;
+                height: 220px;
                 for item[i] in root.gallery-items: Text {
                     text: item.label;
                     color: root.gallery-index == i ? #ffffff : #cfc6e8;
@@ -515,6 +526,8 @@ export component AppWindow inherits Window {
             }
         }
 
+            }
+        }
     }
 
     // ---- Tab bar (anchored to the window's bottom edge) ----
