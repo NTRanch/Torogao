@@ -1665,3 +1665,140 @@ pub fn run_simulation(
         "ticks": inputs.ticks,
     }))
 }
+
+// ----------------------------------------------------------------
+// estate-rng/1 golden vectors (runtime plan Rung R0, 2026-11-26).
+//
+// These vectors are the executable form of the format registry
+// record in crates/torogao-format/FORMATS.md. They were computed
+// independently of this implementation (SHA-256 + the SplitMix64
+// step, from the written spec) and pinned here: any drift in the
+// seed derivation or the step function — the two halves of the
+// `estate-rng/1` contract — fails this gate instead of silently
+// changing what a saved run replays to. The raw-from-zero vector
+// additionally pins the bare SplitMix64 step against the
+// algorithm's published first outputs for state 0.
+// ----------------------------------------------------------------
+#[cfg(test)]
+mod rng_golden_tests {
+    use super::{rng_next, stream_seed};
+    use crate::game::state::GameState;
+
+    /// Draws `n` values from `stream` on a fresh state whose
+    /// stream word starts at `word`.
+    fn draws_from(word: u64, stream: &str, n: usize) -> Vec<u64> {
+        let mut state = GameState::default();
+        state.rng.insert(stream.to_string(), word);
+        (0..n).map(|_| rng_next(&mut state, stream)).collect()
+    }
+
+    #[test]
+    fn golden_stream_seeds() {
+        // (run_seed, stream_id) -> genesis state word.
+        let cases: [(i64, &str, u64); 5] = [
+            (1, "battle", 0x4863_335D_30E0_D67E),
+            (42, "battle", 0x2E19_3A6D_A86F_7A46),
+            (1, "loot", 0xD791_59E0_6348_0E65),
+            (-7, "battle", 0xB3D5_A4FD_82AA_FABC),
+            (0, "default", 0xCA68_E982_8E7D_67C0),
+        ];
+        for (run_seed, stream_id, expected) in cases {
+            assert_eq!(
+                stream_seed(run_seed, stream_id),
+                expected,
+                "stream_seed({run_seed}, {stream_id:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn golden_draw_sequences() {
+        // First eight draws of named streams from named run seeds.
+        let cases: [(i64, &str, [u64; 8]); 4] = [
+            (
+                1,
+                "battle",
+                [
+                    0x1EEF_B6B2_14EA_E1EF,
+                    0xB0F1_3355_978C_89A2,
+                    0x0EC2_C7F4_7409_C7E6,
+                    0xC627_7026_EDBC_E037,
+                    0x8B12_FDB2_FB90_9F58,
+                    0x8071_1169_AFE7_DF1F,
+                    0x4E05_153D_E0E0_7709,
+                    0x4145_68CD_A821_37BD,
+                ],
+            ),
+            (
+                42,
+                "battle",
+                [
+                    0xA278_FA5F_DF8D_5CA2,
+                    0x6801_84E5_D632_E4E7,
+                    0x194C_B546_2647_C37D,
+                    0x31FC_F362_9D8A_6AF0,
+                    0x56F9_3ED4_A8C7_4DB2,
+                    0x2265_2CEF_E500_F2C3,
+                    0xAB62_D701_08E7_3977,
+                    0x99F2_BA8C_47D1_EDA0,
+                ],
+            ),
+            (
+                1,
+                "loot",
+                [
+                    0x37E4_2B2A_A6B5_0DFE,
+                    0x6148_6B50_4CD0_1A89,
+                    0xF032_CFE8_4F60_1A63,
+                    0xEC19_FEF4_0FE6_BA3C,
+                    0xBAA2_3F99_3737_5C88,
+                    0x0AD4_453E_226A_6926,
+                    0xCA8D_1192_AB5A_BEC5,
+                    0x8368_69C6_F4E2_74DB,
+                ],
+            ),
+            (
+                -7,
+                "battle",
+                [
+                    0xEEDA_F4C4_E670_7E41,
+                    0x280B_311F_55ED_85DE,
+                    0x3A2D_F0EB_9E96_C5FE,
+                    0xCD6A_5994_C30E_B0A3,
+                    0xEFAA_43A0_ABCD_8F1E,
+                    0x530F_37FA_5EF1_992B,
+                    0xF82E_0DC1_F607_00FB,
+                    0x3D41_CD81_F9DB_577B,
+                ],
+            ),
+        ];
+        for (run_seed, stream_id, expected) in cases {
+            let seed = stream_seed(run_seed, stream_id);
+            assert_eq!(
+                draws_from(seed, stream_id, 8),
+                expected,
+                "draws for stream_seed({run_seed}, {stream_id:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn golden_raw_splitmix_from_zero() {
+        // The bare step, no seed derivation: a stream whose word
+        // starts at 0 (the `or_insert(0)` path) yields the
+        // published SplitMix64 outputs for state 0.
+        let mut state = GameState::default();
+        let draws: Vec<u64> = (0..4).map(|_| rng_next(&mut state, "raw")).collect();
+        assert_eq!(
+            draws,
+            [
+                0xE220_A839_7B1D_CDAF,
+                0x6E78_9E6A_A1B9_65F4,
+                0x06C4_5D18_8009_454F,
+                0xF88B_B8A8_724C_81EC,
+            ]
+        );
+        // Four draws consumed exactly four steps of the word.
+        assert_eq!(state.rng["raw"], 4u64.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    }
+}
