@@ -87,6 +87,7 @@ build_tree() {
 }
 
 build_tree "$WS_ROOT" torogao-runtime runtime-twin
+build_tree "$WS_ROOT" torogao-runtime runtime-clip-twin
 build_tree "$LOOP_TREE" torogao-loop-host loop-twin
 
 bin_for() {
@@ -113,11 +114,12 @@ witness_bin() {
     # $1 = witness, $2 = target
     case $1 in
         interpreter) bin_for "$WS_ROOT" "$2" runtime-twin ;;
+        clip)        bin_for "$WS_ROOT" "$2" runtime-clip-twin ;;
         loop)        bin_for "$LOOP_TREE" "$2" loop-twin ;;
     esac
 }
 
-for witness in interpreter loop; do
+for witness in interpreter loop clip; do
     corpus="$CORPUS_DIR/$witness.corpus.json"
     echo "twin-gate: witness $witness"
     for target in $TARGETS; do

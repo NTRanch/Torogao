@@ -7,3 +7,4 @@
 //! here.
 
 pub mod author_game;
+pub mod clip_witness;

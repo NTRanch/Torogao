@@ -169,6 +169,32 @@ pub fn interpreter_corpus_doc() -> CorpusDoc {
     }
 }
 
+/// The corpus step index at which the clip witness's
+/// save/load check checkpoints (after this many steps).
+pub const CLIP_SAVE_AT: usize = 25;
+
+/// The clip witness corpus (hand-animation programme Rung
+/// H1): sixty plain advances. The witness consumes no
+/// commands; the script exists so the twin gate exercises the
+/// witness's chain, its save envelope, and its evaluated
+/// presentation across the hosted clip's full loop (49
+/// frames) and past the wrap.
+#[must_use]
+pub fn clip_corpus() -> Vec<Vec<Command>> {
+    (0..60).map(|_| vec![Command::Advance]).collect()
+}
+
+/// The clip witness corpus as a file-format document.
+#[must_use]
+pub fn clip_corpus_doc() -> CorpusDoc {
+    CorpusDoc {
+        format: CORPUS_FORMAT.to_string(),
+        core_id: "clip-witness:loop-hold".to_string(),
+        save_at: CLIP_SAVE_AT,
+        steps: clip_corpus(),
+    }
+}
+
 /// The Loop corpus as a file-format document.
 #[must_use]
 pub fn loop_corpus_doc() -> CorpusDoc {

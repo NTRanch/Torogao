@@ -44,6 +44,7 @@
 #![deny(missing_docs)]
 #![deny(clippy::float_arithmetic)]
 
+pub mod clip_eval;
 pub mod command;
 pub mod contract;
 pub mod core;
