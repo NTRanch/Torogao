@@ -42,6 +42,15 @@ layout(std140, set = 0, binding = 0) uniform Uniforms {
     vec4 toon7; // x: band window lo, y: band window hi,
                 // z: band view dependence (GAP-4),
                 // w: reserved
+    // Toon-layer rung 1 extension (2026-11-27). Appended
+    // after the gap-fix fields; prefix-declaring shaders
+    // stay legal.
+    vec4 toon8; // x: eye specular scale, y: tear glint
+                // strength, z: body-skin flush strength,
+                // w: skin specular scale (expression
+                // system)
+    vec4 toon9; // x: blush spread, yzw: flush colour
+                // (expression system)
 } u;
 layout(set = 0, binding = 13) uniform sampler2D shadow_map;
 // The joint matrices ride along in the fragment stage:
@@ -130,6 +139,15 @@ vec3 shade_toon(vec3 albedo, vec3 n_geom, vec3 n, vec3 v, float shadow,
         // then applies over it (GAP-5).
         albedo = prm.back_color;
     }
+    if (ts.id == 0) {
+        // Body-skin flush (rung 1): the flush colour
+        // mixes into the body skin ID's albedo only.
+        // The face plate (ID 1) flushes through the
+        // blush route below instead, so face flush and
+        // body flush never move together by default.
+        albedo = mix(albedo, u.toon9.yzw,
+                     u.toon8.z * TOON_FLUSH_MAX_MIX);
+    }
     float ndl_sun = dot(n, u.sun.xyz);
     float ramp_u = ndl_sun * 0.5 + 0.5;
     if (ts.id == 1) {
@@ -153,8 +171,15 @@ vec3 shade_toon(vec3 albedo, vec3 n_geom, vec3 n, vec3 v, float shadow,
         float sweep = 1.0 - (fdotl * 0.5 + 0.5);
         ramp_u = toon_face_lit(sdf.r, sweep, u.toon1.y);
         // Face tint set: ToonData settings since the
-        // gap-fix round (GAP-9), values unchanged.
-        albedo = mix(albedo, u.toon4.xyz, sdf.g * u.toon4.w);
+        // gap-fix round (GAP-9), values unchanged. The
+        // blush mask is gained by the rung-1 spread
+        // remap first: 2^(2*spread-1), the identity at
+        // spread 0.5, so low spread keeps only the
+        // strongest painted blush (cheek-local) and
+        // high spread lifts the faint mask (nose/ears).
+        float blush_mask = clamp(
+            sdf.g * pow(2.0, u.toon9.x * 2.0 - 1.0), 0.0, 1.0);
+        albedo = mix(albedo, u.toon4.xyz, blush_mask * u.toon4.w);
         albedo *= 1.0 - sdf.b * u.toon6.x;
         albedo = mix(albedo, u.toon5.xyz, sdf.a * u.toon5.w);
     }
@@ -177,12 +202,42 @@ vec3 shade_toon(vec3 albedo, vec3 n_geom, vec3 n, vec3 v, float shadow,
     // applied after the sun/fill sum.
     float shaded_mask = 1.0 - smoothstep(0.35, 0.65, ramp_u);
     col += u.toon2.xyz * (shaded_mask * u.toon2.w * ts.ao);
+    // Expression specular scales (rung 1): the eye IDs
+    // (5 sclera/highlight, 6 iris/pupil) take the eye
+    // gloss scale; the skin IDs (0 body, 1 face) take
+    // the skin sheen scale. Both are 1.0 at the authored
+    // rest state.
+    float spec_scale = 1.0;
+    if (ts.id == 5 || ts.id == 6) {
+        spec_scale = u.toon8.x;
+    } else if (ts.id == 0 || ts.id == 1) {
+        spec_scale = u.toon8.w;
+    }
     col += toon_spec(n, v, u.sun.xyz, ts.spec, ts.metal, albedo,
                      prm.spec_exponent, prm.spec_tint)
-        * (u.sun.w * shadow);
+        * (u.sun.w * shadow) * spec_scale;
     col += toon_spec(n, v, u.fill.xyz, ts.spec, ts.metal, albedo,
                      prm.spec_exponent, prm.spec_tint)
-        * u.fill.w;
+        * u.fill.w * spec_scale;
+    if ((ts.id == 5 || ts.id == 11) && u.toon8.y > 0.0) {
+        // Tear glint (rung 1): a soft white lobe over
+        // the sclera and the EyeShadowFilm, strength =
+        // tear_sheen. The film is the tear-film route's
+        // surface; the sclera carries the wet-eye read
+        // where no film fragment covers. The exponent
+        // is deliberately wide (28): a 90-power lobe at
+        // the proof rig's angle peaks near the 8-bit
+        // output's quantization step. Render-verifying
+        // this term needs a fixture whose eye surfaces
+        // actually carry IDs 5/11 -- Prima's current
+        // export assigns the whole eye kit a constant
+        // ID-2 packed texel (census, 2026-11-27), so on
+        // Prima the term has no fragment to land on.
+        col += vec3(1.0)
+            * (toon_spec(n, v, u.sun.xyz, 1.0, 0.0, vec3(1.0),
+                         28.0, 0.0)
+                * u.toon8.y * u.sun.w * shadow);
+    }
     // Rim (GAP-2): per-ID colour/size/smooth from the
     // parameter table; toon0.w stays the master strength.
     // Still gated by the terminator so it lives at the

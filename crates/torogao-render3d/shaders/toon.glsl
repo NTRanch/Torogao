@@ -20,6 +20,12 @@
 // Hair sheen strength at full spec mask and full sun.
 const float TOON_SHEEN_SCALE = 0.6;
 
+// Body-skin flush mix cap (toon-layer rung 1): the
+// flush parameter scales the mix toward the flush
+// colour, and the mix itself never exceeds this, so a
+// full flush tints the skin without replacing it.
+const float TOON_FLUSH_MAX_MIX = 0.6;
+
 struct ToonSample {
     float ao;
     float spec;

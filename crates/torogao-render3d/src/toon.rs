@@ -347,6 +347,39 @@ pub struct ToonSettings {
     /// full strength at every view angle, 1 = bands
     /// fade out facing the camera.
     pub band_view: f32,
+    /// Blush spread remap (toon-layer rung 1): the
+    /// painted face-SDF G mask is gained by
+    /// 2^(2 * spread - 1) before the blush mix, so low
+    /// values keep only the strongest painted blush
+    /// (cheek-local) and high values lift the faint
+    /// mask toward the nose and ears. 0.5 is the
+    /// identity gain: default renders are unchanged.
+    pub blush_spread: f32,
+    /// Eye specular scale (toon-layer rung 1): the
+    /// toon specular on the sclera/highlight (5) and
+    /// iris/pupil (6) material IDs is multiplied by
+    /// this. 1.0 = the authored spec; the expression
+    /// system maps eye_gloss onto 0.3..=2.0.
+    pub eye_spec_scale: f32,
+    /// Tear glint strength (toon-layer rung 1), 0..=1:
+    /// an added white Blinn lobe (exponent 28) on the
+    /// sclera (5) and EyeShadowFilm (11) material IDs.
+    /// 0.0 disables it.
+    pub tear_sheen: f32,
+    /// Body-skin flush (toon-layer rung 1), 0..=1:
+    /// the body skin ID's (0) albedo mixes toward
+    /// `flush_color`, capped at a 0.6 mix in the
+    /// shader. The face plate (ID 1) flushes through
+    /// the blush route instead.
+    pub skin_flush: f32,
+    /// Flush colour (linear) for `skin_flush`.
+    pub flush_color: [f32; 3],
+    /// Skin specular scale (toon-layer rung 1): the
+    /// toon specular on the body skin (0) and face
+    /// skin (1) material IDs is multiplied by this.
+    /// 1.0 = the authored spec; the expression system
+    /// maps skin_sheen onto 1.0..=2.2.
+    pub skin_spec_scale: f32,
 }
 
 impl Default for ToonSettings {
@@ -379,6 +412,16 @@ impl Default for ToonSettings {
             band_window_lo: 0.15,
             band_window_hi: 0.95,
             band_view: 0.5,
+            // Toon-layer rung 1: every default is the
+            // identity for its term, so renders that do
+            // not apply an expression vector are
+            // unchanged.
+            blush_spread: 0.5,
+            eye_spec_scale: 1.0,
+            tear_sheen: 0.0,
+            skin_flush: 0.0,
+            flush_color: [0.55, 0.18, 0.14],
+            skin_spec_scale: 1.0,
         }
     }
 }
@@ -436,6 +479,20 @@ impl ToonSettings {
         }
         if !(0.0..=1.0).contains(&self.band_mix) || !(0.0..=1.0).contains(&self.band_view) {
             return Err(bad("band mix/view"));
+        }
+        if !(0.0..=1.0).contains(&self.blush_spread) {
+            return Err(bad("blush_spread"));
+        }
+        if !(0.05..=4.0).contains(&self.eye_spec_scale)
+            || !(0.05..=4.0).contains(&self.skin_spec_scale)
+        {
+            return Err(bad("spec scale"));
+        }
+        if !(0.0..=1.0).contains(&self.tear_sheen) || !(0.0..=1.0).contains(&self.skin_flush) {
+            return Err(bad("tear/flush strength"));
+        }
+        if self.flush_color.iter().any(|v| !(0.0..=1.0).contains(v)) {
+            return Err(bad("flush_color"));
         }
         if !(-16.0..=16.0).contains(&self.band_offset) {
             return Err(bad("band_offset"));

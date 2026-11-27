@@ -95,6 +95,16 @@ struct Uniforms {
     /// x: band window lo, y: band window hi, z: band
     /// view dependence (GAP-4), w: reserved.
     toon7: [f32; 4],
+    // Toon-layer rung 1 extension (2026-11-27): appended
+    // after the gap-fix fields, mirroring the character
+    // shader's block.
+    /// x: eye specular scale, y: tear glint strength,
+    /// z: body-skin flush strength, w: skin specular
+    /// scale (expression system, brief section 3.2).
+    toon8: [f32; 4],
+    /// x: blush spread, yzw: flush colour
+    /// (expression system, brief section 3.2).
+    toon9: [f32; 4],
 }
 
 #[repr(C)]
@@ -837,14 +847,25 @@ impl RenderBackend for VulkanBackend {
         let albedo_dummy =
             self.upload_image(&dummy([255, 255, 255, 255]), vk::Format::R8G8B8A8_SRGB)?;
         // SAFETY: sampler creation with fixed parameters.
+        // REPEAT wrap (toon-layer rung 1, 2026-11-27): the
+        // estate's face UVs are authored in an integral V
+        // tile (the face plate, ears and lids carry
+        // TEXCOORD_0 V in [6.1, 7.0] in both the rung6 and
+        // the facestage5-hairlift artefacts), so clamped
+        // sampling pinned every face texture read to the
+        // edge row -- the face-SDF route (blush, nose and
+        // lip tints) read a constant row and never moved.
+        // Wrapping lands the fractional UV on the authored
+        // island; UVs already inside [0, 1] sample
+        // identically except at the border texels.
         let make_toon_sampler = |filter: vk::Filter| unsafe {
             device.create_sampler(
                 &vk::SamplerCreateInfo::default()
                     .mag_filter(filter)
                     .min_filter(filter)
-                    .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                    .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                    .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE),
+                    .address_mode_u(vk::SamplerAddressMode::REPEAT)
+                    .address_mode_v(vk::SamplerAddressMode::REPEAT)
+                    .address_mode_w(vk::SamplerAddressMode::REPEAT),
                 None,
             )
         };
@@ -1096,7 +1117,7 @@ impl RenderBackend for VulkanBackend {
             f64::from(scene.sun[1]),
             f64::from(scene.sun[2]),
         );
-        let (toon0, mut toon1, head_forward, head_right, toon2, toon3, toon4, toon5, toon6, toon7) =
+        let (toon0, mut toon1, head_forward, head_right, toon2, toon3, toon4, toon5, toon6, toon7, toon8, toon9) =
             match &scene.toon {
                 Some(toon) => {
                     let s = &toon.settings;
@@ -1141,6 +1162,18 @@ impl RenderBackend for VulkanBackend {
                         ],
                         [s.nose_strength, s.band_frequency, s.band_mix, s.band_offset],
                         [s.band_window_lo, s.band_window_hi, s.band_view, 0.0],
+                        [
+                            s.eye_spec_scale,
+                            s.tear_sheen,
+                            s.skin_flush,
+                            s.skin_spec_scale,
+                        ],
+                        [
+                            s.blush_spread,
+                            s.flush_color[0],
+                            s.flush_color[1],
+                            s.flush_color[2],
+                        ],
                     )
                 }
                 None => (
@@ -1154,6 +1187,12 @@ impl RenderBackend for VulkanBackend {
                     [0.0; 4],
                     [0.0; 4],
                     [0.0; 4],
+                    // Rung-1 identity: eye/skin spec at
+                    // the authored strength, no tear
+                    // glint, no flush, blush spread at
+                    // its identity gain.
+                    [1.0, 0.0, 0.0, 1.0],
+                    [0.5, 0.55, 0.18, 0.14],
                 ),
             };
         // Family B: the albedo flag is a model property,
@@ -1178,6 +1217,8 @@ impl RenderBackend for VulkanBackend {
             toon5,
             toon6,
             toon7,
+            toon8,
+            toon9,
         };
         uniforms_buffer.write(&[uniforms]);
         let joints_buffer = self.create_buffer(
