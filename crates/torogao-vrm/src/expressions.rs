@@ -130,12 +130,16 @@ pub struct MorphAddress {
     pub node: usize,
 }
 
-/// Build the channel → address table from a glTF JSON document:
-/// every mesh's declared target names, addressed through the
-/// node that carries the mesh. A channel carried by two meshes
-/// is ambiguous and refused by name.
-pub fn morph_addresses(json: &Value) -> VrmResult<BTreeMap<String, MorphAddress>> {
-    let mut out: BTreeMap<String, MorphAddress> = BTreeMap::new();
+/// Build the channel → addresses table from a glTF JSON
+/// document: every mesh's declared target names, addressed
+/// through the node that carries the mesh. A channel carried
+/// by several meshes is NOT ambiguous: the estate's panel model
+/// carries one shape key on every mesh it deforms (the plate
+/// and its parts), and a VRM expression binds each address —
+/// so a channel maps to every address that declares it, in
+/// node order.
+pub fn morph_addresses(json: &Value) -> VrmResult<BTreeMap<String, Vec<MorphAddress>>> {
+    let mut out: BTreeMap<String, Vec<MorphAddress>> = BTreeMap::new();
     let nodes = json
         .get("nodes")
         .and_then(Value::as_array)
@@ -158,11 +162,7 @@ pub fn morph_addresses(json: &Value) -> VrmResult<BTreeMap<String, MorphAddress>
                 index: target_index,
                 node: node_index,
             };
-            if out.insert(name.clone(), address).is_some() {
-                return Err(VrmError::MorphTargetAmbiguous {
-                    channel: name.clone(),
-                });
-            }
+            out.entry(name.clone()).or_default().push(address);
         }
     }
     Ok(out)
@@ -183,7 +183,7 @@ pub struct BuiltExpressions {
 /// in play must resolve in `addresses`.
 pub fn build_expressions(
     map: Option<&ExpressionMap>,
-    addresses: &BTreeMap<String, MorphAddress>,
+    addresses: &BTreeMap<String, Vec<MorphAddress>>,
 ) -> VrmResult<BuiltExpressions> {
     let mut preset: Map<String, Value> = Map::new();
     let mut custom: Map<String, Value> = Map::new();
@@ -205,14 +205,16 @@ pub fn build_expressions(
         // absence of a synthesized preset is not an error. (A
         // governed expression naming an absent channel IS an
         // error — that path goes through expression_json.)
-        if let Some(address) = addresses.get(*channel) {
+        if let Some(channel_addresses) = addresses.get(*channel) {
+            let binds: Vec<Value> = channel_addresses
+                .iter()
+                .map(|address| {
+                    json!({"index": address.index, "node": address.node, "weight": 1.0})
+                })
+                .collect();
             preset.insert(
                 (*preset_name).to_string(),
-                json!({
-                    "morphTargetBinds": [
-                        {"index": address.index, "node": address.node, "weight": 1.0}
-                    ]
-                }),
+                json!({ "morphTargetBinds": binds }),
             );
         }
     }
@@ -223,19 +225,22 @@ pub fn build_expressions(
 /// zero-weight binds dropped.
 fn expression_json(
     morphs: &BTreeMap<String, f64>,
-    addresses: &BTreeMap<String, MorphAddress>,
+    addresses: &BTreeMap<String, Vec<MorphAddress>>,
 ) -> VrmResult<Value> {
     let mut binds: Vec<(usize, usize, f64)> = Vec::new();
     for (channel, weight) in morphs {
         if *weight == 0.0 {
             continue;
         }
-        let address = addresses
-            .get(channel)
-            .ok_or_else(|| VrmError::MorphTargetAbsent {
-                channel: channel.clone(),
-            })?;
-        binds.push((address.node, address.index, *weight));
+        let channel_addresses =
+            addresses
+                .get(channel)
+                .ok_or_else(|| VrmError::MorphTargetAbsent {
+                    channel: channel.clone(),
+                })?;
+        for address in channel_addresses {
+            binds.push((address.node, address.index, *weight));
+        }
     }
     binds.sort_by_key(|bind| (bind.0, bind.1));
     let bind_values: Vec<Value> = binds
@@ -257,7 +262,7 @@ mod tests {
     use super::{ExpressionMap, MorphAddress, build_expressions, morph_addresses};
     use crate::error::VrmError;
 
-    fn addresses() -> BTreeMap<String, MorphAddress> {
+    fn addresses() -> BTreeMap<String, Vec<MorphAddress>> {
         let json = json!({
             "nodes": [{"mesh": 0, "name": "Body"}],
             "meshes": [{"extras": {"targetNames": ["Fac_Eye_Close", "Fac_Mth_Aa"]}}],
@@ -287,6 +292,34 @@ mod tests {
         // every preset whose channel the model carries.
         assert!(built.preset.contains_key("blink"));
         assert!(built.preset.contains_key("aa"));
+    }
+
+    /// A channel carried by two meshes binds BOTH addresses:
+    /// the estate panel carries one key on the plate and its
+    /// parts, and the expression must drive all of them.
+    #[test]
+    fn channel_on_two_meshes_binds_both() {
+        let json = json!({
+            "nodes": [{"mesh": 0, "name": "Plate"}, {"mesh": 1, "name": "Mouth"}],
+            "meshes": [
+                {"extras": {"targetNames": ["Fac_Mth_Smirk"]}},
+                {"extras": {"targetNames": ["Fac_Mth_Smirk"]}}
+            ],
+        });
+        let addresses = morph_addresses(&json).expect("addresses");
+        assert_eq!(addresses["Fac_Mth_Smirk"].len(), 2);
+        let map = ExpressionMap::parse(
+            r#"{"character":"T","format":"torogao-expression-map-3d/1",
+                "expressions":{"playful":{"morphs":{"Fac_Mth_Smirk":0.6}}}}"#,
+        )
+        .expect("map parses");
+        let built = build_expressions(Some(&map), &addresses).expect("builds");
+        let binds = built.custom["playful"]["morphTargetBinds"]
+            .as_array()
+            .expect("binds");
+        assert_eq!(binds.len(), 2);
+        assert_eq!(binds[0]["node"], 0);
+        assert_eq!(binds[1]["node"], 1);
     }
 
     /// A governed channel the model lacks is a named error.

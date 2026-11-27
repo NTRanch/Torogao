@@ -1,0 +1,462 @@
+// Splat projection (DESIGN.md section 6.1): the GPU
+// twin of the CPU pack's projection loop in
+// src/splat.rs (project_splats_sorted). Every
+// expression is transcribed with the pack's operation
+// order in fp64 and marked precise, so the on-device
+// records are the pack's records, not an approximation
+// of them: same culls in the same order, same
+// covariance/Jacobian/eigen math, same SH evaluation,
+// same Rung 4 light interaction. The two
+// transcendentals the pack needs (opacity sigmoid,
+// scale exp) are per-splat constants evaluated once
+// on the host by the pack's own functions and stored
+// activated in the record; sqrt is the only
+// transcendental here and is correctly rounded in
+// fp64 on both sides.
+//
+// Sort contract: each survivor writes a 96-bit radix
+// key (asset index, then the bitwise NOT of the
+// depth's total-order sortable u64, low word first)
+// that the radix passes order into the pack's total
+// order (depth descending under total_cmp, index
+// ascending). Culled splats write the all-ones depth
+// key — greater than every real depth's key, since
+// a surviving depth is positive and its NOT-sortable
+// key keeps a clear top bit — and sort after every
+// survivor; the survivor tally
+// (an atomic whose value is order-free) bounds the
+// draw.
+#version 460
+#extension GL_ARB_gpu_shader_fp64 : require
+#extension GL_ARB_gpu_shader_int64 : require
+
+layout(local_size_x = 256) in;
+
+struct SplatRecord {
+    vec4 pos_opacity;  // centre xyz, activated opacity
+    vec4 dc_pad;       // SH band 0 rgb
+    vec4 scale_pad;    // activated scales xyz
+    vec4 rot;          // quaternion (w, x, y, z)
+    vec4 rest[12];     // SH bands 1-3 (45 floats + pad)
+};
+
+struct Projected {
+    dvec2 centre_px;
+    dvec2 radii;
+    dvec2 axis1;
+    vec3 conic;
+    float opacity;
+    vec3 colour;
+    float z_ndc;
+    uint index;
+    uint culled;
+    uvec2 tail;
+};
+
+layout(std430, set = 0, binding = 0) readonly buffer Params {
+    double view[16];
+    double view_proj[16];
+    double rot_mat[9];
+    double sh_mats[83];
+    double light_vp[16];
+    dvec4 cam;      // camera pos xyz, near
+    dvec4 viewp;    // tan_half_x, tan_half_y, width, height
+    dvec4 trs_a;    // translation xyz, scale
+    dvec4 trs_q;    // layer quaternion (w, x, y, z)
+    dvec4 grade0;   // grade row 0 xyz, world_mix
+    dvec4 grade1;   // grade row 1 xyz, world r
+    dvec4 grade2;   // grade row 2 xyz, world g
+    dvec4 misc;     // world b
+    uvec4 flags;    // rotate, has_shadow, has_response, shadow size
+} params;
+
+layout(std430, set = 0, binding = 1) readonly buffer Records {
+    SplatRecord records[];
+};
+layout(std430, set = 0, binding = 2) buffer ProjectedOut {
+    Projected projected[];
+};
+layout(std430, set = 0, binding = 3) buffer KeysOut {
+    uvec4 keys[];
+};
+layout(std430, set = 0, binding = 4) buffer Counter {
+    uint survivor_count;
+};
+layout(set = 0, binding = 5) uniform sampler2D shadow_tex;
+
+layout(push_constant) uniform Push {
+    uint splat_count;
+    uint frame_base;
+} push;
+
+const double SH_C0 = 0.28209479177387814;
+const double SH_C1 = 0.4886025119029199;
+const double SH_C2_0 = 1.0925484305920792;
+const double SH_C2_1 = -1.0925484305920792;
+const double SH_C2_2 = 0.31539156525252;
+const double SH_C2_3 = -1.0925484305920792;
+const double SH_C2_4 = 0.5462742152960396;
+const double SH_C3_0 = -0.5900435899266435;
+const double SH_C3_1 = 2.890611442640554;
+const double SH_C3_2 = -0.4570457994644658;
+const double SH_C3_3 = 0.3731763325901154;
+const double SH_C3_4 = -0.4570457994644658;
+const double SH_C3_5 = 1.445305721320277;
+const double SH_C3_6 = -0.5900435899266435;
+
+dvec4 apply16(double m[16], dvec3 v) {
+    precise dvec4 outv;
+    outv.x = m[0] * v.x + m[4] * v.y + m[8] * v.z + m[12];
+    outv.y = m[1] * v.x + m[5] * v.y + m[9] * v.z + m[13];
+    outv.z = m[2] * v.x + m[6] * v.y + m[10] * v.z + m[14];
+    outv.w = m[3] * v.x + m[7] * v.y + m[11] * v.z + m[15];
+    return outv;
+}
+
+double rest_at(SplatRecord rec, uint idx45) {
+    return double(rec.rest[idx45 / 4u][idx45 % 4u]);
+}
+
+void write_culled(uint i) {
+    Projected p;
+    p.centre_px = dvec2(0.0);
+    p.radii = dvec2(0.0);
+    p.axis1 = dvec2(0.0);
+    p.conic = vec3(0.0);
+    p.opacity = 0.0;
+    p.colour = vec3(0.0);
+    p.z_ndc = 0.0;
+    p.index = i;
+    p.culled = 1u;
+    p.tail = uvec2(0u);
+    projected[i] = p;
+    keys[i] = uvec4(i, 0xFFFFFFFFu, 0xFFFFFFFFu, 0u);
+}
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= push.splat_count) {
+        return;
+    }
+    SplatRecord rec = records[push.frame_base + i];
+    float opacity_f = rec.pos_opacity.w;
+    // The pack's first cull, in f32 like the pack:
+    // opacity < 1/255.
+    if (opacity_f < float(1.0 / 255.0)) {
+        write_culled(i);
+        return;
+    }
+
+    // -- Rotation (layer TRS: x' = R * x first), the
+    // pack's rotate_cloud with its f32 round-trips.
+    precise dvec3 pos = dvec3(double(rec.pos_opacity.x), double(rec.pos_opacity.y), double(rec.pos_opacity.z));
+    precise dvec4 rotq = dvec4(double(rec.rot.x), double(rec.rot.y), double(rec.rot.z), double(rec.rot.w));
+    precise double rest[45];
+    for (uint k = 0u; k < 45u; k++) {
+        rest[k] = rest_at(rec, k);
+    }
+    if (params.flags.x == 1u) {
+        precise dvec3 rp;
+        rp.x = params.rot_mat[0] * pos.x + params.rot_mat[1] * pos.y + params.rot_mat[2] * pos.z;
+        rp.y = params.rot_mat[3] * pos.x + params.rot_mat[4] * pos.y + params.rot_mat[5] * pos.z;
+        rp.z = params.rot_mat[6] * pos.x + params.rot_mat[7] * pos.y + params.rot_mat[8] * pos.z;
+        pos = dvec3(double(float(rp.x)), double(float(rp.y)), double(float(rp.z)));
+        // quat_mul(layer, splat), (w, x, y, z).
+        precise dvec4 q;
+        q.x = params.trs_q.x * rotq.x - params.trs_q.y * rotq.y - params.trs_q.z * rotq.z - params.trs_q.w * rotq.w;
+        q.y = params.trs_q.x * rotq.y + params.trs_q.y * rotq.x + params.trs_q.z * rotq.w - params.trs_q.w * rotq.z;
+        q.z = params.trs_q.x * rotq.z - params.trs_q.y * rotq.w + params.trs_q.z * rotq.x + params.trs_q.w * rotq.y;
+        q.w = params.trs_q.x * rotq.w + params.trs_q.y * rotq.z - params.trs_q.z * rotq.y + params.trs_q.w * rotq.x;
+        rotq = dvec4(double(float(q.x)), double(float(q.y)), double(float(q.z)), double(float(q.w)));
+        // Wigner-D rotation of the SH rest, per channel.
+        precise double rotated[45];
+        for (uint ch = 0u; ch < 3u; ch++) {
+            uint base = ch * 15u;
+            // Band 1: 3x3 at sh_mats[0..9], coeffs 0..3.
+            for (uint m = 0u; m < 3u; m++) {
+                precise double acc = 0.0;
+                for (uint n = 0u; n < 3u; n++) {
+                    acc += params.sh_mats[m * 3u + n] * rest[base + n];
+                }
+                rotated[base + m] = acc;
+            }
+            // Band 2: 5x5 at sh_mats[9..34], coeffs 3..8.
+            for (uint m = 0u; m < 5u; m++) {
+                precise double acc = 0.0;
+                for (uint n = 0u; n < 5u; n++) {
+                    acc += params.sh_mats[9u + m * 5u + n] * rest[base + 3u + n];
+                }
+                rotated[base + 3u + m] = acc;
+            }
+            // Band 3: 7x7 at sh_mats[34..83], coeffs 8..15.
+            for (uint m = 0u; m < 7u; m++) {
+                precise double acc = 0.0;
+                for (uint n = 0u; n < 7u; n++) {
+                    acc += params.sh_mats[34u + m * 7u + n] * rest[base + 8u + n];
+                }
+                rotated[base + 8u + m] = acc;
+            }
+        }
+        for (uint k = 0u; k < 45u; k++) {
+            rest[k] = double(float(rotated[k]));
+        }
+    }
+
+    // -- Centre under the layer TRS, view transform.
+    precise dvec3 centre;
+    centre.x = pos.x * params.trs_a.w + params.trs_a.x;
+    centre.y = pos.y * params.trs_a.w + params.trs_a.y;
+    centre.z = pos.z * params.trs_a.w + params.trs_a.z;
+    precise dvec4 t = apply16(params.view, centre);
+    precise double depth = -t.z;
+    if (depth < params.cam.w) {
+        write_culled(i);
+        return;
+    }
+
+    // -- Covariance: asset -> layer -> view.
+    precise double qw = rotq.x;
+    precise double qx = rotq.y;
+    precise double qy = rotq.z;
+    precise double qz = rotq.w;
+    precise double norm = sqrt(qw * qw + qx * qx + qy * qy + qz * qz);
+    if (norm > 0.0) {
+        qw /= norm;
+        qx /= norm;
+        qy /= norm;
+        qz /= norm;
+    } else {
+        qw = 1.0;
+        qx = 0.0;
+        qy = 0.0;
+        qz = 0.0;
+    }
+    precise double r[3][3];
+    r[0][0] = 1.0 - 2.0 * (qy * qy + qz * qz);
+    r[0][1] = 2.0 * (qx * qy - qw * qz);
+    r[0][2] = 2.0 * (qx * qz + qw * qy);
+    r[1][0] = 2.0 * (qx * qy + qw * qz);
+    r[1][1] = 1.0 - 2.0 * (qx * qx + qz * qz);
+    r[1][2] = 2.0 * (qy * qz - qw * qx);
+    r[2][0] = 2.0 * (qx * qz - qw * qy);
+    r[2][1] = 2.0 * (qy * qz + qw * qx);
+    r[2][2] = 1.0 - 2.0 * (qx * qx + qy * qy);
+    precise double sc[3];
+    sc[0] = double(rec.scale_pad.x);
+    sc[1] = double(rec.scale_pad.y);
+    sc[2] = double(rec.scale_pad.z);
+    precise double s2c[3];
+    s2c[0] = sc[0] * sc[0];
+    s2c[1] = sc[1] * sc[1];
+    s2c[2] = sc[2] * sc[2];
+    precise double cov_asset[3][3];
+    for (uint a = 0u; a < 3u; a++) {
+        for (uint b = 0u; b < 3u; b++) {
+            precise double acc = 0.0;
+            for (uint k = 0u; k < 3u; k++) {
+                acc += r[a][k] * s2c[k] * r[b][k];
+            }
+            cov_asset[a][b] = acc;
+        }
+    }
+    precise double w3[3][3];
+    for (uint a = 0u; a < 3u; a++) {
+        for (uint b = 0u; b < 3u; b++) {
+            w3[a][b] = params.view[b * 4u + a];
+        }
+    }
+    precise double ls2 = params.trs_a.w * params.trs_a.w;
+    precise double cov_view[3][3];
+    for (uint a = 0u; a < 3u; a++) {
+        for (uint b = 0u; b < 3u; b++) {
+            precise double acc_a = 0.0;
+            for (uint k = 0u; k < 3u; k++) {
+                precise double acc_b = 0.0;
+                for (uint l = 0u; l < 3u; l++) {
+                    acc_b += w3[a][k] * cov_asset[k][l] * w3[b][l];
+                }
+                acc_a += acc_b;
+            }
+            cov_view[a][b] = ls2 * acc_a;
+        }
+    }
+
+    // -- Perspective Jacobian at the centre (NDC).
+    precise double tx = t.x;
+    precise double ty = t.y;
+    precise double tz = t.z;
+    precise double j[2][3];
+    j[0][0] = 1.0 / (params.viewp.x * -tz);
+    j[0][1] = 0.0;
+    j[0][2] = tx / (params.viewp.x * tz * tz);
+    j[1][0] = 0.0;
+    j[1][1] = 1.0 / (params.viewp.y * tz);
+    j[1][2] = -ty / (params.viewp.y * tz * tz);
+    precise double cov_ndc[2][2];
+    for (uint a = 0u; a < 2u; a++) {
+        for (uint b = 0u; b < 2u; b++) {
+            precise double acc_a = 0.0;
+            for (uint k = 0u; k < 3u; k++) {
+                precise double acc_b = 0.0;
+                for (uint l = 0u; l < 3u; l++) {
+                    acc_b += j[a][k] * cov_view[k][l] * j[b][l];
+                }
+                acc_a += acc_b;
+            }
+            cov_ndc[a][b] = acc_a;
+        }
+    }
+    precise double d0 = params.viewp.z / 2.0;
+    precise double d1 = params.viewp.w / 2.0;
+    precise double c00 = cov_ndc[0][0] * d0 * d0 + 0.3;
+    precise double c01 = cov_ndc[0][1] * d0 * d1;
+    precise double c11 = cov_ndc[1][1] * d1 * d1 + 0.3;
+    // The pack overwrites cov_px[1][0] with [0][1].
+    precise double det = c00 * c11 - c01 * c01;
+    if (det <= 0.0) {
+        write_culled(i);
+        return;
+    }
+    vec3 conic = vec3(float(c11 / det), float(-c01 / det), float(c00 / det));
+
+    // -- Eigen-decomposition for the quad extent.
+    precise double mid = (c00 + c11) / 2.0;
+    precise double half_diff = (c00 - c11) / 2.0;
+    precise double disc = sqrt(half_diff * half_diff + c01 * c01);
+    precise double l1 = mid + disc;
+    precise double l2 = max(mid - disc, 0.0);
+    precise dvec2 axis1;
+    if (abs(c01) > 1e-12) {
+        precise dvec2 v = dvec2(c01, l1 - c00);
+        precise double n = sqrt(v.x * v.x + v.y * v.y);
+        axis1 = dvec2(v.x / n, v.y / n);
+    } else if (c00 >= c11) {
+        axis1 = dvec2(1.0, 0.0);
+    } else {
+        axis1 = dvec2(0.0, 1.0);
+    }
+    precise dvec2 radii = dvec2(3.0 * sqrt(l1), 3.0 * sqrt(l2));
+
+    // -- Centre pixel + NDC depth.
+    precise dvec4 clip = apply16(params.view_proj, centre);
+    if (clip.w <= 0.0) {
+        write_culled(i);
+        return;
+    }
+    precise dvec2 centre_px = dvec2(
+        (clip.x / clip.w * 0.5 + 0.5) * params.viewp.z,
+        (clip.y / clip.w * 0.5 + 0.5) * params.viewp.w);
+
+    // -- SH colour for this camera.
+    precise dvec3 to_cam = dvec3(
+        params.cam.x - centre.x,
+        params.cam.y - centre.y,
+        params.cam.z - centre.z);
+    precise double len = sqrt(to_cam.x * to_cam.x + to_cam.y * to_cam.y + to_cam.z * to_cam.z);
+    if (len <= 0.0) {
+        write_culled(i);
+        return;
+    }
+    precise double dx = to_cam.x / len;
+    precise double dy = to_cam.y / len;
+    precise double dz = to_cam.z / len;
+    precise double xx = dx * dx;
+    precise double yy = dy * dy;
+    precise double zz = dz * dz;
+    precise double b1[3];
+    b1[0] = -SH_C1 * dy;
+    b1[1] = SH_C1 * dz;
+    b1[2] = -SH_C1 * dx;
+    precise double b2[5];
+    b2[0] = SH_C2_0 * dx * dy;
+    b2[1] = SH_C2_1 * dy * dz;
+    b2[2] = SH_C2_2 * (2.0 * zz - xx - yy);
+    b2[3] = SH_C2_3 * dx * dz;
+    b2[4] = SH_C2_4 * (xx - yy);
+    precise double b3[7];
+    b3[0] = SH_C3_0 * dy * (3.0 * xx - yy);
+    b3[1] = SH_C3_1 * dx * dy * dz;
+    b3[2] = SH_C3_2 * dy * (4.0 * zz - xx - yy);
+    b3[3] = SH_C3_3 * dz * (2.0 * zz - 3.0 * xx - 3.0 * yy);
+    b3[4] = SH_C3_4 * dx * (4.0 * zz - xx - yy);
+    b3[5] = SH_C3_5 * dz * (xx - yy);
+    b3[6] = SH_C3_6 * dx * (xx - 3.0 * yy);
+    vec3 colour;
+    for (uint ch = 0u; ch < 3u; ch++) {
+        uint base = ch * 15u;
+        precise double v = 0.5 + SH_C0 * double(rec.dc_pad[ch]);
+        for (uint k = 0u; k < 3u; k++) {
+            v += b1[k] * rest[base + k];
+        }
+        for (uint k = 0u; k < 5u; k++) {
+            v += b2[k] * rest[base + 3u + k];
+        }
+        for (uint k = 0u; k < 7u; k++) {
+            v += b3[k] * rest[base + 8u + k];
+        }
+        colour[ch] = float(max(v, 0.0));
+    }
+
+    // -- Rung 4 light interaction, at the centre.
+    if (params.flags.z == 1u) {
+        // LightResponse::apply: grade, then world tint.
+        vec3 graded_colour;
+        for (uint row = 0u; row < 3u; row++) {
+            dvec4 grow = row == 0u ? params.grade0 : (row == 1u ? params.grade1 : params.grade2);
+            precise double graded = grow.x * double(colour.x) + grow.y * double(colour.y) + grow.z * double(colour.z);
+            double world_c = row == 0u ? params.grade1.w : (row == 1u ? params.grade2.w : params.misc.x);
+            precise double tint = (1.0 - params.grade0.w) + params.grade0.w * world_c;
+            graded_colour[row] = float(max(graded * tint, 0.0));
+        }
+        colour = graded_colour;
+    }
+    if (params.flags.y == 1u) {
+        // SplatShadowMap::visibility: the shaders'
+        // shadow_factor with the normal-offset bias
+        // omitted (a centre has no normal).
+        precise dvec4 sclip = apply16(params.light_vp, centre);
+        float visibility = 1.0;
+        if (sclip.w != 0.0) {
+            precise dvec3 proj = dvec3(sclip.x / sclip.w, sclip.y / sclip.w, sclip.z / sclip.w);
+            precise dvec2 uv = dvec2(proj.x * 0.5 + 0.5, proj.y * 0.5 + 0.5);
+            if (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0 && proj.z <= 1.0) {
+                double s = double(params.flags.w);
+                int max_texel = int(params.flags.w) - 1;
+                precise double lit = 0.0;
+                for (int oy = -1; oy <= 1; oy++) {
+                    for (int ox = -1; ox <= 1; ox++) {
+                        double su = uv.x + double(ox) / s;
+                        double sv = uv.y + double(oy) / s;
+                        int col = clamp(int(floor(su * s)), 0, max_texel);
+                        int row = clamp(int(floor(sv * s)), 0, max_texel);
+                        float map_depth = texelFetch(shadow_tex, ivec2(col, row), 0).r;
+                        if (proj.z - 0.0008 <= double(map_depth)) {
+                            lit += 1.0;
+                        }
+                    }
+                }
+                visibility = float(lit / 9.0);
+            }
+        }
+        colour = colour * visibility;
+    }
+
+    // -- Survivor: record, total-order key, tally.
+    Projected p;
+    p.centre_px = centre_px;
+    p.radii = radii;
+    p.axis1 = axis1;
+    p.conic = conic;
+    p.opacity = opacity_f;
+    p.colour = colour;
+    p.z_ndc = float(clip.z / clip.w);
+    p.index = i;
+    p.culled = 0u;
+    p.tail = uvec2(0u);
+    projected[i] = p;
+    uint64_t bits = doubleBitsToUint64(depth);
+    uint64_t sortable = bits ^ (bits >= 0x8000000000000000UL ? 0xFFFFFFFFFFFFFFFFUL : 0x8000000000000000UL);
+    uint64_t desc = ~sortable;
+    keys[i] = uvec4(i, uint(desc & 0xFFFFFFFFUL), uint(desc >> 32), 0u);
+    atomicAdd(survivor_count, 1u);
+}

@@ -1,0 +1,67 @@
+// Radix sort, pass step 3 of 3 (DESIGN.md section
+// 6.1): stable scatter of one key byte. Each
+// workgroup stages its 256-key block in shared
+// memory; a key's destination is its block's
+// scanned offset for its byte plus its LOCAL RANK
+// (the number of earlier in-block keys with the
+// same byte) — a fixed sequential count, so the
+// scatter is stable and fully deterministic.
+// Out-of-range lanes carry the sentinel byte 256,
+// which no real key matches, so partial blocks
+// never perturb a rank.
+#version 460
+
+layout(local_size_x = 256) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer KeysIn {
+    uvec4 keys_in[];
+};
+layout(std430, set = 0, binding = 1) buffer KeysOut {
+    uvec4 keys_out[];
+};
+layout(std430, set = 0, binding = 3) readonly buffer BlockOffsets {
+    uint block_offsets[];
+};
+
+layout(push_constant) uniform Push {
+    uint splat_count;
+    uint word;
+    uint shift;
+    uint num_blocks;
+} push;
+
+shared uvec4 staged[256];
+shared uint staged_byte[256];
+
+uint key_word(uvec4 key) {
+    if (push.word == 0u) {
+        return key.x;
+    }
+    if (push.word == 1u) {
+        return key.y;
+    }
+    return key.z;
+}
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+    uint block = gl_WorkGroupID.x;
+    uint idx = block * 256u + tid;
+    bool live = idx < push.splat_count;
+    uvec4 key = live ? keys_in[idx] : uvec4(0u);
+    staged[tid] = key;
+    staged_byte[tid] = live ? ((key_word(key) >> push.shift) & 0xFFu) : 256u;
+    barrier();
+    if (!live) {
+        return;
+    }
+    uint byte_value = staged_byte[tid];
+    uint rank = 0u;
+    for (uint j = 0u; j < tid; j++) {
+        if (staged_byte[j] == byte_value) {
+            rank += 1u;
+        }
+    }
+    uint dst = block_offsets[byte_value * push.num_blocks + block] + rank;
+    keys_out[dst] = key;
+}

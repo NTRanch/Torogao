@@ -1,0 +1,112 @@
+// Splat gather (DESIGN.md section 6.1): walk the
+// sorted keys, read each survivor's projected
+// record, and emit the quad stream the existing
+// splat graphics pipeline draws — the same
+// SplatVertex records the CPU pack emits, computed
+// with the pack's emit arithmetic in fp64 (radii and
+// axes are stored as doubles in the projected
+// record for exactly this). Thread 0 also writes
+// the indirect draw command from the survivor
+// tally, so the draw count never round-trips to
+// the host.
+#version 460
+#extension GL_ARB_gpu_shader_fp64 : require
+
+layout(local_size_x = 256) in;
+
+struct Projected {
+    dvec2 centre_px;
+    dvec2 radii;
+    dvec2 axis1;
+    vec3 conic;
+    float opacity;
+    vec3 colour;
+    float z_ndc;
+    uint index;
+    uint culled;
+    uvec2 tail;
+};
+
+// The quad stream is written as raw floats, NOT a
+// SplatVertex struct array: in std430 a struct's
+// size rounds up to its alignment (16 for vec4
+// members), which would stride the stream at 64
+// bytes against the pack's packed 56-byte vertex.
+// Fourteen floats per vertex, the pack's field
+// order: clip(4), conic(4), colour(4), offset(2).
+
+layout(std430, set = 0, binding = 0) readonly buffer ProjectedIn {
+    Projected projected[];
+};
+layout(std430, set = 0, binding = 1) readonly buffer KeysIn {
+    uvec4 keys[];
+};
+layout(std430, set = 0, binding = 2) readonly buffer Counter {
+    uint survivor_count;
+};
+layout(std430, set = 0, binding = 3) buffer VerticesOut {
+    float stream[];
+};
+layout(std430, set = 0, binding = 4) buffer IndirectOut {
+    uint index_count;
+    uint instance_count;
+    uint first_index;
+    int vertex_offset;
+    uint first_instance;
+} indirect;
+
+layout(push_constant) uniform Push {
+    uint splat_count;
+    uint width;
+    uint height;
+} push;
+
+void main() {
+    // One thread per emitted vertex: quad = tid / 4,
+    // corner = tid % 4 (four times the gather
+    // parallelism of one thread per quad; the four
+    // corner threads of a quad re-read its record
+    // through the cache).
+    uint tid = gl_GlobalInvocationID.x;
+    if (tid == 0u) {
+        indirect.index_count = survivor_count * 6u;
+        indirect.instance_count = 1u;
+        indirect.first_index = 0u;
+        indirect.vertex_offset = 0;
+        indirect.first_instance = 0u;
+    }
+    uint quad = tid / 4u;
+    uint corner = tid % 4u;
+    if (quad >= survivor_count || quad >= push.splat_count) {
+        return;
+    }
+    Projected p = projected[keys[quad].x];
+    precise dvec2 axis2 = dvec2(-p.axis1.y, p.axis1.x);
+    precise double wf = double(push.width);
+    precise double hf = double(push.height);
+    // The pack's corner order: (-,-), (+,-), (+,+), (-,+).
+    const dvec2 signs[4] = dvec2[4](
+        dvec2(-1.0, -1.0), dvec2(1.0, -1.0), dvec2(1.0, 1.0), dvec2(-1.0, 1.0));
+    {
+        dvec2 sign = signs[corner];
+        precise dvec2 off = dvec2(
+            sign.x * p.radii.x * p.axis1.x + sign.y * p.radii.y * axis2.x,
+            sign.x * p.radii.x * p.axis1.y + sign.y * p.radii.y * axis2.y);
+        precise dvec2 px = p.centre_px + off;
+        uint base = tid * 14u;
+        stream[base + 0u] = float(px.x / wf * 2.0 - 1.0);
+        stream[base + 1u] = float(px.y / hf * 2.0 - 1.0);
+        stream[base + 2u] = p.z_ndc;
+        stream[base + 3u] = 1.0;
+        stream[base + 4u] = p.conic.x;
+        stream[base + 5u] = p.conic.y;
+        stream[base + 6u] = p.conic.z;
+        stream[base + 7u] = p.opacity;
+        stream[base + 8u] = p.colour.r;
+        stream[base + 9u] = p.colour.g;
+        stream[base + 10u] = p.colour.b;
+        stream[base + 11u] = 0.0;
+        stream[base + 12u] = float(off.x);
+        stream[base + 13u] = float(off.y);
+    }
+}
