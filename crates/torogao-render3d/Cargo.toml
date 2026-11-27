@@ -43,3 +43,7 @@ path = "src/bin/toon_still.rs"
 [[bin]]
 name = "render3d-expr-still"
 path = "src/bin/expr_still.rs"
+
+[[bin]]
+name = "render3d-live"
+path = "src/bin/live.rs"
