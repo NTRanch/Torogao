@@ -1,0 +1,109 @@
+{
+ "format": "torogao-render3d/expr-stages/1",
+ "girls": {
+  "prima": {
+   "basis": "Kama PROFILES section 11(c): S1 tell is composure performed while her eyes change -- heart pupils kindle at S1 (her Fac_ state is an early tell, unique in the cast); S3 heart pupils at full with the rolled-eye peak register (Aa/Shout); S4 crossed-eye soft focus, tongue register, savoring.",
+   "offsets": {
+    "S0": {},
+    "S1": {
+     "blush_intensity": 0.05,
+     "brow_angle": 0.05,
+     "pupil_shape": 0.45
+    },
+    "S2": {
+     "mouth_open": 0.05,
+     "pupil_shape": 0.7
+    },
+    "S3": {
+     "eyelid_aperture": -0.1,
+     "mouth_open": 0.1,
+     "pupil_shape": 1.0
+    },
+    "S4": {
+     "eye_gloss": 0.05,
+     "mouth_shape": -0.05,
+     "pupil_shape": 0.35,
+     "tear_sheen": 0.1
+    }
+   }
+  }
+ },
+ "note": "Stage vectors for the expression/arousal parameter system (toon-layer brief section 3.3). Defaults authored from the Kama PROFILES shared stage scale; per-girl offsets from the girl's PROFILES entry. A stage is a parameter vector, not a baked face: any intermediate vector is renderable, and vector_at lerps between neighbouring stages. S4 is authored, not S1 reversed: gloss stays high, aperture and muscle tone drop, flush decays slower than the arousal channels.",
+ "stages": {
+  "S0": {
+   "blush_intensity": 0.15,
+   "blush_spread": 0.3,
+   "brow_angle": 0.5,
+   "brow_raise": 0.5,
+   "eye_gloss": 0.35,
+   "eyelid_aperture": 0.95,
+   "mouth_open": 0.05,
+   "mouth_shape": 0.15,
+   "pupil_dilate": 0.5,
+   "pupil_shape": 0.0,
+   "skin_flush": 0.05,
+   "skin_sheen": 0.1,
+   "tear_sheen": 0.0
+  },
+  "S1": {
+   "blush_intensity": 0.35,
+   "blush_spread": 0.4,
+   "brow_angle": 0.55,
+   "brow_raise": 0.55,
+   "eye_gloss": 0.5,
+   "eyelid_aperture": 0.85,
+   "mouth_open": 0.15,
+   "mouth_shape": 0.25,
+   "pupil_dilate": 0.55,
+   "pupil_shape": 0.0,
+   "skin_flush": 0.2,
+   "skin_sheen": 0.25,
+   "tear_sheen": 0.05
+  },
+  "S2": {
+   "blush_intensity": 0.55,
+   "blush_spread": 0.55,
+   "brow_angle": 0.65,
+   "brow_raise": 0.6,
+   "eye_gloss": 0.65,
+   "eyelid_aperture": 0.7,
+   "mouth_open": 0.35,
+   "mouth_shape": 0.5,
+   "pupil_dilate": 0.6,
+   "pupil_shape": 0.0,
+   "skin_flush": 0.4,
+   "skin_sheen": 0.45,
+   "tear_sheen": 0.15
+  },
+  "S3": {
+   "blush_intensity": 0.8,
+   "blush_spread": 0.75,
+   "brow_angle": 0.8,
+   "brow_raise": 0.7,
+   "eye_gloss": 0.85,
+   "eyelid_aperture": 0.45,
+   "mouth_open": 0.7,
+   "mouth_shape": 0.9,
+   "pupil_dilate": 0.65,
+   "pupil_shape": 0.0,
+   "skin_flush": 0.7,
+   "skin_sheen": 0.7,
+   "tear_sheen": 0.45
+  },
+  "S4": {
+   "blush_intensity": 0.5,
+   "blush_spread": 0.6,
+   "brow_angle": 0.6,
+   "brow_raise": 0.45,
+   "eye_gloss": 0.8,
+   "eyelid_aperture": 0.55,
+   "mouth_open": 0.25,
+   "mouth_shape": 0.2,
+   "pupil_dilate": 0.55,
+   "pupil_shape": 0.0,
+   "skin_flush": 0.5,
+   "skin_sheen": 0.55,
+   "tear_sheen": 0.3
+  }
+ }
+}

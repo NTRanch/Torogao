@@ -51,6 +51,18 @@ layout(std430, set = 0, binding = 12) readonly buffer MorphWeights {
 layout(std430, set = 0, binding = 15) readonly buffer Uvs {
     vec4 in_uv[];
 };
+// Gap-fix channels (2026-11-26). Binding 23: planar UV
+// (GAP-4) — xy = TEXCOORD_2, z = 1 when the mesh carried
+// TEXCOORD_2, else 0 (the whole buffer is zeros then).
+layout(std430, set = 0, binding = 23) readonly buffer PlanarUv {
+    vec4 in_planar[];
+};
+// Binding 24: shading (toon) normal (GAP-8) — xyz =
+// TEXCOORD_3 direction in bind space, w = 1 when the
+// mesh carried TEXCOORD_3, else 0.
+layout(std430, set = 0, binding = 24) readonly buffer ToonNormals {
+    vec4 in_toon_nrm[];
+};
 
 layout(push_constant) uniform Push {
     vec4 base_color;
@@ -70,12 +82,36 @@ layout(location = 1) out vec3 v_normal;
 layout(location = 2) out vec3 v_world_pos;
 layout(location = 3) out vec4 v_color1;
 layout(location = 4) out vec4 v_uvs;
+layout(location = 5) out vec3 v_planar;
+layout(location = 6) out vec4 v_toon_normal;
 
 void main() {
     uint v = uint(gl_VertexIndex);
     vec3 pos;
     vec3 nrm;
     skin_vertex(v, pos, nrm);
+    v_planar = in_planar[v].xyz;
+    // The shading normal skins by the same joint weights
+    // as the geometric normal but takes NO morph deltas:
+    // it is authored as a finished direction field, and
+    // morphing it would double-apply the shape work.
+    vec4 tn = in_toon_nrm[v];
+    if (tn.w > 0.5) {
+        uvec4 joints = in_joints[v];
+        vec4 weights = in_weights[v];
+        vec3 acc = vec3(0.0);
+        for (int slot = 0; slot < 4; slot++) {
+            float w = weights[slot];
+            if (w == 0.0) {
+                continue;
+            }
+            acc += w * (mat3(in_joint_matrices[joints[slot]]) * tn.xyz);
+        }
+        float len = length(acc);
+        v_toon_normal = vec4(len > 1e-8 ? acc / len : nrm, 1.0);
+    } else {
+        v_toon_normal = vec4(0.0, 0.0, 0.0, 0.0);
+    }
     // xy: TEXCOORD_0 (face SDF space); zw: TEXCOORD_1
     // (packed-lightmap space). Consumed by the toon
     // model only; the legacy path ignores them.

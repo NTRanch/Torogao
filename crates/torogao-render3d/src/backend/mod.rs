@@ -43,6 +43,13 @@ pub struct PackedMesh {
     /// (face SDF space), zw = TEXCOORD_1 (packed-lightmap
     /// space). Zeros when the mesh carries no UVs.
     pub uv: Vec<[f32; 4]>,
+    /// Planar UV set (GAP-4): xy = TEXCOORD_2, z = 1
+    /// when the mesh carried TEXCOORD_2 else 0, w = 0.
+    pub planar: Vec<[f32; 4]>,
+    /// Shading (toon) normal set (GAP-8): TEXCOORD_3
+    /// verbatim (xyz = bind-space direction, w =
+    /// authored flag). All-zero when absent.
+    pub toon_normal: Vec<[f32; 4]>,
     /// Outline rows (Amendment A4): xyz = outline normal
     /// (bind space), w = outline width from the RAW
     /// COLOR_0 alpha — the width channel lives in COLOR_0
@@ -335,6 +342,19 @@ pub fn pack_scene(model: &Model, scene: &ArcScene) -> PackedScene {
                 .zip(&mesh.texcoord1)
                 .map(|(uv0, uv1)| [uv0[0], uv0[1], uv1[0], uv1[1]])
                 .collect(),
+            planar: mesh
+                .texcoord2
+                .iter()
+                .map(|uv2| {
+                    [
+                        uv2[0],
+                        uv2[1],
+                        if mesh.has_texcoord2 { 1.0 } else { 0.0 },
+                        0.0,
+                    ]
+                })
+                .collect(),
+            toon_normal: mesh.toon_normal.clone(),
             outline: mesh
                 .outline_normal
                 .iter()

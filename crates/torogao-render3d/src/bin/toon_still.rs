@@ -108,6 +108,7 @@ fn run() -> Result<(), String> {
             ramp: tex("ramp")?,
             face_sdf: tex("face_sdf")?,
             sphere: tex("sphere")?,
+            params: None,
         },
         settings: ToonSettings {
             head_joint: head["joint_index"].as_i64().ok_or("head joint")? as i32,

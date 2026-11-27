@@ -34,6 +34,8 @@ pub mod compare;
 #[forbid(unsafe_code)]
 pub mod error;
 #[forbid(unsafe_code)]
+pub mod expr;
+#[forbid(unsafe_code)]
 pub mod math;
 #[forbid(unsafe_code)]
 pub mod model;

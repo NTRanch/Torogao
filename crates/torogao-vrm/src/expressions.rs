@@ -208,9 +208,7 @@ pub fn build_expressions(
         if let Some(channel_addresses) = addresses.get(*channel) {
             let binds: Vec<Value> = channel_addresses
                 .iter()
-                .map(|address| {
-                    json!({"index": address.index, "node": address.node, "weight": 1.0})
-                })
+                .map(|address| json!({"index": address.index, "node": address.node, "weight": 1.0}))
                 .collect();
             preset.insert(
                 (*preset_name).to_string(),
