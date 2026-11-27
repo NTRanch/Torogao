@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.6.0 — 2026-11-27
+
+Cut from the mobile release line (pax/torogao-mobile-20261126,
+tip a14dc2d) over the 0.5.3 CLI release line. Contents, each
+with its record of record:
+
+- **Torogao Mobile completed** — the Slint Android app ships the
+  Lane C helper strips wired into the helper card (Prima/Lana/
+  Sirena × idle/guiding/waiting/success/error), gates re-run on
+  the final tree (mobile tests 59/59 + 13/13, clippy/fmt clean,
+  AVD upgrade harness 14/14, release bundle hash-verified),
+  branch pushed and read-back verified. Record:
+  torogao-mobile-tonight-20261127/RECORD.md. Publication
+  (gate 7) remains the Owner's act; nothing was submitted.
+- **Slint 1.19.1 landed** as the one game face (Decision 6,
+  resolved 2026-11-27): the mobile shell moved from the 1.14-era
+  pin to Slint 1.19.1. Record: commit a460c7b on the mobile
+  branch; feasibility record
+  slint-119-feasibility-20261126/RECORD.md.
+- **torogao-format D-JSON cure** — the JSON writer now sorts
+  object keys by construction instead of leaning on serde_json's
+  map order, which workspace feature unification silently broke
+  (the one pre-existing workspace test failure at the mobile
+  tip). Record: torogao-format-jsonfmt-20261127/RECORD.md.
+
+Version surfaces: workspace package and the torogao-cli (server)
+crate to 0.6.0; server.json and the agent card to 0.6.0;
+Android versionName 0.6.0, versionCode 3 (monotonic from 2).
+Not included: the torogao-voice determinism lane — its record
+shows it BLOCKED before any fix landed, so no voice change is
+claimed here.
+
 ## 0.5.0 — 2026-11-15
 
 The first release cut from `main` since the 2026-11-01 version

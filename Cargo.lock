@@ -9970,7 +9970,7 @@ checksum = "009dbb7700f11c55ef83aebbe4c0e9cf1f1ac0844bd8d6f00dc38f302026e13a"
 
 [[package]]
 name = "torogao"
-version = "0.5.3"
+version = "0.6.0"
 dependencies = [
  "rmcp",
  "serde_json",
@@ -9983,7 +9983,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-app"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "bytemuck",
  "egui",
@@ -10007,7 +10007,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-author"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -10018,7 +10018,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-coin"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "ron",
  "serde",
@@ -10026,7 +10026,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-coin-android"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "android-activity 0.6.1",
  "android_logger",
@@ -10038,7 +10038,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-companion"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "egui",
  "egui-wgpu",
@@ -10057,7 +10057,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-engine"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "serde_json",
  "torogao-format",
@@ -10065,7 +10065,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-format"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "ron",
  "serde",
@@ -10074,7 +10074,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-gen"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "candle-core",
  "candle-nn",
@@ -10089,7 +10089,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-gencond"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "png 0.18.1",
  "serde",
@@ -10099,11 +10099,11 @@ dependencies = [
 
 [[package]]
 name = "torogao-jam-laws"
-version = "0.5.0"
+version = "0.6.0"
 
 [[package]]
 name = "torogao-mobile-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -10113,7 +10113,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-mobile-facade"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -10123,7 +10123,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-mobile-gpui"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "gpui",
  "torogao-mobile-core",
@@ -10131,7 +10131,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-mobile-slint"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "slint",
  "slint-build",
@@ -10140,7 +10140,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-modapp"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "ron",
  "serde",
@@ -10148,7 +10148,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-motion-clip"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -10157,11 +10157,11 @@ dependencies = [
 
 [[package]]
 name = "torogao-osc"
-version = "0.5.0"
+version = "0.6.0"
 
 [[package]]
 name = "torogao-paint"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "png 0.18.1",
  "ron",
@@ -10171,7 +10171,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-pen"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "libc",
  "torogao-paint",
@@ -10179,7 +10179,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-rig"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "image",
  "serde_json",
@@ -10187,7 +10187,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-session"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "rmcp",
  "serde",
@@ -10200,7 +10200,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-tui"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "crossterm 0.28.1",
  "ratatui",
@@ -10212,7 +10212,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-tui-bakeoff-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "ed25519-dalek",
  "ml-kem",
@@ -10226,7 +10226,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-viseme"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -10235,14 +10235,14 @@ dependencies = [
 
 [[package]]
 name = "torogao-vmc"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "sha2 0.10.9",
 ]
 
 [[package]]
 name = "torogao-voice"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -10251,7 +10251,7 @@ dependencies = [
 
 [[package]]
 name = "torogao-vrm"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "ron",
  "serde",
