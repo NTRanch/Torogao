@@ -28,6 +28,7 @@ pub mod model;
 pub mod motion_clip;
 pub mod parse_error;
 pub mod payload;
+pub mod png_seq;
 pub mod raw;
 pub mod validate;
 pub mod value;

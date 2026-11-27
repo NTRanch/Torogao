@@ -1,17 +1,23 @@
 //! Drawn-clip import and playback (`torogao-drawn-clip/1`,
 //! drawn-animation spike, 2026-11-27).
 //!
-//! Import reads a `.kra` through `torogao_format::kra`
-//! (no Krita process) and writes a frozen clip directory:
-//! `clip.json` plus one PNG payload per distinct drawing
-//! under `drawings/`. Playback loads a frozen clip,
-//! verifies every payload against its declared pixel
-//! hash, and composites each frame through
-//! `torogao_paint::Document` — the same integer composite
-//! path the egui paint surface renders — writing one PNG
-//! per frame. Substitution only: the drawing in force is
-//! the latest key at or before the frame (hold
-//! semantics), exactly as the format specifies.
+//! Import reads a source through `torogao_format` — a
+//! `.kra` through `torogao_format::kra` (no Krita process
+//! anywhere in the path), or PNG drawings through
+//! `torogao_format::png_seq` (a `torogao-drawn-seq/1`
+//! manifest, or a numbered render dump) — and writes a
+//! frozen clip directory: `clip.json` plus one PNG
+//! payload per distinct drawing under `drawings/`. Both
+//! routes converge on the one emitter, so a clip's kind
+//! never depends on which tool authored it. Playback
+//! loads a frozen clip, verifies every payload against
+//! its declared pixel hash, and composites each frame
+//! through `torogao_paint::Document` — the same integer
+//! composite path the egui paint surface renders —
+//! writing one PNG per frame. Substitution only: the
+//! drawing in force is the latest key at or before the
+//! frame (hold semantics), exactly as the format
+//! specifies.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -20,7 +26,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use torogao_format::drawn_clip;
 use torogao_format::jsonfmt::to_d_json;
-use torogao_format::kra;
+use torogao_format::kra::{self, KraRaster};
+use torogao_format::png_seq;
 use torogao_paint::document::{BaseRaster, Document};
 use torogao_paint::layer::{BlendMode, Layer, LayerId};
 
@@ -34,6 +41,28 @@ pub struct DrawnImportOptions {
     pub out_dir: PathBuf,
     /// The clip's name (validated by the format).
     pub name: String,
+    /// Freeze compiler string.
+    pub compiler: String,
+    /// Freeze band string.
+    pub band: String,
+}
+
+/// Options for `--drawn-import-png`.
+pub struct DrawnImportPngOptions {
+    /// The directory holding the PNG drawings.
+    pub source_dir: PathBuf,
+    /// The `torogao-drawn-seq/1` manifest, for a
+    /// manifest-driven import; without one the
+    /// directory is read as a numbered sequence.
+    pub manifest: Option<PathBuf>,
+    /// The clip directory to create.
+    pub out_dir: PathBuf,
+    /// The clip's name for a numbered-sequence import
+    /// (a manifest carries its own).
+    pub name: String,
+    /// Frames per second for a numbered-sequence
+    /// import (a manifest carries its own).
+    pub fps: i64,
     /// Freeze compiler string.
     pub compiler: String,
     /// Freeze band string.
@@ -64,6 +93,48 @@ fn io(context: &'static str) -> impl Fn(std::io::Error) -> AppError {
     }
 }
 
+/// One track in the shape the clip emitter consumes:
+/// the common denominator of the `.kra` reader's
+/// layers and the PNG-sequence reader's tracks.
+struct EmitTrack {
+    name: String,
+    blend: String,
+    opacity: u8,
+    visible: bool,
+    keys: Vec<(i64, KraRaster)>,
+}
+
+/// Everything the clip emitter needs, assembled by
+/// either importer.
+struct EmitClip {
+    /// Label for the import report line.
+    source_label: String,
+    /// The clip directory to create.
+    out_dir: PathBuf,
+    /// The clip's name.
+    name: String,
+    /// Freeze compiler string.
+    compiler: String,
+    /// Freeze band string.
+    band: String,
+    /// Canvas `(width, height)`.
+    canvas: (u32, u32),
+    /// Timeline frames per second.
+    fps: i64,
+    /// Playback range start (inclusive).
+    range_from: i64,
+    /// Playback range end (inclusive).
+    range_to: i64,
+    /// Whether playback loops.
+    loop_playback: bool,
+    /// The matte under the stack.
+    matte: [u8; 4],
+    /// Tracks, bottom first.
+    tracks: Vec<EmitTrack>,
+    /// The provenance object (covered by the freeze).
+    provenance: Value,
+}
+
 /// `--drawn-import`: `.kra` in, frozen drawn clip out.
 pub fn run_drawn_import(options: &DrawnImportOptions) -> AppResult<i32> {
     let bytes = std::fs::read(&options.kra_path).map_err(io("read kra"))?;
@@ -89,29 +160,177 @@ pub fn run_drawn_import(options: &DrawnImportOptions) -> AppResult<i32> {
         doc.census.color_space,
     );
 
-    let clip_json_path = options.out_dir.join("clip.json");
+    let tracks: Vec<EmitTrack> = doc
+        .layers
+        .iter()
+        .map(|layer| EmitTrack {
+            name: layer.name.clone(),
+            blend: layer.blend.clone(),
+            opacity: layer.opacity,
+            visible: layer.visible,
+            keys: layer
+                .frames
+                .iter()
+                .map(|frame| (frame.time, frame.raster.clone()))
+                .collect(),
+        })
+        .collect();
+    let provenance = json!({
+        "source": {
+            "kind": "kra",
+            "file": options
+                .kra_path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            "sha256": source_sha,
+            "document_name": doc.name,
+        },
+        "census": {
+            "layers": doc.census.layer_count,
+            "keyframed_layers": doc.census.keyframed_layers,
+            "keyframes": doc.census.keyframe_count,
+            "tiles": doc.census.tile_count,
+            "blend_modes": doc.census.blend_modes,
+            "node_types": doc.census.node_types,
+            "color_space": doc.census.color_space,
+        },
+    });
+    emit_clip(&EmitClip {
+        source_label: options.kra_path.display().to_string(),
+        out_dir: options.out_dir.clone(),
+        name: options.name.clone(),
+        compiler: options.compiler.clone(),
+        band: options.band.clone(),
+        canvas: (doc.width, doc.height),
+        fps,
+        range_from,
+        range_to,
+        loop_playback: true,
+        // The matte the source renderer composited onto.
+        // For this witness document the banked Krita
+        // renders are opaque white outside the figure and
+        // its stored merged image agrees, so the matte is
+        // recorded as data here, per file, never assumed
+        // silently by the player.
+        matte: [255, 255, 255, 255],
+        tracks,
+        provenance,
+    })
+}
+
+/// `--drawn-import-png`: PNG drawings in (a
+/// `torogao-drawn-seq/1` manifest, or a numbered
+/// sequence when no manifest is given), frozen drawn
+/// clip out.
+pub fn run_drawn_import_png(options: &DrawnImportPngOptions) -> AppResult<i32> {
+    let doc = match &options.manifest {
+        Some(manifest_path) => png_seq::read_png_manifest(manifest_path)
+            .map_err(|error| AppError::Format(error.to_string()))?,
+        None => png_seq::read_png_sequence(
+            &options.source_dir,
+            &png_seq::SequenceParams {
+                name: options.name.clone(),
+                fps: options.fps,
+                loop_playback: true,
+                matte: [0, 0, 0, 0],
+            },
+        )
+        .map_err(|error| AppError::Format(error.to_string()))?,
+    };
+
+    println!(
+        "png-seq census: mode={} canvas={}x{} files={} exposures={} drawings={} collapsed={}",
+        doc.mode.as_str(),
+        doc.width,
+        doc.height,
+        doc.census.files_read,
+        doc.census.exposures,
+        doc.census.distinct_drawings,
+        doc.census.collapsed_frames,
+    );
+
+    let tracks: Vec<EmitTrack> = doc
+        .tracks
+        .iter()
+        .map(|track| EmitTrack {
+            name: track.name.clone(),
+            blend: "normal".to_string(),
+            opacity: track.opacity,
+            visible: track.visible,
+            keys: track
+                .keys
+                .iter()
+                .map(|key| (key.time, key.raster.clone()))
+                .collect(),
+        })
+        .collect();
+    let provenance = json!({
+        "source": {
+            "kind": "png-seq",
+            "mode": doc.mode.as_str(),
+            "directory": options
+                .source_dir
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            "manifest": options.manifest.as_ref().and_then(|path| {
+                path.file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            }),
+        },
+        "census": {
+            "files": doc.census.files_read,
+            "exposures": doc.census.exposures,
+            "distinct_drawings": doc.census.distinct_drawings,
+            "collapsed_frames": doc.census.collapsed_frames,
+        },
+    });
+    emit_clip(&EmitClip {
+        source_label: options.source_dir.display().to_string(),
+        out_dir: options.out_dir.clone(),
+        name: doc.name.clone(),
+        compiler: options.compiler.clone(),
+        band: options.band.clone(),
+        canvas: (doc.width, doc.height),
+        fps: doc.fps,
+        range_from: doc.range_from,
+        range_to: doc.range_to,
+        loop_playback: doc.loop_playback,
+        matte: doc.matte,
+        tracks,
+        provenance,
+    })
+}
+
+/// The one clip emitter both importers converge on:
+/// dedupe drawings by pixel hash, write each payload
+/// once, build the document, freeze it, and write the
+/// clip directory.
+fn emit_clip(emit: &EmitClip) -> AppResult<i32> {
+    let clip_json_path = emit.out_dir.join("clip.json");
     if clip_json_path.exists() {
         return Err(AppError::Cli(format!(
             "{} already holds a clip.json; refusing to overwrite a clip directory",
-            options.out_dir.display()
+            emit.out_dir.display()
         )));
     }
-    let drawings_dir = options.out_dir.join("drawings");
+    let drawings_dir = emit.out_dir.join("drawings");
     std::fs::create_dir_all(&drawings_dir).map_err(io("create clip directory"))?;
 
     // Drawings: dedupe by pixel hash; write each payload
     // once. The PNG is a container — identity is the
     // SHA-256 of the RGBA bytes.
     let mut drawing_ids: BTreeMap<String, String> = BTreeMap::new(); // sha -> id
-    for layer in &doc.layers {
-        for frame in &layer.frames {
-            let sha = frame.raster.sha256_hex();
+    for track in &emit.tracks {
+        for (_, raster) in &track.keys {
+            let sha = raster.sha256_hex();
             if let std::collections::btree_map::Entry::Vacant(slot) = drawing_ids.entry(sha) {
                 let id = format!("d-{}", slot.key());
                 let png = torogao_paint::png_io::encode_png_rgba(
-                    frame.raster.width,
-                    frame.raster.height,
-                    &frame.raster.rgba,
+                    raster.width,
+                    raster.height,
+                    &raster.rgba,
                 )
                 .map_err(|error| AppError::Format(error.to_string()))?;
                 std::fs::write(drawings_dir.join(format!("{id}.png")), png)
@@ -127,32 +346,32 @@ pub fn run_drawn_import(options: &DrawnImportOptions) -> AppResult<i32> {
             json!({
                 "id": id,
                 "sha256": sha,
-                "width": doc.width,
-                "height": doc.height,
+                "width": emit.canvas.0,
+                "height": emit.canvas.1,
                 "file": drawn_clip::drawing_file_name(id),
             })
         })
         .collect();
 
-    let tracks_json: Vec<Value> = doc
-        .layers
+    let tracks_json: Vec<Value> = emit
+        .tracks
         .iter()
-        .map(|layer| {
-            let keys: Vec<Value> = layer
-                .frames
+        .map(|track| {
+            let keys: Vec<Value> = track
+                .keys
                 .iter()
-                .map(|frame| {
+                .map(|(time, raster)| {
                     json!({
-                        "time": frame.time,
-                        "drawing": drawing_ids[&frame.raster.sha256_hex()],
+                        "time": time,
+                        "drawing": drawing_ids[&raster.sha256_hex()],
                     })
                 })
                 .collect();
             json!({
-                "name": layer.name,
-                "blend": layer.blend,
-                "opacity": layer.opacity,
-                "visible": layer.visible,
+                "name": track.name,
+                "blend": track.blend,
+                "opacity": track.opacity,
+                "visible": track.visible,
                 "keys": keys,
             })
         })
@@ -160,44 +379,18 @@ pub fn run_drawn_import(options: &DrawnImportOptions) -> AppResult<i32> {
 
     let working = json!({
         "format": drawn_clip::DRAWN_CLIP_FORMAT,
-        "name": options.name,
-        "canvas": {"width": doc.width, "height": doc.height},
-        "fps": fps,
-        "range": {"from": range_from, "to": range_to},
-        "loop": true,
-        // The matte the source renderer composited onto.
-        // For this witness document the banked Krita
-        // renders are opaque white outside the figure and
-        // its stored merged image agrees, so the matte is
-        // recorded as data here, per file, never assumed
-        // silently by the player.
-        "matte": [255, 255, 255, 255],
+        "name": emit.name,
+        "canvas": {"width": emit.canvas.0, "height": emit.canvas.1},
+        "fps": emit.fps,
+        "range": {"from": emit.range_from, "to": emit.range_to},
+        "loop": emit.loop_playback,
+        "matte": emit.matte,
         "drawings": drawings_json,
         "tracks": tracks_json,
-        "provenance": {
-            "source": {
-                "kind": "kra",
-                "file": options
-                    .kra_path
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-                "sha256": source_sha,
-                "document_name": doc.name,
-            },
-            "census": {
-                "layers": doc.census.layer_count,
-                "keyframed_layers": doc.census.keyframed_layers,
-                "keyframes": doc.census.keyframe_count,
-                "tiles": doc.census.tile_count,
-                "blend_modes": doc.census.blend_modes,
-                "node_types": doc.census.node_types,
-                "color_space": doc.census.color_space,
-            },
-        },
+        "provenance": emit.provenance,
     });
 
-    let frozen = drawn_clip::freeze_document(&working, &options.compiler, &options.band)
+    let frozen = drawn_clip::freeze_document(&working, &emit.compiler, &emit.band)
         .map_err(|error| AppError::Format(error.to_string()))?;
     let report = drawn_clip::validate_document(&frozen)
         .map_err(|error| AppError::Format(error.to_string()))?;
@@ -206,8 +399,8 @@ pub fn run_drawn_import(options: &DrawnImportOptions) -> AppResult<i32> {
 
     println!(
         "imported {} -> {} (drawings={} tracks={} keys={} freeze={})",
-        options.kra_path.display(),
-        options.out_dir.display(),
+        emit.source_label,
+        emit.out_dir.display(),
         report.drawings,
         report.tracks,
         report.keys,

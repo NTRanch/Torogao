@@ -351,3 +351,56 @@ proven byte-exact against Krita 6.0.5's own rendered
 frames of the witness document (all ten frames, max
 delta 0) before the port was written.
 
+
+### The PNG-sequence bridge (reader: `src/png_seq.rs`)
+
+The tool-agnostic bridge (added 2026-11-27 on the
+Owner's ruling that the authoring tool is a free
+choice): any tool that can export PNG frames —
+OpenToonz, Clip Studio, Blender, Krita itself — feeds
+the format through here. Two source shapes are mapped;
+anything else is a typed `TG-PNGSEQ-*` refusal.
+
+**Manifest** — a `torogao-drawn-seq/1` JSON document
+beside the drawings it names:
+
+- `format`: the string `torogao-drawn-seq/1`.
+- `name`, `fps`: the clip's name (drawn-clip name
+  rules) and frame rate (1..=240).
+- `loop` (optional, default true), `matte` (optional,
+  default transparent), `range` (optional `{from, to}`;
+  derived from the exposures when absent).
+- `tracks`: 1..=256 entries of `{name, opacity,
+  visible, exposures}` (opacity/visible optional,
+  defaults 255/true; names unique). An exposure is
+  `{file, hold}`: the drawing in force from its start
+  tick for `hold` ticks (at least 1), keys accumulating
+  from the range start. Files resolve relative to the
+  manifest and may not escape its directory. A file
+  referenced by many exposures or tracks is decoded
+  once and carried by content identity — reference,
+  never duplication. An exposure starting past a
+  declared range end is refused, not carried.
+
+**Numbered sequence** — a directory of
+`<prefix><digits>.png` frames (one prefix, one
+contiguous run of indices; a duplicate index or a gap
+refuses, since either would silently retime the
+import). Consecutive pixel-identical frames collapse
+into holds by content hash, so a raw render dump
+imports as an exposure table with no manifest. The
+clip facts a dump does not carry (name, fps) come from
+the importer; loop is declared, the matte transparent.
+
+Identity follows pixels, never names, on both shapes:
+a drawing's identity is the SHA-256 of its decoded
+RGBA bytes (the drawn-clip law), so a file named to
+impersonate another drawing imports under its own
+content. The PNG decode law mirrors `torogao-paint`'s
+`png_io` (the `png` crate, `EXPAND | STRIP_16`, colour
+types expanded to RGBA8), so importer and player agree
+on the pixels byte for byte. Proven against the .kra
+bridge's witness: Krita's banked pass-1 frames imported
+as a numbered sequence play back pixel-identical to
+the .kra route's clip (10/10 frames, 0 differing
+pixels; spike record, PNG-sequence section).

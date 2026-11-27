@@ -4631,6 +4631,7 @@ dependencies = [
 name = "torogao-format"
 version = "0.5.0"
 dependencies = [
+ "png",
  "ron",
  "serde",
  "serde_json",

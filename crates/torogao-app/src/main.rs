@@ -34,7 +34,11 @@ const USAGE: &str = "usage: torogao-app [model.inx] \
                      [--param name=value ...] [--render out.png] [--state-hash] \
                      [--debug-physics]\n       torogao-app --session-serve <model.inx> --session-dir <dir> \
                      [--session-port <port>] [--held-by <name>]\n       torogao-app --session-replay <record-dir>\n       torogao-app --play-export <model.inx> --animation <name> --out <dir> [--force]\n       torogao-app --take-export <model.inx> --take <take.json> --out <dir> [--force]
-       torogao-app --paint [document.tpaint]";
+       torogao-app --paint [document.tpaint]
+       torogao-app --drawn-import <file.kra> --out <clip-dir> [--drawn-name <name>]
+       torogao-app --drawn-import-png <dir> --out <clip-dir> [--manifest <file>]
+                     [--drawn-name <name>] [--fps <n>]
+       torogao-app --drawn-play <clip-dir> --out <frames-dir>";
 
 fn main() -> ExitCode {
     match run() {
@@ -63,6 +67,9 @@ fn run() -> Result<i32, AppError> {
     let mut take_file: Option<PathBuf> = None;
     let mut persona_audit = false;
     let mut drawn_import: Option<PathBuf> = None;
+    let mut drawn_import_png: Option<PathBuf> = None;
+    let mut drawn_manifest: Option<PathBuf> = None;
+    let mut drawn_fps: Option<i64> = None;
     let mut drawn_play: Option<PathBuf> = None;
     let mut drawn_name: Option<String> = None;
     let mut freeze_compiler: Option<String> = None;
@@ -118,6 +125,29 @@ fn run() -> Result<i32, AppError> {
                     AppError::Cli("--drawn-import requires a .kra path".to_string())
                 })?;
                 drawn_import = Some(PathBuf::from(value));
+            }
+            "--drawn-import-png" => {
+                index += 1;
+                let value = args.get(index).ok_or_else(|| {
+                    AppError::Cli("--drawn-import-png requires a source directory".to_string())
+                })?;
+                drawn_import_png = Some(PathBuf::from(value));
+            }
+            "--manifest" => {
+                index += 1;
+                let value = args.get(index).ok_or_else(|| {
+                    AppError::Cli("--manifest requires a manifest path".to_string())
+                })?;
+                drawn_manifest = Some(PathBuf::from(value));
+            }
+            "--fps" => {
+                index += 1;
+                let value = args.get(index).ok_or_else(|| {
+                    AppError::Cli("--fps requires a frame rate argument".to_string())
+                })?;
+                drawn_fps = Some(value.parse().map_err(|_| {
+                    AppError::Cli(format!("--fps: {value} is not an integer frame rate"))
+                })?);
             }
             "--drawn-play" => {
                 index += 1;
@@ -230,6 +260,25 @@ fn run() -> Result<i32, AppError> {
                 kra_path,
                 out_dir,
                 name: drawn_name.unwrap_or_else(|| "drawn-clip".to_string()),
+                compiler: freeze_compiler
+                    .unwrap_or_else(|| "torogao-app drawn-import (spike 2026-11-27)".to_string()),
+                band: freeze_band.unwrap_or_else(|| "drawn-spike".to_string()),
+            },
+        );
+    }
+    if let Some(source_dir) = drawn_import_png {
+        let Some(out_dir) = out_dir else {
+            return Err(AppError::Cli(
+                "--drawn-import-png requires --out <clip-dir>".to_string(),
+            ));
+        };
+        return torogao_app::drawn_play::run_drawn_import_png(
+            &torogao_app::drawn_play::DrawnImportPngOptions {
+                source_dir,
+                manifest: drawn_manifest,
+                out_dir,
+                name: drawn_name.unwrap_or_else(|| "drawn-clip".to_string()),
+                fps: drawn_fps.unwrap_or(24),
                 compiler: freeze_compiler
                     .unwrap_or_else(|| "torogao-app drawn-import (spike 2026-11-27)".to_string()),
                 band: freeze_band.unwrap_or_else(|| "drawn-spike".to_string()),
