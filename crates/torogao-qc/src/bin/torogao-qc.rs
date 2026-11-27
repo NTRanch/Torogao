@@ -7,6 +7,12 @@
 //!   torogao-qc diff <reference_dir> <candidate_dir>
 //!                      [--threshold <0-255>] [--region-gap <0-16>]
 //!                      [--exclude-aa] [--artifacts <dir>]
+//!   torogao-qc asset --rules <rules.json> <asset.glb>...
+//!   torogao-qc export-check --manifest <manifest.json> <export.glb>
+//!   torogao-qc roundtrip --manifest <manifest.json>
+//!                      --blender <blender-binary>
+//!                      --transform-tolerance <float>
+//!                      <source.glb> <export.glb>
 //!
 //! The JSON report goes to stdout. Exit codes: 0 = the report
 //! passes (no fail-severity findings), 1 = fail-severity
@@ -47,6 +53,9 @@ fn run() -> Result<Report, QcError> {
     match verb.as_str() {
         "inspect" => run_inspect(rest),
         "diff" => run_diff(rest),
+        "asset" => run_asset(rest),
+        "export-check" => run_export_check(rest),
+        "roundtrip" => run_roundtrip(rest),
         _ => Err(usage()),
     }
 }
@@ -56,7 +65,11 @@ fn usage() -> QcError {
         "QC-E-USAGE",
         "usage: torogao-qc inspect <spec.json> [--manifest <m>] [--known-options <o>] \
          | torogao-qc diff <reference_dir> <candidate_dir> [--threshold <0-255>] \
-         [--region-gap <0-16>] [--exclude-aa] [--artifacts <dir>]",
+         [--region-gap <0-16>] [--exclude-aa] [--artifacts <dir>] \
+         | torogao-qc asset --rules <rules.json> <asset.glb>... \
+         | torogao-qc export-check --manifest <manifest.json> <export.glb> \
+         | torogao-qc roundtrip --manifest <m> --blender <bin> \
+         --transform-tolerance <f> <source.glb> <export.glb>",
     )
 }
 
@@ -144,6 +157,64 @@ fn run_diff(args: &[String]) -> Result<Report, QcError> {
     torogao_qc::diff::diff_dirs_with_options(
         &PathBuf::from(reference),
         &PathBuf::from(candidate),
+        &options,
+    )
+}
+
+fn run_asset(args: &[String]) -> Result<Report, QcError> {
+    let (positionals, flags) = split_flags(args)?;
+    let rules = flag(&flags, "rules").ok_or_else(usage)?;
+    if positionals.is_empty() {
+        return Err(usage());
+    }
+    let assets: Vec<PathBuf> = positionals.iter().map(PathBuf::from).collect();
+    torogao_qc::asset::check_assets(&PathBuf::from(rules), &assets)
+}
+
+fn run_export_check(args: &[String]) -> Result<Report, QcError> {
+    let (positionals, flags) = split_flags(args)?;
+    let [glb] = positionals.as_slice() else {
+        return Err(usage());
+    };
+    let manifest = flag(&flags, "manifest").ok_or_else(usage)?;
+    torogao_qc::export_check::export_check(&PathBuf::from(glb), &PathBuf::from(manifest))
+}
+
+fn run_roundtrip(args: &[String]) -> Result<Report, QcError> {
+    let (positionals, flags) = split_flags(args)?;
+    let [source, export] = positionals.as_slice() else {
+        return Err(usage());
+    };
+    let manifest = flag(&flags, "manifest").ok_or_else(usage)?;
+    let blender = flag(&flags, "blender").ok_or_else(usage)?;
+    // The tolerance is a required, recorded parameter (B3
+    // discipline): no flag, no run — there is no default.
+    let tolerance_raw = flag(&flags, "transform-tolerance").ok_or_else(|| {
+        QcError::new(
+            "QC-E-USAGE",
+            "--transform-tolerance is required (there is no default tolerance)",
+        )
+    })?;
+    let transform_tolerance = tolerance_raw.parse::<f64>().map_err(|_| {
+        QcError::new(
+            "QC-E-USAGE",
+            format!("--transform-tolerance must be a finite number >= 0, got {tolerance_raw:?}"),
+        )
+    })?;
+    if !transform_tolerance.is_finite() || transform_tolerance < 0.0 {
+        return Err(QcError::new(
+            "QC-E-USAGE",
+            format!("--transform-tolerance must be a finite number >= 0, got {tolerance_raw:?}"),
+        ));
+    }
+    let options = torogao_qc::roundtrip::RoundtripOptions {
+        blender: PathBuf::from(blender),
+        transform_tolerance,
+    };
+    torogao_qc::roundtrip::roundtrip(
+        &PathBuf::from(source),
+        &PathBuf::from(export),
+        &PathBuf::from(manifest),
         &options,
     )
 }
