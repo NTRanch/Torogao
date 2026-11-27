@@ -15,7 +15,10 @@
 //! deadline on history polling, and a cap on the fetched image
 //! size. Submissions carry the workflow's SHA-256; the facade
 //! recomputes it and refuses a document altered in transit
-//! (the approval/hash discipline).
+//! (the approval/hash discipline). When the seat's settings
+//! carry a facade token, every gated route also carries it as
+//! the `X-Facade-Token` header — the client half of the facade's
+//! token gate (the health route is exempt facade-side).
 
 use std::fmt;
 use std::io::Read;
@@ -150,14 +153,38 @@ impl From<std::io::Error> for GenError {
 #[derive(Debug, Clone)]
 pub struct SeatClient {
     base_url: String,
+    /// The facade token from the seat's settings, if any.
+    token: Option<String>,
 }
 
 impl SeatClient {
     /// Create a client for the facade at `base_url` (no trailing
-    /// slash needed; one is tolerated and stripped).
+    /// slash needed; one is tolerated and stripped). No token:
+    /// right for a facade whose token gate is off.
     pub fn new(base_url: &str) -> Self {
+        Self::with_token(base_url, None)
+    }
+
+    /// Create a client that sends `token` as the
+    /// `X-Facade-Token` header on every gated route (all but the
+    /// facade's health route, which is exempt). A `None` or blank
+    /// token sends no header. The token comes from the seat's
+    /// settings — the client half of the facade's token gate
+    /// (the activation contract the engine lane published,
+    /// 2026-11-26).
+    pub fn with_token(base_url: &str, token: Option<String>) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
+            token: token.filter(|t| !t.trim().is_empty()),
+        }
+    }
+
+    /// Apply the facade token header to a request, when this
+    /// client carries one.
+    fn authed(&self, req: ureq::Request) -> ureq::Request {
+        match &self.token {
+            Some(token) => req.set("X-Facade-Token", token),
+            None => req,
         }
     }
 
@@ -194,7 +221,10 @@ impl SeatClient {
     /// after the request (typically `Starting`).
     pub fn wake(&self) -> SeatStatus {
         let url = format!("{}/facade/wake", self.base_url);
-        match Self::agent().post(&url).send_json(serde_json::json!({})) {
+        match self
+            .authed(Self::agent().post(&url))
+            .send_json(serde_json::json!({}))
+        {
             Ok(r) => match r.into_json::<Value>() {
                 Ok(body) => parse_health(&body),
                 Err(e) => SeatStatus::Unreachable(format!("unreadable wake reply: {e}")),
@@ -211,8 +241,8 @@ impl SeatClient {
     /// worth surfacing (the job's poll loop has already stopped).
     pub fn interrupt(&self, prompt_id: &str) {
         let url = format!("{}/interrupt", self.base_url);
-        let _ = Self::agent()
-            .post(&url)
+        let _ = self
+            .authed(Self::agent().post(&url))
             .send_json(serde_json::json!({ "prompt_id": prompt_id }));
     }
 
@@ -273,9 +303,11 @@ impl SeatClient {
 
     fn submit(&self, workflow: &Value) -> Result<String, GenError> {
         let url = format!("{}/prompt", self.base_url);
-        let resp = Self::agent()
+        let req = Self::agent()
             .post(&url)
-            .set("X-Workflow-Sha256", &workflow_sha256(workflow))
+            .set("X-Workflow-Sha256", &workflow_sha256(workflow));
+        let resp = self
+            .authed(req)
             .send_json(serde_json::json!({ "prompt": workflow }));
         match resp {
             Ok(r) => {
@@ -313,7 +345,7 @@ impl SeatClient {
                 self.interrupt(prompt_id);
                 return Err(GenError::Cancelled);
             }
-            let resp = Self::agent().get(&url).call();
+            let resp = self.authed(Self::agent().get(&url)).call();
             match resp {
                 Ok(r) => {
                     let body: Value = r
@@ -346,12 +378,12 @@ impl SeatClient {
             .timeout_connect(CONNECT_TIMEOUT)
             .timeout_read(IMAGE_READ_TIMEOUT)
             .build();
-        let resp = agent
+        let req = agent
             .get(&format!("{}/view", self.base_url))
             .query("filename", filename)
             .query("subfolder", subfolder)
-            .query("type", kind)
-            .call();
+            .query("type", kind);
+        let resp = self.authed(req).call();
         match resp {
             Ok(r) => {
                 let mut buf = Vec::new();
@@ -471,6 +503,17 @@ mod tests {
             "expected SeatUnreachable, got {err}"
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn token_comes_from_seat_settings_and_blank_means_none() {
+        let gated = SeatClient::with_token("http://127.0.0.1:8190/", Some("sekret".to_string()));
+        assert_eq!(gated.token.as_deref(), Some("sekret"));
+        assert_eq!(gated.base_url(), "http://127.0.0.1:8190");
+        let blank = SeatClient::with_token("http://127.0.0.1:8190", Some("  ".to_string()));
+        assert_eq!(blank.token, None);
+        let plain = SeatClient::new("http://127.0.0.1:8190");
+        assert_eq!(plain.token, None);
     }
 
     #[test]

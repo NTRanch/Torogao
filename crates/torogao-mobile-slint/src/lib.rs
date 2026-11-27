@@ -131,6 +131,7 @@ fn refresh_settings(ui: &AppWindow, session: &Session) {
     if let Some(active) = settings.active_seat() {
         ui.set_seat_name(active.name.clone().into());
         ui.set_seat_url(active.base_url.clone().into());
+        ui.set_seat_token(active.token.clone().unwrap_or_default().into());
     }
     ui.set_recipe_steps(settings.recipe.steps as i32);
     ui.set_recipe_cfg(format!("{}", settings.recipe.cfg).into());
@@ -433,9 +434,11 @@ pub fn run(
             let Some(session) = &shell.session else {
                 return;
             };
+            let token = ui.get_seat_token().trim().to_string();
             let seat = SeatConfig {
                 name: ui.get_seat_name().to_string(),
                 base_url: ui.get_seat_url().to_string(),
+                token: if token.is_empty() { None } else { Some(token) },
             };
             if seat.name.trim().is_empty() || seat.base_url.trim().is_empty() {
                 ui.set_status("A seat needs a name and an address.".into());
@@ -635,9 +638,11 @@ pub fn run(
                     });
                 }
                 Some(ProposedAction::SaveSeatAndFinish) => {
+                    let token = ui.get_seat_token().trim().to_string();
                     let seat = SeatConfig {
                         name: ui.get_seat_name().to_string(),
                         base_url: ui.get_seat_url().to_string(),
+                        token: if token.is_empty() { None } else { Some(token) },
                     };
                     match session.upsert_seat(seat) {
                         Ok(i) => {

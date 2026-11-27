@@ -50,15 +50,19 @@
 //! kept so the shells built before the gate keep working until
 //! they learn the header. Activation contract: the variable
 //! lands in the facade's service environment and the client
-//! learns to send the header from its seat settings — the two
-//! land together or not at all.
+//! sends the header from its seat settings — the two land
+//! together or not at all. ACTIVATED 2026-11-26 (completion
+//! lane): the core client sends the header from
+//! `SeatConfig::token`, and the live unit's launcher reads the
+//! token from the state dir's `facade-token` file, so the value
+//! lives in exactly one 0600 file and in no unit file.
 
 #![forbid(unsafe_code)]
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -108,6 +112,36 @@ struct Facade {
     token: Option<String>,
 }
 
+/// The first job number a fresh facade process may hand out:
+/// one above the highest `torogao_mobile_facade-<n>.png` already
+/// in the outputs directory (1 when there are none). A job's id
+/// names its output file, so a restart that renumbered from 1
+/// would hand a later job an earlier job's id and overwrite its
+/// filed still (the engine lane's counter flag, 2026-11-26). The
+/// jobs map itself is in-memory by design and is not resurrected;
+/// only the numbering is made restart-safe.
+fn seed_next_id(outputs_dir: &Path) -> u64 {
+    let mut max_seen = 0_u64;
+    if let Ok(entries) = std::fs::read_dir(outputs_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            let Some(num) = name
+                .strip_prefix("torogao_mobile_facade-")
+                .and_then(|rest| rest.strip_suffix(".png"))
+            else {
+                continue;
+            };
+            if let Ok(n) = num.parse::<u64>() {
+                max_seen = max_seen.max(n);
+            }
+        }
+    }
+    max_seen + 1
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let arg = |name: &str| -> Option<String> {
@@ -138,7 +172,7 @@ fn main() {
         .filter(|t| !t.is_empty());
     let facade = Arc::new(Facade {
         jobs: Mutex::new(HashMap::new()),
-        next_id: Mutex::new(1),
+        next_id: Mutex::new(seed_next_id(&outputs_dir)),
         engine_url,
         engine_service,
         outputs_dir,
@@ -983,6 +1017,22 @@ mod tests {
             assert_eq!(base64_decode(&base64_encode(&data)), Some(data));
         }
         assert_eq!(base64_decode("not base64!!"), None);
+    }
+
+    #[test]
+    fn next_id_seeds_above_existing_outputs() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("tmg-facade-seed-test-{nanos}"));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        assert_eq!(seed_next_id(&dir), 1);
+        std::fs::write(dir.join("torogao_mobile_facade-3.png"), b"x").expect("plant");
+        std::fs::write(dir.join("torogao_mobile_facade-17.png"), b"x").expect("plant");
+        std::fs::write(dir.join("unrelated.png"), b"x").expect("plant");
+        assert_eq!(seed_next_id(&dir), 18);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

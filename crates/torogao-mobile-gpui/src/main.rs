@@ -52,21 +52,30 @@ enum Field {
     Scene,
     SeatName,
     SeatUrl,
+    SeatToken,
     Steps,
     Cfg,
     Width,
     Height,
 }
 
-const FIELD_ORDER: [Field; 7] = [
+const FIELD_ORDER: [Field; 8] = [
     Field::Scene,
     Field::SeatName,
     Field::SeatUrl,
+    Field::SeatToken,
     Field::Steps,
     Field::Cfg,
     Field::Width,
     Field::Height,
 ];
+
+/// A seat form's token text as a settings value: blank means
+/// "no token", never an empty-string token.
+fn nonempty_token(text: &str) -> Option<String> {
+    let t = text.trim().to_string();
+    if t.is_empty() { None } else { Some(t) }
+}
 
 /// One editable text buffer with a byte-index cursor kept on a
 /// char boundary at all times.
@@ -153,6 +162,7 @@ struct Shell {
     scene: TextBuf,
     seat_name: TextBuf,
     seat_url: TextBuf,
+    seat_token: TextBuf,
     steps: TextBuf,
     cfg: TextBuf,
     width: TextBuf,
@@ -181,12 +191,18 @@ impl Shell {
                 }
                 Err(e) => (None, format!("Settings could not be loaded: {e}")),
             };
-        let (seat_name, seat_url, steps, cfg, width, height, preview) = match &session {
+        let (seat_name, seat_url, seat_token, steps, cfg, width, height, preview) = match &session {
             Some(s) => {
                 let settings = s.settings();
-                let (name, url) = settings
+                let (name, url, token) = settings
                     .active_seat()
-                    .map(|seat| (seat.name.clone(), seat.base_url.clone()))
+                    .map(|seat| {
+                        (
+                            seat.name.clone(),
+                            seat.base_url.clone(),
+                            seat.token.clone().unwrap_or_default(),
+                        )
+                    })
                     .unwrap_or_default();
                 let preview = s
                     .gallery()
@@ -196,6 +212,7 @@ impl Shell {
                 (
                     name,
                     url,
+                    token,
                     settings.recipe.steps.to_string(),
                     settings.recipe.cfg.to_string(),
                     settings.recipe.width.to_string(),
@@ -204,6 +221,7 @@ impl Shell {
                 )
             }
             None => (
+                String::new(),
                 String::new(),
                 String::new(),
                 "28".to_string(),
@@ -222,6 +240,7 @@ impl Shell {
             scene: TextBuf::new(""),
             seat_name: TextBuf::new(&seat_name),
             seat_url: TextBuf::new(&seat_url),
+            seat_token: TextBuf::new(&seat_token),
             steps: TextBuf::new(&steps),
             cfg: TextBuf::new(&cfg),
             width: TextBuf::new(&width),
@@ -251,6 +270,7 @@ impl Shell {
             Field::Scene => &mut self.scene,
             Field::SeatName => &mut self.seat_name,
             Field::SeatUrl => &mut self.seat_url,
+            Field::SeatToken => &mut self.seat_token,
             Field::Steps => &mut self.steps,
             Field::Cfg => &mut self.cfg,
             Field::Width => &mut self.width,
@@ -263,6 +283,7 @@ impl Shell {
             Field::Scene => &self.scene,
             Field::SeatName => &self.seat_name,
             Field::SeatUrl => &self.seat_url,
+            Field::SeatToken => &self.seat_token,
             Field::Steps => &self.steps,
             Field::Cfg => &self.cfg,
             Field::Width => &self.width,
@@ -448,6 +469,7 @@ impl Shell {
                 let seat = SeatConfig {
                     name: self.seat_name.text.trim().to_string(),
                     base_url: self.seat_url.text.trim().to_string(),
+                    token: nonempty_token(&self.seat_token.text),
                 };
                 match session.upsert_seat(seat) {
                     Ok(i) => {
@@ -665,6 +687,7 @@ impl Render for Shell {
         root = root.child(self.field(Field::Scene, "Scene", cx));
         root = root.child(self.field(Field::SeatName, "Seat name", cx));
         root = root.child(self.field(Field::SeatUrl, "Seat address (the facade)", cx));
+        root = root.child(self.field(Field::SeatToken, "Seat token (facade gate)", cx));
 
         // Seat actions.
         root = root.child(
@@ -679,6 +702,7 @@ impl Render for Shell {
                             let seat = SeatConfig {
                                 name: this.seat_name.text.trim().to_string(),
                                 base_url: this.seat_url.text.trim().to_string(),
+                                token: nonempty_token(&this.seat_token.text),
                             };
                             match session.upsert_seat(seat) {
                                 Ok(i) => {

@@ -25,6 +25,9 @@ use crate::style::RecipeSettings;
 pub struct JobContext {
     /// Facade base URL of the active seat.
     pub seat_url: String,
+    /// The active seat's facade token, if any (sent as the
+    /// `X-Facade-Token` header; see [`SeatClient::with_token`]).
+    pub seat_token: Option<String>,
     /// Recipe settings to generate with.
     pub recipe: RecipeSettings,
     /// Whether the 18+ attestation stands.
@@ -268,7 +271,7 @@ fn run_job(
             job.request.character_id
         ))
     })?;
-    let client = SeatClient::new(&context.seat_url);
+    let client = SeatClient::with_token(&context.seat_url, context.seat_token.clone());
     client.generate_with(
         character,
         &job.request.prompt,
@@ -296,6 +299,7 @@ mod tests {
         JobContext {
             // Port 9 (discard): every seat call fails fast.
             seat_url: "http://127.0.0.1:9".to_string(),
+            seat_token: None,
             recipe: RecipeSettings::of_record(),
             attested,
         }

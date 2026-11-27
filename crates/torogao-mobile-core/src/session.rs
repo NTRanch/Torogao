@@ -40,6 +40,7 @@ impl Session {
                 .active_seat()
                 .map(|s| s.base_url.clone())
                 .unwrap_or_default(),
+            seat_token: settings.active_seat().and_then(|s| s.token.clone()),
             recipe: settings.recipe,
             attested: settings.is_attested(),
         };
@@ -109,7 +110,7 @@ impl Session {
     /// Ask the active seat's facade for its state.
     pub fn seat_status(&self) -> SeatStatus {
         match self.settings().active_seat() {
-            Some(seat) => SeatClient::new(&seat.base_url).health(),
+            Some(seat) => SeatClient::with_token(&seat.base_url, seat.token.clone()).health(),
             None => SeatStatus::Unreachable("no seat is configured".to_string()),
         }
     }
@@ -117,7 +118,7 @@ impl Session {
     /// Ask the active seat's facade to wake its engine.
     pub fn wake_seat(&self) -> SeatStatus {
         match self.settings().active_seat() {
-            Some(seat) => SeatClient::new(&seat.base_url).wake(),
+            Some(seat) => SeatClient::with_token(&seat.base_url, seat.token.clone()).wake(),
             None => SeatStatus::Unreachable("no seat is configured".to_string()),
         }
     }
@@ -167,6 +168,7 @@ impl Session {
                 .active_seat()
                 .map(|s| s.base_url.clone())
                 .unwrap_or_default(),
+            seat_token: guard.active_seat().and_then(|s| s.token.clone()),
             recipe: guard.recipe,
             attested: guard.is_attested(),
         });
@@ -248,6 +250,7 @@ mod tests {
             .upsert_seat(SeatConfig {
                 name: "Other".to_string(),
                 base_url: "http://127.0.0.1:10".to_string(),
+                token: None,
             })
             .expect("upsert");
         session.set_active_seat(i).expect("activate");

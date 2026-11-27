@@ -22,6 +22,13 @@ pub struct SeatConfig {
     pub name: String,
     /// Facade base URL, no trailing slash needed.
     pub base_url: String,
+    /// The seat's facade token, sent as the `X-Facade-Token`
+    /// header when the facade runs its token gate. `None` (or an
+    /// empty string) sends no header — right for a facade whose
+    /// gate is off. Defaulted so settings files written before
+    /// the gate existed still load.
+    #[serde(default)]
+    pub token: Option<String>,
 }
 
 /// The persisted settings document.
@@ -49,6 +56,7 @@ impl Settings {
             seats: vec![SeatConfig {
                 name: default_seat_name.to_string(),
                 base_url: default_seat_url.to_string(),
+                token: None,
             }],
             active_seat: 0,
             recipe: RecipeSettings::of_record(),
@@ -158,6 +166,7 @@ mod tests {
         let i = s.upsert_seat(SeatConfig {
             name: "B".to_string(),
             base_url: "http://b:8190".to_string(),
+            token: None,
         });
         assert!(s.set_active_seat(i));
         s.save(&dir).expect("save");
@@ -184,6 +193,31 @@ mod tests {
     }
 
     #[test]
+    fn settings_without_a_token_field_still_load() {
+        // Settings files written before the facade token gate
+        // existed carry no `token` on their seats; they must load
+        // with the token unset, never fail as corrupt.
+        let dir = scratch("legacy");
+        let mut s = Settings::first_run("http://a:8190", "A");
+        s.attest(1_700_000_000);
+        s.save(&dir).expect("save");
+        let path = dir.join(SETTINGS_FILE);
+        let text = fs::read_to_string(&path).expect("read");
+        let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+        let pos = lines
+            .iter()
+            .position(|l| l.trim() == "\"token\": null")
+            .expect("saved settings carry a token line to strip");
+        lines.remove(pos);
+        lines[pos - 1] = lines[pos - 1].trim_end_matches(',').to_string();
+        fs::write(&path, lines.join("\n")).expect("rewrite");
+        let loaded = Settings::load(&dir, "http://unused:1", "unused").expect("load");
+        assert!(loaded.is_attested());
+        assert_eq!(loaded.active_seat().and_then(|x| x.token.as_deref()), None);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn out_of_range_active_seat_is_refused() {
         let mut s = Settings::first_run("http://a:8190", "A");
         assert!(!s.set_active_seat(7));
@@ -196,6 +230,7 @@ mod tests {
         let i = s.upsert_seat(SeatConfig {
             name: "A".to_string(),
             base_url: "http://a2:8190".to_string(),
+            token: None,
         });
         assert_eq!(i, 0);
         assert_eq!(s.seats.len(), 1);

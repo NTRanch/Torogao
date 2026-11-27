@@ -50,6 +50,7 @@ export component AppWindow inherits Window {
     in-out property <[SeatItem]> seats;
     in-out property <string> seat-name: "";
     in-out property <string> seat-url: "";
+    in-out property <string> seat-token: "";
     in-out property <int> recipe-steps: 28;
     in-out property <string> recipe-cfg: "6.0";
     in-out property <int> recipe-width: 832;
@@ -371,6 +372,15 @@ export component AppWindow inherits Window {
             LineEdit {
                 text <=> root.seat-url;
                 placeholder-text: "http://100.107.128.71:8190";
+            }
+            Text {
+                text: "Seat token (only when the facade asks for one)";
+                color: #9a8fb5;
+                font-size: 13px;
+            }
+            LineEdit {
+                text <=> root.seat-token;
+                placeholder-text: "Leave blank when the facade has no gate";
             }
             HorizontalBox {
                 spacing: 8px;
