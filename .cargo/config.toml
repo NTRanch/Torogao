@@ -1,0 +1,7 @@
+# Cross-target linker provisioning (runtime plan Rung R0, 2026-11-26).
+# aarch64 Linux artefacts link with the estate cross GCC on primo;
+# without this, cargo falls back to the host cc and the leg fails.
+# The Windows gnu target needs no entry: cargo's default linker
+# for x86_64-pc-windows-gnu is the mingw gcc, which is installed.
+[target.aarch64-unknown-linux-gnu]
+linker = "aarch64-linux-gnu-gcc"
