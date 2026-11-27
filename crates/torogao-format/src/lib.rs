@@ -23,6 +23,7 @@ pub mod jsonfmt;
 pub mod limits;
 pub mod mmd_ingest;
 pub mod model;
+pub mod motion_clip;
 pub mod parse_error;
 pub mod payload;
 pub mod raw;
@@ -35,6 +36,10 @@ pub use container::{
 };
 pub use error::{FormatResult, TorogaoError};
 pub use model::{FormatWarning, LEGACY_MODEL_FORMAT_TOKEN, MODEL_FORMAT_TOKEN, Model, ParsedModel};
+pub use motion_clip::{
+    ClipError, ClipReport, ClipResult, MOTION_CLIP_FORMAT, canonical_bytes, freeze_document,
+    freeze_hash, validate_clip, validate_document,
+};
 pub use parse_error::ParseError;
 pub use payload::{NodeKind, NodeRecord, PayloadDoc, decode_node_record, decode_payload};
 pub use validate::parse_model;

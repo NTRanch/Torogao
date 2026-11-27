@@ -10,3 +10,4 @@ description = "INP1 and vendor-extension format records: parsing and byte-stable
 ron = "0.8"
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = "0.10"

@@ -122,3 +122,152 @@ Implementation: `torogao-runtime`'s `corpus` module
 (`CorpusDoc`), with the two R1 witness corpora committed in
 that form under `crates/torogao-runtime/corpus/`. A future
 `/2` is a deliberate, gated act, like every entry here.
+
+## torogao-motion-clip/2 — the hand-authored motion clip
+
+Status: **adopted 2026-11-27** (hand-animation programme Rung
+H0; DESIGN.md sections 2–3, 7). This is the authoring format
+of the D-1397 pipeline: a person (or a Seahawk-driven agent
+session) poses a character and sets keys; the keys are the
+content of a frozen, hashed clip the timeline compiler
+evaluates. It supersedes no shipped format:
+`torogao-motion-clip/1` (the runtime clip lineage) remains in
+force for its own artefacts; `/2` is the hand-authoring
+surface and carries what `/1` cannot — per-key tangents, key
+types, pose provenance, shader modules, and an op log.
+
+Owner of record: `torogao-format` (`src/motion_clip.rs`:
+`validate_clip`, `freeze_document`; gate tool
+`src/bin/motion-clip-check.rs`). Checks run in specification
+order and stop at the first failure; invalid input is a typed
+`TG-CLIP-*` refusal, never a repair.
+
+### Specification
+
+A clip is one canonical JSON document. Its canonical form is
+this crate's canonical JSON writer (`jsonfmt::to_d_json`) over
+the document with the freeze block removed; the freeze hash
+is the lowercase hex SHA-256 of those bytes. Fields:
+
+- `format`: the string `torogao-motion-clip/2` (matched at
+  one site, `motion_clip::MOTION_CLIP_FORMAT`).
+- `name`: the clip's name (at most 128 bytes).
+- `rig`: the target rig's identity — the lowercase hex
+  SHA-256 of the hierarchy definition the clip was authored
+  against. A clip names a hierarchy hash, never a character.
+- `rate`: `{num, den}`, the declared frame rate as a rational
+  of positive integers.
+- `range`: `{start, end}`, integer frames, `0 <= start <=
+  end`.
+- `loop`: `null`, or `{start, end}` naming a non-empty
+  sub-range of `range`.
+- `channels`: 1–1024 channels. A channel's `target` is
+  `{kind, name, property}`: a joint's `translation`,
+  `rotation`, or `scale`; a morph target's `weight` (the
+  `Fac_` channels ride here); or a named scalar `parameter`'s
+  `value`. No two channels address the same target.
+- Keys: 1–65536 per channel, at strictly increasing integer
+  frames inside `range`. A float frame — even an integral
+  one — is refused (`TG-CLIP-FLOAT-FRAME`): time is integer
+  frames, and seconds are an export conversion. Each key
+  carries a `value` (vec3 for translation/scale, quaternion
+  `[x, y, z, w]` for rotation, a scalar for weight/value; all
+  components finite; the zero quaternion refuses), an
+  `interp` naming the segment it opens (`step`, `linear`,
+  `cubic` — glTF's three modes; the final key opens no
+  segment and its `interp` is `step`), and optionally a
+  `key_type` (`keyframe`, `breakdown`, `moving_hold`,
+  `extreme`), an `easing` provenance tag, and a `pose_ref`
+  (`{pose, blend}` with `blend` in `0..=1`) citing the pose
+  library entry the key was placed from — provenance only;
+  the key always carries its full value.
+- Tangents are explicit Hermite data, derivatives with
+  respect to frames, in the value's own shape. A key's
+  `out_tangent` is present exactly when its segment is
+  `cubic`; a key's `in_tangent` is present exactly when the
+  previous key's segment is `cubic`. Presence anywhere else
+  is stray data and refuses.
+- Tangent modes are edit-time only. A working document may
+  carry a key's `tangent_mode` (`explicit`, `free`,
+  `aligned`, `vector`, `auto`, `auto_clamped`); the freeze
+  resolves every mode to explicit tangents, and a frozen
+  document carrying any other mode than `explicit` refuses
+  (`TG-CLIP-UNRESOLVED-TANGENT`). Easing presets likewise
+  survive only as the `easing` provenance tag on a key whose
+  tangents are explicit — never as a behaviour.
+- `shaders`: 0–32 modules (DESIGN.md section 7). A module is
+  `{name, hook, uniforms, source}`: `hook` is one of the
+  closed stage hooks (`skinning_assist`, `morph_assist`,
+  `post_skin_displacement`); `source` is WGSL text. The
+  uniform contract is closed: `tick` (type `u32` — the only
+  time a module may read; a wall-clock-shaped input name
+  under any renaming refuses, `TG-CLIP-WALLCLOCK-UNIFORM`),
+  `joint_matrices` (`mat4[]`; skinning-assist and
+  post-skin-displacement hooks), `morph_weights` (`f32[]`;
+  morph-assist and post-skin-displacement), and
+  `param:<name>` (`f32`) for a scalar parameter the clip
+  itself declares as a channel. Anything else refuses
+  (`TG-CLIP-UNDECLARED-UNIFORM`), as does a `var<uniform>`
+  declaration in the WGSL that the contract does not list
+  (a contract name `param:X` is declared in WGSL as
+  `param_X`). SPIR-V compilation and its hash join at Rung
+  H6; a `/2` document carries source only.
+- `op_log`: the append-only authoring record, 1–100000
+  entries, `seq` counting from 0 by ones; each entry names
+  its `actor` (`human`, `converter`, or `agent`), a
+  `session`, and an `op`.
+- `freeze` (frozen documents only): `{sha256, compiler,
+  band}` — the hash defined above, the freezing tool's stamp,
+  and the recorded evaluation band class the clip froze
+  under. A document with a freeze block is validated under
+  the frozen rules (resolution complete, hash reproduces);
+  one without, under the working rules. Editing a frozen
+  clip means thawing it (removing the block) and re-freezing
+  as a new revision with a new hash.
+
+A pose record (DESIGN.md section 4) is a `/2` document whose
+range is a single frame; the golden set carries one.
+
+Bounds live in `torogao-format`'s `limits.rs` (the `CLIP_*`
+constants), as everywhere in this crate.
+
+### Golden vectors
+
+Executable form: `torogao-format` `tests/motion_clip_golden.rs`
+over `tests/golden/motion-clip-2/` — for each golden, the
+source document, the frozen document, and its canonical form
+are all committed, and the suite reproduces the frozen
+document byte for byte from the source, re-hashes the
+canonical file independently, and checks canonicalisation is
+a fixed point. The goldens' rig identity is a test constant.
+Freeze hashes (compiler `torogao-format motion_clip h0
+(2026-11-27)`, band `tier2-1e-6`):
+
+- `minimal` (one joint channel, step keys):
+  `816dc894f59f69d0419157a5b07e6ffc2b4c018054ece4df4dab062571a436eb`
+- `loop-hold` (a looping clip; a cubic rotation channel with
+  a moving hold):
+  `6c55d19dabdd1c999ea81025e375728172f103a2b28522b27ba06ee300e96696`
+- `fac` (Fac_ morph channels, a scalar parameter, pose and
+  easing provenance):
+  `54ea6b4610f89d26f8aab67ef775b4a1e9c76e94a1cb2d8d5550bd4105d8b199`
+- `shader` (a clip carrying one shader module):
+  `c56665d1db41173391277ee0bbbe6e11d8c514bd83c8eec4b95607c4b3832272`
+- `pose` (a one-frame pose record):
+  `a18821cf5f464690310d9232d94433edb6536739230621d67f49567837d5f3d8`
+
+The deliberately malformed set (same directory, `malformed/`)
+refuses with its typed codes: a float frame
+(`TG-CLIP-FLOAT-FRAME`), out-of-order frames, a stray
+tangent, a missing cubic tangent, the zero quaternion, a
+float rate, an undeclared uniform (contract side and WGSL
+side), a wall-clock uniform, a float tick, an unresolved
+automatic tangent in a frozen document, and a freeze-hash
+mismatch.
+
+### Successors
+
+A future `torogao-motion-clip/3` is a deliberate, gated act,
+like every entry here: new entry, new goldens, and a stated
+migration for clips frozen under `/2`. The `/2` meaning
+above never changes.
