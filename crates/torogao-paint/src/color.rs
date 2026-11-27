@@ -62,9 +62,16 @@ pub fn composite_over(source: Rgba, dest: Rgba) -> Rgba {
         let sc = u32::from(source[channel]);
         let dc = u32::from(dest[channel]);
         // (sc*sa*255 + dc*da*(255-sa)) / (255*out_a), round-half-up.
+        // The rounded out_a can sit a hair below the true
+        // alpha (e.g. da=2, sa=82 gives out_a 83 against a
+        // true 83.36), which pushes a maxed source channel's
+        // quotient to 256; the true value is a convex
+        // combination and never exceeds 255, so clamp.
+        // (Richness experiment, 2026-11-27: unclamped, the
+        // cast wrapped 256 to 0 and zeroed the channel.)
         let numerator = sc * sa * 255 + dc * da * (255 - sa);
         let denominator = 255 * out_a;
-        out[channel] = ((numerator + denominator / 2) / denominator) as u8;
+        out[channel] = ((numerator + denominator / 2) / denominator).min(255) as u8;
     }
     out[3] = out_a as u8;
     out
@@ -146,6 +153,16 @@ mod tests {
         );
         // Anything over nothing is itself.
         assert_eq!(composite_over([9, 8, 7, 200], TRANSPARENT), [9, 8, 7, 200]);
+        // Regression (richness experiment, 2026-11-27): a
+        // maxed source channel at mid alpha over a faint
+        // destination (da=2) pushed the red quotient to
+        // 256 through the rounded-down out_a; the cast to
+        // u8 wrapped it to 0. The clamped result is the
+        // source colour at the combined alpha.
+        assert_eq!(
+            composite_over([255, 227, 200, 82], [232, 165, 131, 2]),
+            [255, 227, 200, 83]
+        );
         // Nothing over nothing stays the canonical transparent.
         assert_eq!(composite_over(TRANSPARENT, TRANSPARENT), TRANSPARENT);
     }
