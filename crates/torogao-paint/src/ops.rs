@@ -78,13 +78,50 @@ pub struct GradientStop {
 /// shapes the parameter runs 0 at `from` to 1 at `to`:
 /// linear projects onto the from-to axis, radial measures
 /// distance from `from` against the from-to distance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Serialised as a string, like `BlendMode` and
+/// `StampMode`: a bare RON identifier cannot survive the
+/// op enum's internally-tagged buffering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GradientShape {
     /// Projection onto the from-to axis.
     Linear,
     /// Distance from `from`, scaled by the from-to
     /// distance as the radius.
     Radial,
+}
+
+impl serde::Serialize for GradientShape {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(match self {
+            GradientShape::Linear => "Linear",
+            GradientShape::Radial => "Radial",
+        })
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for GradientShape {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<GradientShape, D::Error> {
+        struct GradientShapeVisitor;
+        impl serde::de::Visitor<'_> for GradientShapeVisitor {
+            type Value = GradientShape;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a gradient shape string")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<GradientShape, E> {
+                match value {
+                    "Linear" => Ok(GradientShape::Linear),
+                    "Radial" => Ok(GradientShape::Radial),
+                    other => Err(E::custom(format!("unknown gradient shape {other:?}"))),
+                }
+            }
+        }
+        deserializer.deserialize_str(GradientShapeVisitor)
+    }
 }
 
 /// A multi-stop gradient field in canvas space. The

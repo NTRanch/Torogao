@@ -66,3 +66,82 @@ impl SessionScript {
         Ok(doc)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::layer::LayerId;
+    use crate::ops::{GradientShape, GradientSpec, GradientStop, Rect};
+    use crate::stroke::{GrainSpec, Stamp, StampMode};
+
+    /// Regression (richness experiment, 2026-11-27): the
+    /// Phase 2 ops must survive the harness's RON
+    /// round trip — serialise, parse back, replay. A
+    /// derived enum serialisation for the gradient shape
+    /// wrote a bare RON identifier that the op enum's
+    /// internally-tagged parse could not read back; the
+    /// shape now serialises as a string, like BlendMode.
+    #[test]
+    fn phase2_ops_survive_a_ron_round_trip() {
+        let script = SessionScript {
+            width: 16,
+            height: 16,
+            base_png: None,
+            ops: vec![
+                Op::LayerAdd {
+                    id: LayerId(1),
+                    name: "shade".to_string(),
+                    after: None,
+                },
+                Op::GradientFill {
+                    layer: LayerId(1),
+                    rect: Rect {
+                        x: 0,
+                        y: 0,
+                        width: 16,
+                        height: 16,
+                    },
+                    gradient: GradientSpec {
+                        shape: GradientShape::Radial,
+                        from: [8, 8],
+                        to: [16, 8],
+                        stops: vec![
+                            GradientStop {
+                                at: 0,
+                                color: [10, 20, 30, 255],
+                            },
+                            GradientStop {
+                                at: 255,
+                                color: [200, 210, 220, 255],
+                            },
+                        ],
+                    },
+                },
+                Op::TexturedStampRun {
+                    layer: LayerId(1),
+                    mode: StampMode::Paint,
+                    color: [250, 240, 230, 255],
+                    opacity: 200,
+                    flow: 200,
+                    stamps: vec![Stamp {
+                        x_fixed: 8 * 64,
+                        y_fixed: 8 * 64,
+                        radius_px: 5,
+                        alpha: 255,
+                    }],
+                    grain: GrainSpec {
+                        seed: 3,
+                        cell_px: 4,
+                        strength: 180,
+                        octaves: 2,
+                    },
+                },
+            ],
+        };
+        let text = ron::to_string(&script).expect("serialise");
+        let back: SessionScript = ron::from_str(&text).expect("parse back");
+        assert_eq!(back.ops, script.ops);
+        let doc = back.run().expect("replay");
+        assert_eq!(doc.ops().len(), 3);
+    }
+}
