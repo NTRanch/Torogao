@@ -134,6 +134,7 @@ mod tests {
                         cell_px: 4,
                         strength: 180,
                         octaves: 2,
+                        stepped: false,
                     },
                 },
             ],

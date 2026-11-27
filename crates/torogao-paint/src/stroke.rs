@@ -176,6 +176,15 @@ pub struct GrainSpec {
     /// weight, each later octave half the cell size and
     /// half the weight.
     pub octaves: u8,
+    /// Stepped sampling: each cell reads its own hash
+    /// value flat, with no bilinear interpolation, so
+    /// cell boundaries are step edges — the tooth of a
+    /// real brush/paper grain, where the smooth field
+    /// reads as mottling. Default false (the smooth
+    /// field); old documents carry no field and parse
+    /// as smooth.
+    #[serde(default)]
+    pub stepped: bool,
 }
 
 /// One cell corner's hash: a splitmix-style finaliser
@@ -194,10 +203,13 @@ fn grain_hash(seed: u64, octave: u8, cx: i64, cy: i64) -> u32 {
 /// One octave of the grain field at a canvas pixel:
 /// bilinear interpolation of the four surrounding cell
 /// hashes, in exact integer arithmetic.
-fn grain_octave(seed: u64, octave: u8, cell: u64, x: i64, y: i64) -> u32 {
+fn grain_octave(seed: u64, octave: u8, cell: u64, x: i64, y: i64, stepped: bool) -> u32 {
     let c = cell as i64;
     let cx = x.div_euclid(c);
     let cy = y.div_euclid(c);
+    if stepped {
+        return grain_hash(seed, octave, cx, cy);
+    }
     let fx = x.rem_euclid(c) as u64;
     let fy = y.rem_euclid(c) as u64;
     let h00 = u64::from(grain_hash(seed, octave, cx, cy));
@@ -225,7 +237,7 @@ pub fn grain_value(grain: &GrainSpec, x: i64, y: i64) -> u32 {
     for octave in 0..grain.octaves {
         let cell = (u64::from(grain.cell_px) >> octave).max(1);
         let weight = 1u64 << (grain.octaves - 1 - octave);
-        weighted += weight * u64::from(grain_octave(grain.seed, octave, cell, x, y));
+        weighted += weight * u64::from(grain_octave(grain.seed, octave, cell, x, y, grain.stepped));
         weights += weight;
     }
     ((weighted + weights / 2) / weights) as u32
@@ -870,6 +882,7 @@ mod tests {
             cell_px: 7,
             strength: 200,
             octaves: 3,
+            stepped: false,
         };
         let mut min = 255u32;
         let mut max = 0u32;
@@ -887,6 +900,39 @@ mod tests {
         // A different seed is a different paper.
         let other = GrainSpec { seed: 42, ..spec };
         assert!((0..140).any(|x| grain_value(&spec, x, 70) != grain_value(&other, x, 70)));
+    }
+
+    #[test]
+    fn stepped_grain_is_flat_within_a_cell_and_steps_at_boundaries() {
+        let spec = GrainSpec {
+            seed: 20261129,
+            cell_px: 6,
+            strength: 220,
+            octaves: 1,
+            stepped: true,
+        };
+        // Flat within the cell (single octave: the value is
+        // the cell's hash, wherever the pixel sits in it).
+        let v = grain_value(&spec, 0, 0);
+        for x in 0..6 {
+            for y in 0..6 {
+                assert_eq!(
+                    grain_value(&spec, x, y),
+                    v,
+                    "stepped value varies inside a cell"
+                );
+            }
+        }
+        // And it steps somewhere along the next cells —
+        // the field is not one flat value.
+        assert!((0..60).any(|x| grain_value(&spec, x, 0) != v));
+        // The smooth field at the same parameters is NOT
+        // flat within the cell (the modes genuinely differ).
+        let smooth = GrainSpec {
+            stepped: false,
+            ..spec
+        };
+        assert!((1..6).any(|x| grain_value(&smooth, x, 0) != grain_value(&smooth, 0, 0)));
     }
 
     #[test]
@@ -923,6 +969,7 @@ mod tests {
                 cell_px: 5,
                 strength: 0,
                 octaves: 3,
+                stepped: false,
             }),
             160,
             160,
@@ -959,6 +1006,7 @@ mod tests {
                 seed: 99,
                 cell_px: 6,
                 strength: 220,
+                stepped: false,
                 octaves: 2,
             }),
             140,

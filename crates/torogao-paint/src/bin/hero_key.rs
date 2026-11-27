@@ -29,6 +29,8 @@ struct GrainJson {
     cell_px: u32,
     strength: u8,
     octaves: u8,
+    #[serde(default)]
+    stepped: bool,
 }
 
 impl From<&GrainJson> for GrainSpec {
@@ -38,6 +40,7 @@ impl From<&GrainJson> for GrainSpec {
             cell_px: json.cell_px,
             strength: json.strength,
             octaves: json.octaves,
+            stepped: json.stepped,
         }
     }
 }

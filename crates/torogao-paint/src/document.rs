@@ -1079,6 +1079,7 @@ mod tests {
                 cell_px: 4,
                 strength: 180,
                 octaves: 2,
+                stepped: false,
             },
         };
         doc.apply_op(textured).expect("textured run");
@@ -1131,18 +1132,21 @@ mod tests {
                 cell_px: 0,
                 strength: 1,
                 octaves: 1,
+                stepped: false,
             },
             GrainSpec {
                 seed: 1,
                 cell_px: 4,
                 strength: 1,
                 octaves: 0,
+                stepped: false,
             },
             GrainSpec {
                 seed: 1,
                 cell_px: 4,
                 strength: 1,
                 octaves: GRAIN_OCTAVES_MAX + 1,
+                stepped: false,
             },
         ] {
             let bad = Op::TexturedStampRun {
