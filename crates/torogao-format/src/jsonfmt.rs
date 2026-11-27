@@ -51,10 +51,16 @@ fn write_value(value: &Value, out: &mut String) {
             out.push(']');
         }
         Value::Object(map) => {
-            // serde_json's default map is a BTreeMap, so keys
-            // are already in alphabetical order.
+            // Sort the keys here rather than leaning on the
+            // map's own order: serde_json's map is a BTreeMap
+            // only while its preserve_order feature is off, and
+            // workspace feature unification can turn it on (via
+            // schemars/Slint), making iteration insertion-ordered.
+            // The byte form is alphabetical regardless.
+            let mut entries: Vec<(&String, &Value)> = map.iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(b.0));
             out.push('{');
-            for (index, (key, item)) in map.iter().enumerate() {
+            for (index, (key, item)) in entries.into_iter().enumerate() {
                 if index > 0 {
                     out.push(',');
                 }
