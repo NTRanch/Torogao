@@ -77,6 +77,7 @@ use crate::error::RenderError;
 use crate::math::Mat4;
 use crate::setscene::ArcScene;
 use crate::splat::{PackedSplats, Splat, SplatCloud, SplatTransform, pack_splats_lit};
+use crate::splat_gpu::{LayerMotion, PackedGpuSplats, SplatCamera, TrsKey};
 use crate::splat_light::{LightResponse, SplatLight, SplatShadowMap};
 
 fn spec_err(detail: impl Into<String>) -> RenderError {
@@ -279,6 +280,40 @@ pub struct LayerLightSpec {
     pub response: Option<LightResponseSpec>,
 }
 
+/// One key of a layer's TRS motion (Rung 5): the
+/// layer transform at `frame`, fields defaulting as
+/// in `LayerTransform`. Rotation is the spec's glTF
+/// quaternion (x, y, z, w).
+#[derive(Debug, Clone, Deserialize)]
+pub struct MotionKeySpec {
+    pub frame: u32,
+    #[serde(default)]
+    pub translation: [f64; 3],
+    #[serde(default)]
+    pub rotation: Option<[f64; 4]>,
+    #[serde(default = "default_scale")]
+    pub scale: f64,
+}
+
+/// A layer's TRS animation (Rung 5): motion keys the
+/// caller evaluates per frame (`LayerMotion`) and
+/// pushes to the GPU layer as its transform. Frozen
+/// with the spec, per D-1397.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MotionSpec {
+    pub keys: Vec<MotionKeySpec>,
+}
+
+/// A layer's resident sequence (Rung 5): hash-frozen
+/// `.ply` frames in playback order, uploaded once
+/// and selected per frame. Each frame is verified
+/// against its named hash exactly like the layer's
+/// still asset.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SequenceSpec {
+    pub frames: Vec<AssetRef>,
+}
+
 /// One `layers` entry of kind "splat" (DESIGN §2.3).
 #[derive(Debug, Clone, Deserialize)]
 pub struct SplatLayerSpec {
@@ -289,6 +324,10 @@ pub struct SplatLayerSpec {
     pub axis: Option<String>,
     #[serde(default)]
     pub light: Option<LayerLightSpec>,
+    #[serde(default)]
+    pub motion: Option<MotionSpec>,
+    #[serde(default)]
+    pub sequence: Option<SequenceSpec>,
 }
 
 /// The spec document, as much of it as this compiler
@@ -352,21 +391,12 @@ pub fn compile_scene_splats(
     }
 }
 
-/// Compile one splat layer: verify, load, place, pack.
-pub fn compile_splat_layer(
-    layer: &SplatLayerSpec,
-    base_dir: &Path,
-    scene: &ArcScene,
-    width: u32,
-    height: u32,
-    shadow: Option<&SplatShadowMap>,
-) -> Result<PackedSplats, RenderError> {
-    // Rotation (programme Rung 3): the spec field is
-    // the glTF quaternion (x, y, z, w); the storage
-    // order is (w, x, y, z) and the pack normalises.
-    // A non-finite or zero quaternion is not a
-    // rotation and does not compile.
-    let rotation = match layer.transform.rotation {
+/// The spec's glTF quaternion (x, y, z, w) as the
+/// storage order (w, x, y, z), validated: a non-finite
+/// or zero quaternion is not a rotation and does not
+/// compile. Absent means identity.
+fn spec_rotation(rotation: &Option<[f64; 4]>) -> Result<[f64; 4], RenderError> {
+    match rotation {
         Some(q) => {
             if !q.iter().all(|v| v.is_finite()) {
                 return Err(spec_err(format!(
@@ -378,23 +408,28 @@ pub fn compile_splat_layer(
                     "layer rotation is the zero quaternion (not a rotation)",
                 ));
             }
-            [q[3], q[0], q[1], q[2]]
+            Ok([q[3], q[0], q[1], q[2]])
         }
-        None => crate::splat_rotate::IDENTITY_QUAT,
-    };
-    if !(layer.transform.scale.is_finite() && layer.transform.scale > 0.0) {
+        None => Ok(crate::splat_rotate::IDENTITY_QUAT),
+    }
+}
+
+/// A layer scale must be a positive finite number.
+fn check_scale(scale: f64) -> Result<(), RenderError> {
+    if !(scale.is_finite() && scale > 0.0) {
         return Err(spec_err(format!(
-            "layer scale {} is not a positive finite number",
-            layer.transform.scale
+            "layer scale {scale} is not a positive finite number"
         )));
     }
-    let axis = match &layer.axis {
-        Some(name) => AxisMap::parse(name)?,
-        None => AxisMap::Gltf,
-    };
+    Ok(())
+}
 
+/// Read a spec asset and verify its SHA-256 against
+/// the spec (a mismatch does not compile — the asset
+/// is a frozen input, like every other spec input).
+fn load_verified_asset(base_dir: &Path, asset: &AssetRef) -> Result<Vec<u8>, RenderError> {
     let asset_path: PathBuf = {
-        let p = Path::new(&layer.asset.path);
+        let p = Path::new(&asset.path);
         if p.is_absolute() {
             p.to_path_buf()
         } else {
@@ -408,19 +443,24 @@ pub fn compile_splat_layer(
         ))
     })?;
     let actual = sha256_hex(&bytes);
-    if !actual.eq_ignore_ascii_case(layer.asset.sha256.trim()) {
+    if !actual.eq_ignore_ascii_case(asset.sha256.trim()) {
         return Err(spec_err(format!(
             "asset {} hash mismatch: spec names {}, asset hashes {actual} \
              (a spec whose asset hash does not match does not compile)",
             asset_path.display(),
-            layer.asset.sha256
+            asset.sha256
         )));
     }
-    // Light interaction (programme Rung 4): validate
-    // the named fields, then build the pack's light.
-    // A layer with no `light` object builds an
-    // inactive light and packs through the Rung 3
-    // path bit-identically.
+    Ok(bytes)
+}
+
+/// The layer's Rung 4 light interaction from its
+/// spec fields. A layer with no `light` object (or
+/// neither field named) builds an inactive light.
+fn spec_light<'a>(
+    layer: &SplatLayerSpec,
+    shadow: Option<&'a SplatShadowMap>,
+) -> Result<SplatLight<'a>, RenderError> {
     let mut light = SplatLight::default();
     if let Some(spec_light) = &layer.light {
         if spec_light.receive_shadow {
@@ -457,7 +497,32 @@ pub fn compile_splat_layer(
             });
         }
     }
+    Ok(light)
+}
 
+/// Compile one splat layer: verify, load, place, pack.
+pub fn compile_splat_layer(
+    layer: &SplatLayerSpec,
+    base_dir: &Path,
+    scene: &ArcScene,
+    width: u32,
+    height: u32,
+    shadow: Option<&SplatShadowMap>,
+) -> Result<PackedSplats, RenderError> {
+    // Rotation (programme Rung 3): the spec field is
+    // the glTF quaternion (x, y, z, w); the storage
+    // order is (w, x, y, z) and the pack normalises.
+    let rotation = spec_rotation(&layer.transform.rotation)?;
+    check_scale(layer.transform.scale)?;
+    let axis = match &layer.axis {
+        Some(name) => AxisMap::parse(name)?,
+        None => AxisMap::Gltf,
+    };
+    let bytes = load_verified_asset(base_dir, &layer.asset)?;
+    // Light interaction (programme Rung 4): a layer
+    // with no `light` object builds an inactive light
+    // and packs through the Rung 3 path bit-identically.
+    let light = spec_light(layer, shadow)?;
     let cloud = SplatCloud::load_ply(&bytes)?;
     let cloud = axis.apply(&cloud);
     let transform = SplatTransform {
@@ -468,6 +533,148 @@ pub fn compile_splat_layer(
     Ok(pack_splats_lit(
         &cloud, &transform, scene, width, height, &light,
     ))
+}
+
+/// A GPU-compiled splat layer (Rung 5): the resident
+/// packet for the §6.1 path plus the layer's motion,
+/// when the spec names one (the caller evaluates it
+/// per frame and pushes the transform).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompiledGpuLayer {
+    /// The boundary packet (`PackedScene::splat_gpu`).
+    pub packet: PackedGpuSplats,
+    /// The spec's motion keys, when named.
+    pub motion: Option<LayerMotion>,
+}
+
+/// Compile the spec document's splat layer, if it
+/// has one, into the GPU path's resident packet
+/// (DESIGN.md §6.1) for `scene`'s camera at
+/// `width` x `height`. The still-path compiler
+/// (`compile_scene_splats`) is untouched: a spec
+/// compiles through either path from the same
+/// verified inputs, which is what lets the proving
+/// battery gate the GPU path against the CPU pack.
+/// When the spec names a `sequence`, its frames are
+/// the resident list and the layer's `asset` is not
+/// loaded; otherwise the asset is the single
+/// resident frame. Motion keys are validated like
+/// the layer transform and returned for per-frame
+/// evaluation.
+pub fn compile_scene_splats_gpu(
+    spec_json: &[u8],
+    base_dir: &Path,
+    scene: &ArcScene,
+    width: u32,
+    height: u32,
+    shadow: Option<&SplatShadowMap>,
+) -> Result<Option<CompiledGpuLayer>, RenderError> {
+    let doc: LayerList = serde_json::from_slice(spec_json)
+        .map_err(|e| spec_err(format!("spec does not parse: {e}")))?;
+    let mut splat_entries: Vec<SplatLayerSpec> = Vec::new();
+    for entry in &doc.layers {
+        if entry.get("kind").and_then(|k| k.as_str()) == Some("splat") {
+            let parsed: SplatLayerSpec = serde_json::from_value(entry.clone())
+                .map_err(|e| spec_err(format!("splat layer does not parse: {e}")))?;
+            splat_entries.push(parsed);
+        }
+    }
+    match splat_entries.len() {
+        0 => Ok(None),
+        1 => Ok(Some(compile_splat_layer_gpu(
+            &splat_entries[0],
+            base_dir,
+            scene,
+            width,
+            height,
+            shadow,
+        )?)),
+        n => Err(spec_err(format!(
+            "{n} splat layers named; the boundary packet carries one \
+             (multi-layer composition is not built)"
+        ))),
+    }
+}
+
+/// Compile one splat layer for the GPU path: verify
+/// every named asset against its hash, load the
+/// still or the sequence frames, apply the axis map,
+/// and freeze the layer's transform, camera and
+/// light into the resident packet.
+fn compile_splat_layer_gpu(
+    layer: &SplatLayerSpec,
+    base_dir: &Path,
+    scene: &ArcScene,
+    width: u32,
+    height: u32,
+    shadow: Option<&SplatShadowMap>,
+) -> Result<CompiledGpuLayer, RenderError> {
+    let rotation = spec_rotation(&layer.transform.rotation)?;
+    check_scale(layer.transform.scale)?;
+    let axis = match &layer.axis {
+        Some(name) => AxisMap::parse(name)?,
+        None => AxisMap::Gltf,
+    };
+    let light = spec_light(layer, shadow)?;
+    let mut frames: Vec<SplatCloud> = Vec::new();
+    match &layer.sequence {
+        Some(sequence) => {
+            if sequence.frames.is_empty() {
+                return Err(spec_err(
+                    "sequence names no frames (a sequence layer does not compile empty)",
+                ));
+            }
+            for asset in &sequence.frames {
+                let bytes = load_verified_asset(base_dir, asset)?;
+                let cloud = SplatCloud::load_ply(&bytes)?;
+                frames.push(axis.apply(&cloud));
+            }
+        }
+        None => {
+            let bytes = load_verified_asset(base_dir, &layer.asset)?;
+            let cloud = SplatCloud::load_ply(&bytes)?;
+            frames.push(axis.apply(&cloud));
+        }
+    }
+    let motion = match &layer.motion {
+        Some(motion_spec) => {
+            if motion_spec.keys.is_empty() {
+                return Err(spec_err(
+                    "motion names no keys (a motion layer does not compile empty)",
+                ));
+            }
+            let mut keys: Vec<TrsKey> = Vec::with_capacity(motion_spec.keys.len());
+            for key in &motion_spec.keys {
+                if !key.translation.iter().all(|v| v.is_finite()) {
+                    return Err(spec_err(format!(
+                        "motion key at frame {} has a non-finite translation",
+                        key.frame
+                    )));
+                }
+                check_scale(key.scale)?;
+                keys.push(TrsKey {
+                    frame: key.frame,
+                    translation: key.translation,
+                    rotation: spec_rotation(&key.rotation)?,
+                    scale: key.scale,
+                });
+            }
+            Some(LayerMotion::new(keys).expect("keys are non-empty"))
+        }
+        None => None,
+    };
+    let packet = PackedGpuSplats {
+        frames,
+        transform: SplatTransform {
+            translation: layer.transform.translation,
+            rotation,
+            scale: layer.transform.scale,
+        },
+        camera: SplatCamera::from_scene(scene, width, height),
+        shadow: light.shadow.cloned(),
+        response: light.response,
+    };
+    Ok(CompiledGpuLayer { packet, motion })
 }
 
 #[cfg(test)]
@@ -848,6 +1055,8 @@ mod tests {
             },
             transform: LayerTransform::default(),
             axis: None,
+            motion: None,
+            sequence: None,
             light: Some(LayerLightSpec {
                 receive_shadow: false,
                 response: Some(LightResponseSpec {
@@ -859,5 +1068,120 @@ mod tests {
         let err = compile_splat_layer(&layer, &dir, &scene, 512, 640, None)
             .expect_err("non-finite grade must fail");
         assert!(format!("{err}").contains("non-finite"), "{err}");
+    }
+
+    #[test]
+    fn gpu_still_compile_carries_the_layer() {
+        let (dir, json) = spec_for_cloud("gpu-still", "");
+        let scene = test_scene();
+        let compiled = compile_scene_splats_gpu(json.as_bytes(), &dir, &scene, 512, 640, None)
+            .expect("compile")
+            .expect("a layer");
+        assert!(compiled.motion.is_none());
+        assert_eq!(compiled.packet.frames.len(), 1);
+        assert_eq!(
+            compiled.packet.frames[0].splats.len(),
+            room_corner_cloud().splats.len()
+        );
+        assert_eq!(compiled.packet.camera.width, 512);
+        assert_eq!(compiled.packet.camera.height, 640);
+        assert_eq!(compiled.packet.transform, SplatTransform::default());
+        assert!(compiled.packet.shadow.is_none());
+        assert!(compiled.packet.response.is_none());
+    }
+
+    #[test]
+    fn gpu_compile_projects_like_the_cpu_pack() {
+        // The packet-level bridge between the paths:
+        // the GPU packet's frame, projected by the CPU
+        // reference, survives exactly the CPU packet's
+        // splats. The on-device equality gate is the
+        // proving battery's; this pins the compile.
+        let (dir, json) = spec_for_cloud("gpu-bridge", "");
+        let scene = test_scene();
+        let cpu = compile_scene_splats(json.as_bytes(), &dir, &scene, 512, 640, None)
+            .expect("compile")
+            .expect("a layer");
+        let gpu = compile_scene_splats_gpu(json.as_bytes(), &dir, &scene, 512, 640, None)
+            .expect("compile")
+            .expect("a layer");
+        let projected = crate::splat::project_splats(
+            &gpu.packet.frames[0],
+            &gpu.packet.transform,
+            &scene,
+            512,
+            640,
+            None,
+        );
+        assert_eq!(projected.len(), cpu.splat_count);
+    }
+
+    #[test]
+    fn gpu_motion_compiles_and_evaluates() {
+        let extra = r#", "motion": { "keys": [
+            { "frame": 0 },
+            { "frame": 10, "translation": [1.0, 0.0, 0.0], "scale": 2.0 }
+        ] }"#;
+        let (dir, json) = spec_for_cloud("gpu-motion", extra);
+        let scene = test_scene();
+        let compiled = compile_scene_splats_gpu(json.as_bytes(), &dir, &scene, 512, 640, None)
+            .expect("compile")
+            .expect("a layer");
+        let motion = compiled.motion.expect("motion");
+        assert_eq!(motion.keys().len(), 2);
+        assert_eq!(motion.transform_at(5).translation, [0.5, 0.0, 0.0]);
+        assert_eq!(motion.transform_at(5).scale, 1.5);
+        assert_eq!(motion.transform_at(0).scale, 1.0);
+    }
+
+    #[test]
+    fn gpu_motion_with_no_keys_does_not_compile() {
+        let (dir, json) = spec_for_cloud("gpu-motion-empty", r#", "motion": { "keys": [] }"#);
+        let scene = test_scene();
+        let err = compile_scene_splats_gpu(json.as_bytes(), &dir, &scene, 512, 640, None)
+            .expect_err("empty motion must fail");
+        assert!(format!("{err}").contains("no keys"), "{err}");
+    }
+
+    #[test]
+    fn gpu_sequence_compiles_every_frame() {
+        let (dir, _json) = spec_for_cloud("gpu-seq", "");
+        std::fs::copy(dir.join("room.ply"), dir.join("room2.ply")).expect("copy asset");
+        let bytes = std::fs::read(dir.join("room.ply")).expect("read asset");
+        let hash = sha256_hex(&bytes);
+        let json = format!(
+            r#"{{ "layers": [ {{ "kind": "splat",
+                "asset": {{ "path": "room.ply", "sha256": "{hash}" }},
+                "sequence": {{ "frames": [
+                    {{ "path": "room.ply", "sha256": "{hash}" }},
+                    {{ "path": "room2.ply", "sha256": "{hash}" }}
+                ] }} }} ] }}"#
+        );
+        let scene = test_scene();
+        let compiled = compile_scene_splats_gpu(json.as_bytes(), &dir, &scene, 512, 640, None)
+            .expect("compile")
+            .expect("a layer");
+        assert_eq!(compiled.packet.frames.len(), 2);
+        assert_eq!(compiled.packet.frames[0], compiled.packet.frames[1]);
+    }
+
+    #[test]
+    fn gpu_sequence_hash_mismatch_does_not_compile() {
+        let (dir, _json) = spec_for_cloud("gpu-seq-bad", "");
+        let bytes = std::fs::read(dir.join("room.ply")).expect("read asset");
+        let hash = sha256_hex(&bytes);
+        let bad = "00".repeat(32);
+        let json = format!(
+            r#"{{ "layers": [ {{ "kind": "splat",
+                "asset": {{ "path": "room.ply", "sha256": "{hash}" }},
+                "sequence": {{ "frames": [
+                    {{ "path": "room.ply", "sha256": "{hash}" }},
+                    {{ "path": "room.ply", "sha256": "{bad}" }}
+                ] }} }} ] }}"#
+        );
+        let scene = test_scene();
+        let err = compile_scene_splats_gpu(json.as_bytes(), &dir, &scene, 512, 640, None)
+            .expect_err("a mismatched sequence frame must fail");
+        assert!(format!("{err}").contains("hash mismatch"), "{err}");
     }
 }

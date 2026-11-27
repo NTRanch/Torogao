@@ -136,6 +136,16 @@ pub struct PackedScene {
     /// renderer; `pack_scene` leaves this `None` and a
     /// splat-aware caller fills it.
     pub splats: Option<PackedSplats>,
+    /// A Gaussian splat layer carried as resident
+    /// data for the GPU projection path (DESIGN.md
+    /// §6.1): the backend projects and sorts it
+    /// on-device per frame from this packet plus the
+    /// per-frame transform/sequence state set through
+    /// the trait below. Independent of `splats`: a
+    /// scene may carry either packet, and the proving
+    /// battery carries both (in separate uploads) to
+    /// gate one against the other.
+    pub splat_gpu: Option<crate::splat_gpu::PackedGpuSplats>,
     /// Direction to the sun + energy in w.
     pub sun: [f32; 4],
     /// Direction to the fill + energy in w.
@@ -195,6 +205,42 @@ pub trait RenderBackend {
 
     /// Render one frame offscreen and read it back.
     fn render_frame(&mut self, draw: &DrawFrame) -> Result<RenderedFrame, RenderError>;
+
+    /// Set the GPU splat layer's transform for the
+    /// next frames (Rung 5 animation: the frozen
+    /// spec's motion keys, evaluated per frame by the
+    /// caller). The resident records do not move;
+    /// only the parameter block is rewritten. Backends
+    /// without the GPU splat path (or scenes without
+    /// the layer) reject it.
+    fn set_splat_transform(
+        &mut self,
+        _transform: crate::splat::SplatTransform,
+    ) -> Result<(), RenderError> {
+        Err(RenderError::Backend(
+            "this backend has no GPU splat layer to transform".to_string(),
+        ))
+    }
+
+    /// Select which resident sequence frame the GPU
+    /// splat layer projects next (Rung 5). Frame 0 is
+    /// the layer's still.
+    fn set_splat_sequence_frame(&mut self, _frame: usize) -> Result<(), RenderError> {
+        Err(RenderError::Backend(
+            "this backend has no GPU splat sequence to select".to_string(),
+        ))
+    }
+
+    /// Run the GPU splat projection + sort for the
+    /// current layer state and read the surviving
+    /// projected records back, in draw order: the
+    /// determinism gate's instrument (the records are
+    /// compared against `splat::project_splats`).
+    fn splat_gpu_snapshot(&mut self) -> Result<crate::splat_gpu::SplatGpuSnapshot, RenderError> {
+        Err(RenderError::Backend(
+            "this backend has no GPU splat layer to snapshot".to_string(),
+        ))
+    }
 
     /// Run the skinning path for one mesh and read the
     /// skinned positions/normals back (the cross-check's
@@ -368,6 +414,7 @@ pub fn pack_scene(model: &Model, scene: &ArcScene) -> PackedScene {
         toon: None,
         albedos: model.albedos.clone(),
         splats: None,
+        splat_gpu: None,
         sun: [
             scene.sun.to_light.x as f32,
             scene.sun.to_light.y as f32,

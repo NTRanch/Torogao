@@ -56,4 +56,9 @@ fn main() {
     compile(&shader_dir, &out_dir, "depthonly.frag", "fragment");
     compile(&shader_dir, &out_dir, "splat.vert", "vertex");
     compile(&shader_dir, &out_dir, "splat.frag", "fragment");
+    compile(&shader_dir, &out_dir, "splat_project.comp", "compute");
+    compile(&shader_dir, &out_dir, "splat_radix_hist.comp", "compute");
+    compile(&shader_dir, &out_dir, "splat_radix_scan.comp", "compute");
+    compile(&shader_dir, &out_dir, "splat_radix_scatter.comp", "compute");
+    compile(&shader_dir, &out_dir, "splat_gather.comp", "compute");
 }

@@ -547,14 +547,40 @@ pub fn pack_splats_lit(
     pack_impl(cloud, transform, scene, width, height, light)
 }
 
-fn pack_impl(
+/// One splat's projected record, before the quad
+/// stream is emitted: the per-splat output of the
+/// projection half of the pack, in the pack's total
+/// order (depth descending, asset index ascending)
+/// when returned by [`project_splats`]. The GPU
+/// projection (DESIGN.md §6.1) is gated against this
+/// record-for-record: it is the packet-level
+/// reference the on-device path must reproduce.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SplatProjection {
+    pub depth: f64,
+    pub index: usize,
+    pub centre_px: [f64; 2],
+    pub z_ndc: f32,
+    pub conic: [f32; 3],
+    pub radii: [f64; 2],
+    pub axes: [[f64; 2]; 2],
+    pub colour: [f32; 3],
+    pub opacity: f32,
+}
+
+/// Project every surviving splat of `cloud` under
+/// `transform` for `scene`'s camera and sort them
+/// into the pack's total order. The projection half
+/// of `pack_impl`, shared verbatim so the packet
+/// and this projection list can never drift.
+fn project_splats_sorted(
     cloud: &SplatCloud,
     transform: &SplatTransform,
     scene: &ArcScene,
     width: u32,
     height: u32,
     light: Option<SplatLight<'_>>,
-) -> PackedSplats {
+) -> Vec<SplatProjection> {
     // Rotation first (TRS: x' = t + s * R * x). The
     // identity skips it, leaving the Rung 1 path —
     // and so its packet — exactly as it was.
@@ -581,18 +607,7 @@ fn pack_impl(
     ];
     let (wf, hf) = (f64::from(width), f64::from(height));
 
-    struct Projected {
-        depth: f64,
-        index: usize,
-        centre_px: [f64; 2],
-        z_ndc: f32,
-        conic: [f32; 3],
-        radii: [f64; 2],
-        axes: [[f64; 2]; 2],
-        colour: [f32; 3],
-        opacity: f32,
-    }
-    let mut projected: Vec<Projected> = Vec::new();
+    let mut projected: Vec<SplatProjection> = Vec::new();
     for (index, splat) in cloud.splats.iter().enumerate() {
         let opacity = splat.opacity();
         if opacity < ALPHA_CULL {
@@ -716,7 +731,7 @@ fn pack_impl(
             Some(light) => light.apply(colour, centre, scene.world),
             None => colour,
         };
-        projected.push(Projected {
+        projected.push(SplatProjection {
             depth,
             index,
             centre_px,
@@ -735,6 +750,36 @@ fn pack_impl(
             .total_cmp(&a.depth)
             .then_with(|| a.index.cmp(&b.index))
     });
+    projected
+}
+
+/// The pack's projection, public: every surviving
+/// splat's projected record in the pack's total
+/// order, without the quad-stream emission. The
+/// GPU path's determinism gate compares its
+/// on-device records against this list
+/// record-for-record (DESIGN.md §6.1).
+pub fn project_splats(
+    cloud: &SplatCloud,
+    transform: &SplatTransform,
+    scene: &ArcScene,
+    width: u32,
+    height: u32,
+    light: Option<SplatLight<'_>>,
+) -> Vec<SplatProjection> {
+    project_splats_sorted(cloud, transform, scene, width, height, light)
+}
+
+fn pack_impl(
+    cloud: &SplatCloud,
+    transform: &SplatTransform,
+    scene: &ArcScene,
+    width: u32,
+    height: u32,
+    light: Option<SplatLight<'_>>,
+) -> PackedSplats {
+    let projected = project_splats_sorted(cloud, transform, scene, width, height, light);
+    let (wf, hf) = (f64::from(width), f64::from(height));
     let mut vertices = Vec::with_capacity(projected.len() * 4);
     let mut indices = Vec::with_capacity(projected.len() * 6);
     for p in &projected {

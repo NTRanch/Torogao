@@ -1,0 +1,61 @@
+// Radix sort, pass step 2 of 3 (DESIGN.md section
+// 6.1): exclusive scan of the [bin][block] histogram
+// table into scatter offsets. One workgroup per
+// bin (256 in flight, not one): each workgroup
+// loads the bin totals into shared memory, takes
+// its bin base from them, then scans its bin's
+// blocks in 256 parallel spans — span sums through
+// shared memory, then a sequential walk inside the
+// span. Every order here is fixed, so the offsets
+// are a pure function of the histogram.
+#version 460
+
+layout(local_size_x = 256) in;
+
+layout(std430, set = 0, binding = 2) readonly buffer BlockHist {
+    uint block_hist[];
+};
+layout(std430, set = 0, binding = 3) buffer BlockOffsets {
+    uint block_offsets[];
+};
+layout(std430, set = 0, binding = 4) readonly buffer BinTotals {
+    uint bin_totals[];
+};
+
+layout(push_constant) uniform Push {
+    uint unused0;
+    uint unused1;
+    uint unused2;
+    uint num_blocks;
+} push;
+
+shared uint span_sums[256];
+shared uint totals[256];
+
+void main() {
+    uint bin = gl_WorkGroupID.x;
+    uint tid = gl_LocalInvocationID.x;
+    totals[tid] = bin_totals[tid];
+    uint base = bin * push.num_blocks;
+    uint span = (push.num_blocks + 255u) / 256u;
+    uint start = tid * span;
+    uint end = min(start + span, push.num_blocks);
+    uint local = 0u;
+    for (uint b = start; b < end; b++) {
+        local += block_hist[base + b];
+    }
+    span_sums[tid] = local;
+    barrier();
+    uint acc = 0u;
+    for (uint k = 0u; k < bin; k++) {
+        acc += totals[k];
+    }
+    for (uint k = 0u; k < tid; k++) {
+        acc += span_sums[k];
+    }
+    for (uint b = start; b < end; b++) {
+        uint h = block_hist[base + b];
+        block_offsets[base + b] = acc;
+        acc += h;
+    }
+}

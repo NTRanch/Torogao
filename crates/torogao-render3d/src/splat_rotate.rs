@@ -307,6 +307,23 @@ impl ShRotation {
     /// `c'[m] = sum_n D(m, n) * c[n]`, so the rotated
     /// field evaluated at `R d` equals the original
     /// at `d`.
+    /// The band matrices flattened for the GPU
+    /// projection's parameter block: band 1's 3x3 at
+    /// `[0..9]`, band 2's 5x5 at `[9..34]`, band 3's
+    /// 7x7 at `[34..83]`, each row-major in the
+    /// (m, n) indexing `rotate_channel` applies.
+    pub fn matrices_flat(&self) -> [f64; 83] {
+        let mut out = [0.0_f64; 83];
+        for (band, side, offset) in [(1_usize, 3_usize, 0_usize), (2, 5, 9), (3, 7, 34)] {
+            for m in 0..side {
+                for n in 0..side {
+                    out[offset + m * side + n] = self.bands[band][m][n];
+                }
+            }
+        }
+        out
+    }
+
     pub fn rotate_channel(&self, c: &[f64; REST_PER_CHANNEL]) -> [f64; REST_PER_CHANNEL] {
         let mut out = [0.0_f64; REST_PER_CHANNEL];
         for l in 1..=MAX_BAND {

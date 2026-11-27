@@ -205,6 +205,19 @@ impl SplatShadowMap {
         self.size
     }
 
+    /// The rasterised depths, row-major, `size * size`
+    /// entries (the GPU path uploads these verbatim as
+    /// its centre-test texture).
+    pub fn depths(&self) -> &[f32] {
+        &self.depths
+    }
+
+    /// The light view-projection the map was
+    /// rasterised under (column-major f64).
+    pub fn light_view_proj(&self) -> Mat4 {
+        self.light_view_proj
+    }
+
     /// Sun visibility at a world-space point, in
     /// [0, 1]: the shaders' `shadow_factor` with the
     /// normal-offset bias omitted (a centre has no
