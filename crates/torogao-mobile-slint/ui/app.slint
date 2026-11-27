@@ -90,6 +90,7 @@ export component AppWindow inherits Window {
 
     VerticalBox {
         padding: 12px;
+        padding-bottom: 68px;
         spacing: 10px;
 
         Text {
@@ -512,8 +513,24 @@ export component AppWindow inherits Window {
             }
         }
 
-        // ---- Tab bar ----
-        if root.attested: HorizontalBox {
+    }
+
+    // ---- Tab bar (anchored to the window's bottom edge) ----
+    // The bar used to be the content column's last child; on
+    // shorter displays (1080x1920 @ 420 dpi) the column's minimum
+    // height pushed it off the bottom edge and Gallery / Seat /
+    // Settings were unreachable. Anchored to the window it is
+    // always on screen, and the column's bottom padding keeps
+    // content from hiding behind it.
+    if root.attested: Rectangle {
+        y: root.height - self.height;
+        height: 56px;
+        background: #17122a;
+        HorizontalBox {
+            padding-left: 12px;
+            padding-right: 12px;
+            padding-top: 8px;
+            padding-bottom: 8px;
             spacing: 8px;
             Button {
                 text: "Generate";
