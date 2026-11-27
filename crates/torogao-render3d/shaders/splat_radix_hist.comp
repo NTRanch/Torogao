@@ -1,0 +1,59 @@
+// Radix sort, pass step 1 of 3 (DESIGN.md section
+// 6.1): per-block histograms of one key byte. Each
+// workgroup owns one 256-key block and counts its
+// bytes into shared memory (atomic adds whose final
+// COUNTS are order-free), then writes its row of the
+// [bin][block] histogram table the scan turns into
+// scatter offsets, plus the per-bin totals (an
+// atomic tally whose value is order-free).
+// Deterministic by construction: no atomic decides
+// a position anywhere in the sort.
+#version 460
+
+layout(local_size_x = 256) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer KeysIn {
+    uvec4 keys_in[];
+};
+layout(std430, set = 0, binding = 2) buffer BlockHist {
+    uint block_hist[];
+};
+layout(std430, set = 0, binding = 4) buffer BinTotals {
+    uint bin_totals[];
+};
+
+layout(push_constant) uniform Push {
+    uint splat_count;
+    uint word;        // key word this pass sorts: 0, 1 or 2
+    uint shift;       // byte shift within the word: 0, 8, 16, 24
+    uint num_blocks;
+} push;
+
+shared uint hist[256];
+
+uint key_word(uvec4 key) {
+    if (push.word == 0u) {
+        return key.x;
+    }
+    if (push.word == 1u) {
+        return key.y;
+    }
+    return key.z;
+}
+
+void main() {
+    uint bin = gl_LocalInvocationID.x;
+    hist[bin] = 0u;
+    barrier();
+    uint idx = gl_WorkGroupID.x * 256u + bin;
+    if (idx < push.splat_count) {
+        uint byte_value = (key_word(keys_in[idx]) >> push.shift) & 0xFFu;
+        atomicAdd(hist[byte_value], 1u);
+    }
+    barrier();
+    block_hist[bin * push.num_blocks + gl_WorkGroupID.x] = hist[bin];
+    // The bin's frame total, for the scan's bin
+    // bases: an atomic whose final VALUE is a count
+    // and therefore order-free.
+    atomicAdd(bin_totals[bin], hist[bin]);
+}
