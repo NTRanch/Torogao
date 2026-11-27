@@ -156,7 +156,7 @@ fn spec_driven_splat_layer_renders_like_the_direct_packet() {
     // Compiler path, twice (the twin).
     let mut compiled_frames = Vec::new();
     for _ in 0..2 {
-        let layer = compile_scene_splats(spec.as_bytes(), &asset_dir, &scene, width, height)
+        let layer = compile_scene_splats(spec.as_bytes(), &asset_dir, &scene, width, height, None)
             .expect("spec compiles")
             .expect("spec names a splat layer");
         let mut packed = pack_scene(&model, &scene);
@@ -198,8 +198,15 @@ fn spec_driven_splat_layer_renders_like_the_direct_packet() {
     // splat layer compiles to None, and the render is
     // the character-only render, bit for bit.
     let empty_spec = r#"{ "name": "rung1-proving", "layers": [] }"#;
-    let none = compile_scene_splats(empty_spec.as_bytes(), &asset_dir, &scene, width, height)
-        .expect("empty spec compiles");
+    let none = compile_scene_splats(
+        empty_spec.as_bytes(),
+        &asset_dir,
+        &scene,
+        width,
+        height,
+        None,
+    )
+    .expect("empty spec compiles");
     assert!(none.is_none(), "no splat layer compiles to None");
     let mut packed = pack_scene(&model, &scene);
     packed.toon = Some(toon);

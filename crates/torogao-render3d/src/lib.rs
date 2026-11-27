@@ -48,6 +48,8 @@ pub mod setscene;
 #[forbid(unsafe_code)]
 pub mod splat;
 #[forbid(unsafe_code)]
+pub mod splat_light;
+#[forbid(unsafe_code)]
 pub mod splat_rotate;
 #[forbid(unsafe_code)]
 pub mod splat_spec;

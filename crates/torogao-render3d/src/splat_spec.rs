@@ -48,6 +48,19 @@
 //!   colour is no longer exact only at band 0. The
 //!   maps themselves (which way is up in the asset)
 //!   are exact.
+//! - **Light interaction** (programme Rung 4). A
+//!   layer may name a `light` object: `receive_shadow`
+//!   asks for the scene's sun shadow to be sampled at
+//!   the splat centres (the caller supplies the
+//!   shadow map, rasterised from the scene's casters
+//!   — `crate::splat_light` — because the casters are
+//!   the caller's scene data, not the spec's), and
+//!   `response` declares the layer's light response
+//!   grade, frozen with the spec. Asking to receive
+//!   shadow without a supplied map does not compile
+//!   (fail loud, never a silent unshadowed fallback).
+//!   A layer with no `light` object compiles to the
+//!   Rung 3 packet bit-identically.
 //!
 //! Everything here is a pure function of (spec, asset
 //! bytes, scene camera): the determinism contract of
@@ -63,7 +76,8 @@ use crate::compare::sha256_hex;
 use crate::error::RenderError;
 use crate::math::Mat4;
 use crate::setscene::ArcScene;
-use crate::splat::{PackedSplats, Splat, SplatCloud, SplatTransform, pack_splats};
+use crate::splat::{PackedSplats, Splat, SplatCloud, SplatTransform, pack_splats_lit};
+use crate::splat_light::{LightResponse, SplatLight, SplatShadowMap};
 
 fn spec_err(detail: impl Into<String>) -> RenderError {
     RenderError::Document(format!("splat spec: {}", detail.into()))
@@ -239,6 +253,32 @@ impl Default for LayerTransform {
     }
 }
 
+/// The layer's light response (programme Rung 4):
+/// a 3x3 colour grade plus a mix toward the scene's
+/// world colour, as defined in `crate::splat_light`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LightResponseSpec {
+    /// Row-major 3x3, applied to the evaluated
+    /// linear colour.
+    pub grade: [[f64; 3]; 3],
+    #[serde(default)]
+    pub world_mix: f64,
+}
+
+/// The layer's Rung 4 light interaction, as named in
+/// the spec. Both fields are opt-in; a `light` object
+/// with neither is the Rung 3 layer.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct LayerLightSpec {
+    /// Sample the scene's sun shadow map at the
+    /// splat centres. Requires the caller to supply
+    /// the map at compile time.
+    #[serde(default)]
+    pub receive_shadow: bool,
+    #[serde(default)]
+    pub response: Option<LightResponseSpec>,
+}
+
 /// One `layers` entry of kind "splat" (DESIGN §2.3).
 #[derive(Debug, Clone, Deserialize)]
 pub struct SplatLayerSpec {
@@ -247,6 +287,8 @@ pub struct SplatLayerSpec {
     pub transform: LayerTransform,
     #[serde(default)]
     pub axis: Option<String>,
+    #[serde(default)]
+    pub light: Option<LayerLightSpec>,
 }
 
 /// The spec document, as much of it as this compiler
@@ -262,7 +304,10 @@ pub struct LayerList {
 
 /// Compile the spec document's splat layer, if it has
 /// one, into the boundary packet for `scene`'s camera
-/// at `width` x `height`.
+/// at `width` x `height`. `shadow` is the scene's sun
+/// shadow map (Rung 4), rasterised by the caller from
+/// the scene's casters; a layer that asks to receive
+/// shadow without one does not compile.
 ///
 /// - No splat layer → `Ok(None)` (the caller leaves
 ///   `PackedScene::splats` as `None`; the boundary
@@ -278,6 +323,7 @@ pub fn compile_scene_splats(
     scene: &ArcScene,
     width: u32,
     height: u32,
+    shadow: Option<&SplatShadowMap>,
 ) -> Result<Option<PackedSplats>, RenderError> {
     let doc: LayerList = serde_json::from_slice(spec_json)
         .map_err(|e| spec_err(format!("spec does not parse: {e}")))?;
@@ -297,6 +343,7 @@ pub fn compile_scene_splats(
             scene,
             width,
             height,
+            shadow,
         )?)),
         n => Err(spec_err(format!(
             "{n} splat layers named; the boundary packet carries one \
@@ -312,6 +359,7 @@ pub fn compile_splat_layer(
     scene: &ArcScene,
     width: u32,
     height: u32,
+    shadow: Option<&SplatShadowMap>,
 ) -> Result<PackedSplats, RenderError> {
     // Rotation (programme Rung 3): the spec field is
     // the glTF quaternion (x, y, z, w); the storage
@@ -368,6 +416,48 @@ pub fn compile_splat_layer(
             layer.asset.sha256
         )));
     }
+    // Light interaction (programme Rung 4): validate
+    // the named fields, then build the pack's light.
+    // A layer with no `light` object builds an
+    // inactive light and packs through the Rung 3
+    // path bit-identically.
+    let mut light = SplatLight::default();
+    if let Some(spec_light) = &layer.light {
+        if spec_light.receive_shadow {
+            match shadow {
+                Some(map) => light.shadow = Some(map),
+                None => {
+                    return Err(spec_err(
+                        "layer asks to receive shadow (light.receive_shadow) but no \
+                         shadow map was supplied for the scene (a shadow-receiving \
+                         layer does not compile unshadowed)",
+                    ));
+                }
+            }
+        }
+        if let Some(response) = &spec_light.response {
+            for row in &response.grade {
+                for v in row {
+                    if !v.is_finite() {
+                        return Err(spec_err(format!(
+                            "light response grade {response:?} has a non-finite entry"
+                        )));
+                    }
+                }
+            }
+            if !(response.world_mix.is_finite() && (0.0..=1.0).contains(&response.world_mix)) {
+                return Err(spec_err(format!(
+                    "light response world_mix {} is not a finite number in [0, 1]",
+                    response.world_mix
+                )));
+            }
+            light.response = Some(LightResponse {
+                grade: response.grade,
+                world_mix: response.world_mix,
+            });
+        }
+    }
+
     let cloud = SplatCloud::load_ply(&bytes)?;
     let cloud = axis.apply(&cloud);
     let transform = SplatTransform {
@@ -375,13 +465,16 @@ pub fn compile_splat_layer(
         rotation,
         scale: layer.transform.scale,
     };
-    Ok(pack_splats(&cloud, &transform, scene, width, height))
+    Ok(pack_splats_lit(
+        &cloud, &transform, scene, width, height, &light,
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::setscene::plate_rig_scene;
+    use crate::splat::pack_splats;
     use crate::splat::room_corner_cloud;
 
     fn test_scene() -> ArcScene {
@@ -448,7 +541,7 @@ mod tests {
                "axis": "gltf""#,
         );
         let scene = test_scene();
-        let compiled = compile_scene_splats(json.as_bytes(), &dir, &scene, 512, 640)
+        let compiled = compile_scene_splats(json.as_bytes(), &dir, &scene, 512, 640, None)
             .expect("compile")
             .expect("one layer");
         let direct = pack_splats(
@@ -480,7 +573,7 @@ mod tests {
             "asset": { "path": "room.ply",
                        "sha256": "0000000000000000000000000000000000000000000000000000000000000000" } } ] }"#;
         let scene = test_scene();
-        let err = compile_scene_splats(json.as_bytes(), &dir, &scene, 512, 640)
+        let err = compile_scene_splats(json.as_bytes(), &dir, &scene, 512, 640, None)
             .expect_err("hash mismatch must fail");
         assert!(
             format!("{err}").contains("hash mismatch"),
@@ -497,8 +590,8 @@ mod tests {
             r#"{ "name": "no layers at all" }"#,
             r#"{ "layers": [ { "kind": "character" } ] }"#,
         ] {
-            let out =
-                compile_scene_splats(json.as_bytes(), &dir, &scene, 512, 640).expect("compile");
+            let out = compile_scene_splats(json.as_bytes(), &dir, &scene, 512, 640, None)
+                .expect("compile");
             assert!(out.is_none(), "no splat layer → None: {json}");
         }
     }
@@ -515,7 +608,7 @@ mod tests {
             ] }}"#
         );
         let scene = test_scene();
-        let err = compile_scene_splats(json.as_bytes(), &dir, &scene, 512, 640)
+        let err = compile_scene_splats(json.as_bytes(), &dir, &scene, 512, 640, None)
             .expect_err("two layers must fail");
         assert!(format!("{err}").contains("2 splat layers"), "{err}");
     }
@@ -533,7 +626,7 @@ mod tests {
             r#", "transform": { "rotation": [0.0, 0.7071067811865476, 0.0, 0.7071067811865476] }"#,
         );
         let scene = test_scene();
-        let compiled = compile_scene_splats(json.as_bytes(), &dir, &scene, 512, 640)
+        let compiled = compile_scene_splats(json.as_bytes(), &dir, &scene, 512, 640, None)
             .expect("rotation compiles at Rung 3")
             .expect("one layer");
         let direct = pack_splats(
@@ -565,7 +658,7 @@ mod tests {
             r#", "transform": { "rotation": [0.0, 0.0, 0.0, 1.0] }"#,
         );
         assert!(
-            compile_scene_splats(json2.as_bytes(), &dir2, &scene, 512, 640)
+            compile_scene_splats(json2.as_bytes(), &dir2, &scene, 512, 640, None)
                 .expect("identity rotation compiles")
                 .is_some()
         );
@@ -578,7 +671,7 @@ mod tests {
             r#", "transform": { "rotation": [0.0, 0.0, 0.0, 0.0] }"#,
         );
         let scene = test_scene();
-        let err = compile_scene_splats(json.as_bytes(), &dir, &scene, 512, 640)
+        let err = compile_scene_splats(json.as_bytes(), &dir, &scene, 512, 640, None)
             .expect_err("zero quaternion must fail");
         assert!(format!("{err}").contains("zero quaternion"), "{err}");
     }
@@ -627,6 +720,144 @@ mod tests {
         let scene = test_scene();
         let dir = temp_dir("malformed");
         let json = r#"{ "layers": [ { "kind": "splat", "asset": { "path": "room.ply" } } ] }"#;
-        assert!(compile_scene_splats(json.as_bytes(), &dir, &scene, 512, 640).is_err());
+        assert!(compile_scene_splats(json.as_bytes(), &dir, &scene, 512, 640, None).is_err());
+    }
+
+    #[test]
+    fn light_response_compiles_and_matches_direct_lit_pack() {
+        // Programme Rung 4, gate 2: the grade is a
+        // pure function of the spec — the compiled
+        // packet is the direct lit pack of the same
+        // response, and compiling twice is identical.
+        let (dir, json) = spec_for_cloud(
+            "light-response",
+            r#", "light": { "response": {
+                "grade": [[0.9, 0.1, 0.0], [0.0, 1.0, 0.0], [0.2, 0.0, 0.8]],
+                "world_mix": 0.25 } }"#,
+        );
+        let scene = test_scene();
+        let compiled = compile_scene_splats(json.as_bytes(), &dir, &scene, 512, 640, None)
+            .expect("light response compiles")
+            .expect("one layer");
+        let again = compile_scene_splats(json.as_bytes(), &dir, &scene, 512, 640, None)
+            .expect("compiles twice")
+            .expect("one layer");
+        assert_eq!(compiled, again, "same spec, same packet");
+        let direct = pack_splats_lit(
+            &room_corner_cloud(),
+            &SplatTransform::default(),
+            &scene,
+            512,
+            640,
+            &SplatLight {
+                shadow: None,
+                response: Some(LightResponse {
+                    grade: [[0.9, 0.1, 0.0], [0.0, 1.0, 0.0], [0.2, 0.0, 0.8]],
+                    world_mix: 0.25,
+                }),
+            },
+        );
+        assert_eq!(compiled, direct);
+        // And it really recolours (guard against a
+        // vacuous pass): the unlit packet differs.
+        let unlit = pack_splats(
+            &room_corner_cloud(),
+            &SplatTransform::default(),
+            &scene,
+            512,
+            640,
+        );
+        assert_ne!(compiled, unlit);
+    }
+
+    #[test]
+    fn empty_light_object_is_the_rung3_packet() {
+        // Programme Rung 4, gate 3 (compiler side):
+        // a `light` object naming neither interaction
+        // compiles to the Rung 3 packet bit-identically.
+        let (dir, json) = spec_for_cloud("light-empty", r#", "light": { }"#);
+        let scene = test_scene();
+        let compiled = compile_scene_splats(json.as_bytes(), &dir, &scene, 512, 640, None)
+            .expect("empty light compiles")
+            .expect("one layer");
+        let direct = pack_splats(
+            &room_corner_cloud(),
+            &SplatTransform::default(),
+            &scene,
+            512,
+            640,
+        );
+        assert_eq!(compiled, direct);
+    }
+
+    #[test]
+    fn receive_shadow_without_a_map_does_not_compile() {
+        let (dir, json) = spec_for_cloud("light-nomap", r#", "light": { "receive_shadow": true }"#);
+        let scene = test_scene();
+        let err = compile_scene_splats(json.as_bytes(), &dir, &scene, 512, 640, None)
+            .expect_err("shadow without a map must fail");
+        assert!(
+            format!("{err}").contains("receive_shadow"),
+            "error names the cause: {err}"
+        );
+    }
+
+    #[test]
+    fn receive_shadow_with_an_empty_map_is_the_rung3_packet() {
+        // An empty caster map lights every centre
+        // (visibility 1 everywhere), so the shadow-
+        // receiving compile is the Rung 3 packet.
+        let (dir, json) =
+            spec_for_cloud("light-emptymap", r#", "light": { "receive_shadow": true }"#);
+        let scene = test_scene();
+        let map =
+            SplatShadowMap::rasterise(&[], crate::backend::light_view_proj(scene.sun.to_light), 64);
+        let compiled = compile_scene_splats(json.as_bytes(), &dir, &scene, 512, 640, Some(&map))
+            .expect("shadow compiles with a map")
+            .expect("one layer");
+        let direct = pack_splats(
+            &room_corner_cloud(),
+            &SplatTransform::default(),
+            &scene,
+            512,
+            640,
+        );
+        assert_eq!(compiled, direct);
+    }
+
+    #[test]
+    fn bad_light_response_does_not_compile() {
+        let scene = test_scene();
+        for fields in [
+            r#", "light": { "response": { "grade": [[1,0,0],[0,1,0],[0,0,1]], "world_mix": 1.5 } }"#,
+            r#", "light": { "response": { "grade": [[1,0,0],[0,1,0],[0,0,1]], "world_mix": -0.5 } }"#,
+        ] {
+            let (dir, json) = spec_for_cloud("light-bad", fields);
+            let err = compile_scene_splats(json.as_bytes(), &dir, &scene, 512, 640, None)
+                .expect_err("out-of-range world_mix must fail");
+            assert!(format!("{err}").contains("world_mix"), "{err}");
+        }
+        // A non-finite grade entry, built directly
+        // (JSON cannot carry one): also a typed error.
+        let (dir, _json) = spec_for_cloud("light-nan", "");
+        let bytes = room_corner_cloud().write_ply();
+        let layer = SplatLayerSpec {
+            asset: AssetRef {
+                path: "room.ply".to_string(),
+                sha256: sha256_hex(&bytes),
+            },
+            transform: LayerTransform::default(),
+            axis: None,
+            light: Some(LayerLightSpec {
+                receive_shadow: false,
+                response: Some(LightResponseSpec {
+                    grade: [[f64::NAN, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                    world_mix: 0.0,
+                }),
+            }),
+        };
+        let err = compile_splat_layer(&layer, &dir, &scene, 512, 640, None)
+            .expect_err("non-finite grade must fail");
+        assert!(format!("{err}").contains("non-finite"), "{err}");
     }
 }

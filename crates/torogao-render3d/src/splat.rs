@@ -35,12 +35,20 @@
 //! Wigner-D, `crate::splat_rotate`) — the same R for
 //! all three. An identity rotation takes the Rung 1
 //! path untouched, so its packet is bit-identical.
+//!
+//! Light interaction is programme Rung 4
+//! (`crate::splat_light`): [`pack_splats_lit`] applies
+//! the layer's named interactions — sun shadow receive
+//! at splat centres, the spec-declared light response
+//! — to the evaluated colour at pack time. The plain
+//! [`pack_splats`] path is the Rung 3 pack, unchanged.
 
 use bytemuck::{Pod, Zeroable};
 
 use crate::error::RenderError;
 use crate::math::Mat4;
 use crate::setscene::ArcScene;
+use crate::splat_light::SplatLight;
 use crate::splat_rotate::{Rotation, ShRotation, is_identity_quat, quat_mul};
 
 /// SH band-0 basis constant (Inria 3DGS reference).
@@ -510,6 +518,43 @@ pub fn pack_splats(
     width: u32,
     height: u32,
 ) -> PackedSplats {
+    pack_impl(cloud, transform, scene, width, height, None)
+}
+
+/// [`pack_splats`] with the layer's Rung 4 light
+/// interaction applied to each splat's evaluated
+/// colour at its world centre (see
+/// `crate::splat_light`). An inactive `light` (both
+/// fields absent) is the plain pack, bit-identical —
+/// the hook is skipped whole, not applied as an
+/// identity.
+///
+/// Panics under the same condition as
+/// [`pack_splats`].
+pub fn pack_splats_lit(
+    cloud: &SplatCloud,
+    transform: &SplatTransform,
+    scene: &ArcScene,
+    width: u32,
+    height: u32,
+    light: &SplatLight<'_>,
+) -> PackedSplats {
+    let light = if light.is_active() {
+        Some(*light)
+    } else {
+        None
+    };
+    pack_impl(cloud, transform, scene, width, height, light)
+}
+
+fn pack_impl(
+    cloud: &SplatCloud,
+    transform: &SplatTransform,
+    scene: &ArcScene,
+    width: u32,
+    height: u32,
+    light: Option<SplatLight<'_>>,
+) -> PackedSplats {
     // Rotation first (TRS: x' = t + s * R * x). The
     // identity skips it, leaving the Rung 1 path —
     // and so its packet — exactly as it was.
@@ -664,6 +709,13 @@ pub fn pack_splats(
             continue;
         }
         let colour = sh_colour(splat, [to_cam[0] / len, to_cam[1] / len, to_cam[2] / len]);
+        // Rung 4: the layer's light interaction, at
+        // the splat's world centre, when named. The
+        // unlit path flows through untouched.
+        let colour = match &light {
+            Some(light) => light.apply(colour, centre, scene.world),
+            None => colour,
+        };
         projected.push(Projected {
             depth,
             index,
@@ -963,5 +1015,117 @@ mod tests {
         let b = pack_splats(&cloud, &SplatTransform::default(), &test_scene(), 512, 640);
         assert_eq!(a, b);
         assert!(a.splat_count > 500, "room cloud packs: {}", a.splat_count);
+    }
+
+    #[test]
+    fn pack_lit_with_inactive_light_equals_rung3_packet() {
+        // Programme Rung 4, gate 3 (direct side): a
+        // light with neither interaction named is the
+        // Rung 3 pack, bit-identically.
+        let cloud = room_corner_cloud();
+        let scene = test_scene();
+        let plain = pack_splats(&cloud, &SplatTransform::default(), &scene, 512, 640);
+        let lit = pack_splats_lit(
+            &cloud,
+            &SplatTransform::default(),
+            &scene,
+            512,
+            640,
+            &crate::splat_light::SplatLight::default(),
+        );
+        assert_eq!(plain, lit);
+    }
+
+    #[test]
+    fn pack_lit_response_grades_every_colour() {
+        // A channel-swap grade recolours every quad
+        // and touches nothing else in the stream.
+        let cloud = room_corner_cloud();
+        let scene = test_scene();
+        let plain = pack_splats(&cloud, &SplatTransform::default(), &scene, 512, 640);
+        let light = crate::splat_light::SplatLight {
+            shadow: None,
+            response: Some(crate::splat_light::LightResponse {
+                grade: [[0.0, 0.0, 1.0], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]],
+                world_mix: 0.0,
+            }),
+        };
+        let lit = pack_splats_lit(&cloud, &SplatTransform::default(), &scene, 512, 640, &light);
+        assert_eq!(plain.splat_count, lit.splat_count);
+        assert_eq!(plain.indices, lit.indices);
+        for (a, b) in plain.vertices.iter().zip(&lit.vertices) {
+            assert_eq!(a.clip, b.clip);
+            assert_eq!(a.conic, b.conic);
+            assert_eq!(a.offset_px, b.offset_px);
+            assert_eq!(
+                b.colour,
+                [a.colour[2], a.colour[1], a.colour[0], a.colour[3]],
+                "colour is the graded colour"
+            );
+        }
+    }
+
+    #[test]
+    fn pack_lit_shadow_darkens_only_covered_centres() {
+        // Programme Rung 4, gate 1 (packet side): a
+        // caster quad overhead (the test scene's sun
+        // is +Y) shadows the splat below it to black;
+        // the splat beside the quad keeps its Rung 3
+        // vertices bit-identically.
+        use crate::splat_light::{SplatLight, SplatShadowMap};
+        let scene = test_scene();
+        let quad = [
+            [[-1.0, 2.0, -1.0], [1.0, 2.0, -1.0], [1.0, 2.0, 1.0]],
+            [[-1.0, 2.0, -1.0], [1.0, 2.0, 1.0], [-1.0, 2.0, 1.0]],
+        ];
+        let map = SplatShadowMap::rasterise(
+            &quad,
+            crate::backend::light_view_proj(scene.sun.to_light),
+            256,
+        );
+        let covered = splat_from_colour([0.0, 0.0, 0.0], [1.0, 0.2, 0.2], [0.2; 3], 0.97);
+        let clear = splat_from_colour([1.8, 0.0, 0.0], [0.2, 1.0, 0.2], [0.2; 3], 0.97);
+        let cloud = SplatCloud {
+            splats: vec![covered, clear],
+        };
+        let plain = pack_splats(&cloud, &SplatTransform::default(), &scene, 512, 640);
+        let lit = pack_splats_lit(
+            &cloud,
+            &SplatTransform::default(),
+            &scene,
+            512,
+            640,
+            &SplatLight {
+                shadow: Some(&map),
+                response: None,
+            },
+        );
+        assert_eq!(plain.splat_count, 2);
+        assert_eq!(lit.splat_count, 2);
+        // Same order (colours do not sort): quad 0 is
+        // one splat, quad 1 the other; identify by
+        // the plain pack's colours.
+        for q in 0..2 {
+            let plain_c = plain.vertices[q * 4].colour;
+            let lit_q = &lit.vertices[q * 4..q * 4 + 4];
+            let plain_q = &plain.vertices[q * 4..q * 4 + 4];
+            if plain_c[0] > 0.9 {
+                // The covered (red) splat: fully
+                // shadowed at its centre — colour
+                // black, geometry untouched.
+                for (a, b) in lit_q.iter().zip(plain_q.iter()) {
+                    assert_eq!(a.colour, [0.0, 0.0, 0.0, 0.0], "covered centre is black");
+                    assert_eq!(a.clip, b.clip);
+                    assert_eq!(a.conic, b.conic);
+                    assert_eq!(a.offset_px, b.offset_px);
+                }
+            } else {
+                // The clear (green) splat: untouched,
+                // bit-identical vertices.
+                for (a, b) in lit_q.iter().zip(plain_q.iter()) {
+                    assert_eq!(a, b);
+                }
+            }
+        }
     }
 }
