@@ -40,6 +40,18 @@
 //! when the engine reports ready — bounded by
 //! [`ENGINE_WAKE_DEADLINE_SECS`], after which the job errors
 //! honestly instead of waiting forever.
+//!
+//! Token gate (engine lane, 2026-11-26): when the
+//! `TOROGAO_FACADE_TOKEN` environment variable is set
+//! (non-empty), every route except `GET /facade/health`
+//! requires the request header `X-Facade-Token` to carry the
+//! same value; a missing or wrong token is a 401. When the
+//! variable is unset the gate is off — the pre-gate behaviour,
+//! kept so the shells built before the gate keep working until
+//! they learn the header. Activation contract: the variable
+//! lands in the facade's service environment and the client
+//! learns to send the header from its seat settings — the two
+//! land together or not at all.
 
 #![forbid(unsafe_code)]
 
@@ -91,6 +103,9 @@ struct Facade {
     engine_url: String,
     engine_service: String,
     outputs_dir: PathBuf,
+    /// The token gate's expected `X-Facade-Token` value, from
+    /// `TOROGAO_FACADE_TOKEN`; `None` = the gate is off.
+    token: Option<String>,
 }
 
 fn main() {
@@ -117,12 +132,17 @@ fn main() {
         );
         std::process::exit(1);
     }
+    let token = std::env::var("TOROGAO_FACADE_TOKEN")
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
     let facade = Arc::new(Facade {
         jobs: Mutex::new(HashMap::new()),
         next_id: Mutex::new(1),
         engine_url,
         engine_service,
         outputs_dir,
+        token,
     });
     let listener = match TcpListener::bind(&bind) {
         Ok(l) => l,
@@ -132,8 +152,9 @@ fn main() {
         }
     };
     eprintln!(
-        "torogao-mobile-facade: listening on {bind}, engine at {}",
-        facade.engine_url
+        "torogao-mobile-facade: listening on {bind}, engine at {}, token gate {}",
+        facade.engine_url,
+        if facade.token.is_some() { "on" } else { "off" }
     );
     for stream in listener.incoming() {
         let Ok(mut stream) = stream else { continue };
@@ -493,6 +514,24 @@ fn handle(stream: &mut std::net::TcpStream, facade: &Arc<Facade>) -> std::io::Re
     respond(stream, &route(facade, &method, &path, &headers, &body))
 }
 
+/// Constant-time token comparison: the gate is a network
+/// boundary, so do not hand it a timing oracle.
+fn token_matches(presented: Option<&String>, expected: &str) -> bool {
+    let Some(presented) = presented else {
+        return false;
+    };
+    let presented = presented.as_bytes();
+    let expected = expected.as_bytes();
+    if presented.len() != expected.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (a, b) in presented.iter().zip(expected.iter()) {
+        diff |= a ^ b;
+    }
+    diff == 0
+}
+
 fn route(
     facade: &Arc<Facade>,
     method: &str,
@@ -501,6 +540,15 @@ fn route(
     body: &[u8],
 ) -> Reply {
     let json = |code: u32, v: Value| Reply::Json(code, v);
+    // The token gate: with a token configured, every route
+    // except the health probe (engine id + seat state only)
+    // requires the header. See the crate docs for activation.
+    if let Some(token) = facade.token.as_deref() {
+        let is_health = method == "GET" && path == "/facade/health";
+        if !is_health && !token_matches(headers.get("x-facade-token"), token) {
+            return json(401, json!({"error": "facade token required"}));
+        }
+    }
     match (method, path) {
         ("GET", "/facade/health") => {
             let (state, engine) = engine_state(facade);
@@ -812,6 +860,53 @@ mod tests {
         let w = build_workflow(&PRIMA, "city night, rain", 42);
         let hash = workflow_sha256(&w);
         (w, hash)
+    }
+
+    fn gated_facade() -> Arc<Facade> {
+        Arc::new(Facade {
+            jobs: Mutex::new(HashMap::new()),
+            next_id: Mutex::new(1),
+            engine_url: "http://127.0.0.1:1".to_string(),
+            engine_service: "torogao-gen-seat.service".to_string(),
+            outputs_dir: PathBuf::from("/tmp"),
+            token: Some("test-token".to_string()),
+        })
+    }
+
+    fn code_of(reply: Reply) -> u32 {
+        match reply {
+            Reply::Json(code, _) => code,
+            Reply::Png(_) => 200,
+        }
+    }
+
+    #[test]
+    fn token_gate_refuses_without_the_header() {
+        let facade = gated_facade();
+        let headers = HashMap::new();
+        let reply = route(&facade, "GET", "/facade/queue", &headers, &[]);
+        assert_eq!(code_of(reply), 401);
+    }
+
+    #[test]
+    fn token_gate_refuses_a_wrong_token() {
+        let facade = gated_facade();
+        let mut headers = HashMap::new();
+        headers.insert("x-facade-token".to_string(), "wrong-token".to_string());
+        let reply = route(&facade, "POST", "/facade/wake", &headers, &[]);
+        assert_eq!(code_of(reply), 401);
+    }
+
+    #[test]
+    fn token_gate_admits_the_header_and_health_stays_open() {
+        let facade = gated_facade();
+        let mut headers = HashMap::new();
+        headers.insert("x-facade-token".to_string(), "test-token".to_string());
+        let reply = route(&facade, "GET", "/facade/queue", &headers, &[]);
+        assert_eq!(code_of(reply), 200);
+        let no_headers = HashMap::new();
+        let reply = route(&facade, "GET", "/facade/health", &no_headers, &[]);
+        assert_eq!(code_of(reply), 200);
     }
 
     #[test]
