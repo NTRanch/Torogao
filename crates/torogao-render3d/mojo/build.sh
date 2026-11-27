@@ -40,4 +40,12 @@ mkdir -p build
 # whenever TOROGAO_MOJO_ROTATE_BIN names a binary.
 "$MOJO" build --fp-mode contract=off --target-accelerator sm_86 splat_rotate.mojo -o build/splat_rotate_sm86
 "$MOJO" build --fp-mode contract=off --target-accelerator sm_89 splat_rotate.mojo -o build/splat_rotate_sm89
-echo "built: build/splat_project_sm86 build/splat_project_sm89 build/splat_rotate_sm86 build/splat_rotate_sm89"
+# Invocation-overhead cure (2026-11-27): the persistent worker
+# (splat_worker.mojo) — one device context serving many pack
+# requests over a pipe protocol, importing the two kernels
+# above rather than transcribing them. Same fp-mode pin: the
+# kernels it runs are the same functions, and the gate is the
+# same bitwise one.
+"$MOJO" build --fp-mode contract=off --target-accelerator sm_86 splat_worker.mojo -o build/splat_worker_sm86
+"$MOJO" build --fp-mode contract=off --target-accelerator sm_89 splat_worker.mojo -o build/splat_worker_sm89
+echo "built: build/splat_project_sm86 build/splat_project_sm89 build/splat_rotate_sm86 build/splat_rotate_sm89 build/splat_worker_sm86 build/splat_worker_sm89"

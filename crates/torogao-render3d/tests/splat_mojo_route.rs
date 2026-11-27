@@ -20,6 +20,16 @@
 //! wrapper, rather than silently falling back to
 //! the host rotation it must equal).
 //!
+//! The worker gates additionally need
+//! TOROGAO_MOJO_WORKER_BIN (the persistent worker,
+//! `mojo/build.sh`): they prove the worker path
+//! serves packs packet-equal to the CPU reference,
+//! that one worker spawn serves repeated packs, that
+//! a rotated pack is served by the fused worker
+//! request (the one-shot projection binary is
+//! marker-wrapped and must never run), and that a
+//! dead worker falls back to the per-invocation path.
+//!
 //! The twin-render test additionally needs a Vulkan
 //! device and the toon fixture in
 //! TOROGAO_RENDER3D_TOON_FIXTURE; the full-witness
@@ -42,12 +52,46 @@ fn route() -> MojoRoute {
             std::env::var("TOROGAO_MOJO_PROJECT_BIN").expect("kernel binary env var"),
         ),
         rotate_bin: std::env::var_os("TOROGAO_MOJO_ROTATE_BIN").map(PathBuf::from),
+        worker_bin: std::env::var_os("TOROGAO_MOJO_WORKER_BIN").map(PathBuf::from),
         device_id: std::env::var("TOROGAO_MOJO_DEVICE_ID")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(0),
         work_dir: std::env::temp_dir().join("torogao-mojo-route-gate"),
     }
+}
+
+/// Wrap a binary in a script that appends one line
+/// to `marker` per invocation and delegates. For the
+/// worker (long-lived) a line is a spawn; for the
+/// one-shot binaries a line is a per-invocation run.
+#[cfg(unix)]
+fn marker_wrapper(
+    dir: &std::path::Path,
+    name: &str,
+    real: &std::path::Path,
+    marker: &std::path::Path,
+) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let wrapper = dir.join(name);
+    std::fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\necho run >> \"{}\"\nexec \"{}\" \"$@\"\n",
+            marker.display(),
+            real.display()
+        ),
+    )
+    .expect("write marker wrapper");
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod marker wrapper");
+    wrapper
+}
+
+fn marker_count(marker: &std::path::Path) -> usize {
+    std::fs::read_to_string(marker)
+        .map(|s| s.lines().count())
+        .unwrap_or(0)
 }
 
 fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
@@ -375,4 +419,191 @@ fn mojo_packed_scene_renders_twin_identical() {
         first.rgba, cpu_frame.rgba,
         "Mojo-packed frame differs from the CPU-packed frame"
     );
+}
+
+/// The persistent worker serves the room-corner
+/// cloud, identity and rotated (the fused request),
+/// packet-equal to the CPU reference.
+#[test]
+#[ignore = "needs the Mojo worker binary + GPU; see file docs"]
+fn worker_route_matches_cpu_on_room_corner() {
+    let route = route();
+    assert!(route.worker_bin.is_some(), "worker binary env var");
+    let cloud = room_corner_cloud();
+    let scene = proving_scene();
+    for transform in [
+        SplatTransform::default(),
+        SplatTransform {
+            translation: [0.25, -0.1, 0.4],
+            rotation: tilted_rotation(),
+            scale: 1.35,
+        },
+    ] {
+        let via_route = project_splats_mojo(&cloud, &transform, &scene, 512, 640, &route)
+            .expect("worker route must produce a projection");
+        let cpu = project_splats(&cloud, &transform, &scene, 512, 640, None);
+        assert_eq!(via_route.len(), cpu.len(), "survivor count");
+        for (a, b) in via_route.iter().zip(cpu.iter()) {
+            assert_eq!(a, b, "record at index {}", a.index);
+        }
+        let light = SplatLight::default();
+        let packed_route =
+            pack_splats_mojo(&cloud, &transform, &scene, 512, 640, &light, Some(&route));
+        let packed_cpu = pack_splats(&cloud, &transform, &scene, 512, 640);
+        assert_eq!(packed_route, packed_cpu, "packet equality");
+    }
+}
+
+/// The full witness through the persistent worker,
+/// twice: both packets equal the CPU pack's, the
+/// worker was spawned exactly once across both
+/// packs (persistence, the point of the cure), and
+/// the per-invocation projection binary never ran
+/// (its marker wrapper stays untouched — no silent
+/// fallback inside either pack).
+#[cfg(unix)]
+#[test]
+#[ignore = "needs the Mojo worker binary + GPU + the bonsai witness ply"]
+fn worker_route_matches_cpu_on_full_witness() {
+    let real_worker =
+        PathBuf::from(std::env::var("TOROGAO_MOJO_WORKER_BIN").expect("worker binary env var"));
+    let real_project =
+        PathBuf::from(std::env::var("TOROGAO_MOJO_PROJECT_BIN").expect("kernel binary env var"));
+    let dir = std::env::temp_dir().join(format!(
+        "torogao-mojo-worker-witness-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let worker_spawns = dir.join("worker-spawns");
+    let oneshot_runs = dir.join("oneshot-runs");
+    let mut route = route();
+    route.worker_bin = Some(marker_wrapper(
+        &dir,
+        "worker-wrapper.sh",
+        &real_worker,
+        &worker_spawns,
+    ));
+    route.project_bin = marker_wrapper(&dir, "project-wrapper.sh", &real_project, &oneshot_runs);
+
+    let cloud = load_witness();
+    let scene = witness_scene(&cloud);
+    let transform = SplatTransform::default();
+    let light = SplatLight::default();
+    for _ in 0..2 {
+        let via_route =
+            pack_splats_mojo(&cloud, &transform, &scene, 512, 640, &light, Some(&route));
+        let cpu = pack_splats(&cloud, &transform, &scene, 512, 640);
+        assert_eq!(via_route.splat_count, 1_157_094, "witness survivor count");
+        assert_eq!(via_route, cpu, "worker full-witness packet equality");
+    }
+    assert_eq!(
+        marker_count(&worker_spawns),
+        1,
+        "two packs, one worker spawn"
+    );
+    assert_eq!(
+        marker_count(&oneshot_runs),
+        0,
+        "the per-invocation path must not run inside a worker-served pack"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The full witness ROTATED through the worker's
+/// fused rotate+project request: the packet equals
+/// the CPU pack's, the worker spawned once, and the
+/// one-shot projection binary never ran — with the
+/// packet equality holding, the only path that can
+/// have served the pack is the fused worker request.
+#[cfg(unix)]
+#[test]
+#[ignore = "needs the Mojo worker binary + GPU + the bonsai witness ply"]
+fn worker_route_matches_cpu_on_full_witness_rotated() {
+    let real_worker =
+        PathBuf::from(std::env::var("TOROGAO_MOJO_WORKER_BIN").expect("worker binary env var"));
+    let real_project =
+        PathBuf::from(std::env::var("TOROGAO_MOJO_PROJECT_BIN").expect("kernel binary env var"));
+    let dir = std::env::temp_dir().join(format!(
+        "torogao-mojo-worker-rotated-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let worker_spawns = dir.join("worker-spawns");
+    let oneshot_runs = dir.join("oneshot-runs");
+    let mut route = route();
+    route.worker_bin = Some(marker_wrapper(
+        &dir,
+        "worker-wrapper.sh",
+        &real_worker,
+        &worker_spawns,
+    ));
+    route.project_bin = marker_wrapper(&dir, "project-wrapper.sh", &real_project, &oneshot_runs);
+
+    let cloud = load_witness();
+    let scene = witness_scene(&cloud);
+    let transform = SplatTransform {
+        translation: [0.25, -0.1, 0.4],
+        rotation: tilted_rotation(),
+        scale: 1.35,
+    };
+    let light = SplatLight::default();
+    let via_route = pack_splats_mojo(&cloud, &transform, &scene, 512, 640, &light, Some(&route));
+    assert_eq!(
+        marker_count(&worker_spawns),
+        1,
+        "the worker must have been spawned for the fused pack"
+    );
+    assert_eq!(
+        marker_count(&oneshot_runs),
+        0,
+        "the fused worker request, not the per-invocation path, served the pack"
+    );
+    let cpu = pack_splats(&cloud, &transform, &scene, 512, 640);
+    assert_eq!(
+        via_route.splat_count, cpu.splat_count,
+        "rotated witness survivor count"
+    );
+    assert_eq!(via_route, cpu, "fused rotated full-witness packet equality");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A worker binary that dies at spawn falls back to
+/// the per-invocation path (proven by its marker
+/// wrapper) and the pack still equals the CPU
+/// reference — on the first pack and on a repeat,
+/// with no hang either time.
+#[cfg(unix)]
+#[test]
+#[ignore = "needs the Mojo kernel binary + GPU; see file docs"]
+fn worker_death_falls_back_to_one_shot() {
+    use std::os::unix::fs::PermissionsExt;
+    let real_project =
+        PathBuf::from(std::env::var("TOROGAO_MOJO_PROJECT_BIN").expect("kernel binary env var"));
+    let dir =
+        std::env::temp_dir().join(format!("torogao-mojo-worker-death-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let dead_worker = dir.join("dead-worker.sh");
+    std::fs::write(&dead_worker, "#!/bin/sh\nexit 1\n").expect("write dead worker");
+    std::fs::set_permissions(&dead_worker, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod dead worker");
+    let oneshot_runs = dir.join("oneshot-runs");
+    let mut route = route();
+    route.worker_bin = Some(dead_worker);
+    route.project_bin = marker_wrapper(&dir, "project-wrapper.sh", &real_project, &oneshot_runs);
+
+    let cloud = room_corner_cloud();
+    let scene = proving_scene();
+    let transform = SplatTransform::default();
+    let light = SplatLight::default();
+    for _ in 0..2 {
+        let via_route =
+            pack_splats_mojo(&cloud, &transform, &scene, 512, 640, &light, Some(&route));
+        let cpu = pack_splats(&cloud, &transform, &scene, 512, 640);
+        assert_eq!(via_route, cpu, "fallback packet equality");
+    }
+    assert!(
+        marker_count(&oneshot_runs) >= 1,
+        "the per-invocation path must have served the fallback packs"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
