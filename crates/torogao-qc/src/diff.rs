@@ -228,6 +228,7 @@ pub fn diff_dirs_with_options(
                 }),
                 spec_ref: rel.clone(),
                 data,
+                scene_override: None,
             });
         }
         frames.push(frame);

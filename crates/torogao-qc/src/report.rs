@@ -54,6 +54,14 @@ pub struct Finding {
     /// as `data` only when present, so findings without it keep
     /// their published shape byte-for-byte.
     pub data: Option<Value>,
+    /// Per-finding scene override, for verbs whose report spans
+    /// several scenes (the `asset` verb checks several files in
+    /// one run; each finding names the asset it belongs to).
+    /// When present it replaces the report's scene in this
+    /// finding's `scene` field; the serialized shape is
+    /// unchanged, and findings without it keep their published
+    /// shape byte-for-byte.
+    pub scene_override: Option<String>,
 }
 
 impl Finding {
@@ -78,6 +86,12 @@ impl Finding {
                 "a character's identity parameters differ from the locked record"
             }
             "QC_SNAPSHOT_DIFF" => "a frame differs from the reference beyond the named threshold",
+            "QC_ASSET_PALETTE" => "a colour the asset uses lies outside the project palette",
+            "QC_ASSET_BUDGET" => "an asset measurement exceeds a project budget",
+            "QC_ASSET_ORIGIN" => {
+                "an asset root is off its declared anchor or its bounds leave the declared envelope"
+            }
+            "QC_EXPORT_LOSS" => "a feature the source declares is missing from the exported file",
             _ => "render-QC finding",
         }
     }
@@ -86,7 +100,7 @@ impl Finding {
         let mut value = json!({
             "code": self.code,
             "severity": self.severity.as_str(),
-            "scene": scene,
+            "scene": self.scene_override.as_deref().unwrap_or(scene),
             "element": self.element,
             "frame": self.frame,
             "detail": self.detail,
@@ -158,6 +172,7 @@ impl Report {
                 .then_with(|| a.spec_ref.cmp(&b.spec_ref))
                 .then_with(|| a.element.cmp(&b.element))
                 .then_with(|| a.detail.cmp(&b.detail))
+                .then_with(|| a.scene_override.cmp(&b.scene_override))
         });
     }
 

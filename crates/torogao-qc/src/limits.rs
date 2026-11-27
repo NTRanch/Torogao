@@ -67,3 +67,36 @@ pub const REGIONS_PER_FRAME_MAX: usize = 64;
 /// `region_gap` parameter, in pixels. The gap is a declared,
 /// recorded input -- never auto-derived from the image.
 pub const REGION_GAP_MAX: u32 = 16;
+
+/// Maximum project-rules file size accepted by the `asset`
+/// verb, in bytes (4 MiB, mirroring the manifest bound).
+pub const RULES_BYTES_MAX: u64 = 4 * 1024 * 1024;
+
+/// Maximum GLB asset size read by the asset-level verbs, in
+/// bytes. Matches the GLB reader's own input bound
+/// (`torogao_vrm::glb::GLB_BYTES_MAX`, 256 MiB), so a file the
+/// reader would refuse is refused at read time instead.
+pub const ASSET_BYTES_MAX: u64 = 268_435_456;
+
+/// Maximum reimport-summary size accepted from the Blender
+/// runner, in bytes (16 MiB).
+pub const SUMMARY_BYTES_MAX: u64 = 16 * 1024 * 1024;
+
+/// Cap on the Blender runner's stderr excerpt carried in a
+/// typed error, in bytes.
+pub const BLENDER_STDERR_MAX: usize = 512;
+
+/// Texture-sampling bound for the palette-from-textures check:
+/// a sampled image is reduced to at most this many pixels on
+/// its long edge before its colours are bucketed.
+pub const TEXTURE_SAMPLE_EDGE_MAX: u32 = 64;
+
+/// A sampled texture colour counts as dominant when its
+/// bucket holds at least this fraction of the sampled pixels
+/// (5%).
+pub const TEXTURE_DOMINANT_FRACTION: f64 = 0.05;
+
+/// Deepest node chain the GLB world-space walks will follow.
+/// Character assets nest tens of nodes; a file nesting deeper
+/// is reported as unmeasurable rather than walked unboundedly.
+pub const NODE_DEPTH_MAX: usize = 512;

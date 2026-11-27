@@ -9,7 +9,12 @@ description = "Render-QC checker for frozen scene specs (RENDER-QC-CONTRACT step
 [dependencies]
 serde_json = { workspace = true }
 sha2 = "0.10"
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# The estate GLB reader lives in torogao-vrm (container parser +
+# structural census, proven on the VRM export path). The asset
+# verbs reuse it rather than adding a second GLB parser or an
+# external gltf dependency; see src/glb.rs.
+torogao-vrm = { path = "../torogao-vrm", version = "0.5.0" }
 
 [dev-dependencies]
 sha2 = "0.10"
