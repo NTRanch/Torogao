@@ -16,6 +16,7 @@
 //! the GLSL sources) — SPIR-V is the shared currency, and
 //! a wgpu backend would remap bindings at its own edge.
 
+pub mod mobile_project;
 pub mod vulkan;
 
 use crate::error::RenderError;

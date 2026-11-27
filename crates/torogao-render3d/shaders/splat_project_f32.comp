@@ -1,0 +1,376 @@
+// Splat projection, MOBILE variant (render3d-mobile-
+// compute lane, 2026-11-27): the f32 twin of
+// shaders/splat_project.comp, for the GPU class that
+// cannot run the fp64 path — phone SoCs (Adreno /
+// Xclipse / Mali) expose no shaderFloat64 in Vulkan,
+// so the desktop projection cannot execute there at
+// all. Same math, same operation order, same culls in
+// the same order as the CPU pack (src/splat.rs
+// project_splats_sorted) and the fp64 shader; only the
+// arithmetic width changes.
+//
+// PRECISION DISCIPLINE — the contract=off lesson,
+// translated. The Mojo/PTX lane proved the estate's
+// determinism gate fails at 1 ulp when a compiler is
+// allowed to contract multiply-adds into FMAs (the
+// default contract=fast build is a recorded REJECT;
+// --fp-mode contract=off is the gated invariant).
+// GLSL/SPIR-V's equivalent control is the `precise`
+// qualifier: it decorates the computation with
+// NoContraction and forbids reassociation, so the
+// driver may not fuse or reorder the operations that
+// feed a precise variable. Every accumulation and
+// every intermediate that feeds one is marked precise
+// below — the same places the fp64 shader marks. A
+// build that drops them is a different (ungated)
+// shader, not this one.
+//
+// What f32 cannot promise, stated plainly:
+// - sqrt/divide are not correctly rounded in fp32
+//   under the Vulkan precision rules (the fp64 path
+//   relies on correctly-rounded fp64 sqrt); each is a
+//   bounded error source the bench measures.
+// - The output record is f32: centre/radii/axis/depth
+//   carry ~1e-7 relative granularity before any
+//   arithmetic happens. Whether the result stays
+//   inside the estate's Tier 2 band (1e-6 abs / 1e-6
+//   rel vs the f64 CPU reference) is a MEASURED
+//   question — the bench (splat_mobile_bench) reports
+//   per-field maxima against the band; this shader
+//   does not claim the band, it is gated by it.
+//
+// Scope (v1, mirroring the Mojo prototype's scope):
+// identity layer rotation, unlit, no shadow. The host
+// side (backend::mobile_project) refuses rotated /
+// lit layers for this path with a typed error; the
+// fp64 path remains the one that serves them. The
+// depth sort is also out of scope here: the radix
+// keys are an f64-depth contract owned by the fp64
+// path; this shader emits per-splat depth so a mobile
+// sort design can be measured against reality later.
+#version 460
+
+layout(local_size_x = 256) in;
+
+struct SplatRecord {
+    vec4 pos_opacity;  // centre xyz, activated opacity
+    vec4 dc_pad;       // SH band 0 rgb
+    vec4 scale_pad;    // activated scales xyz
+    vec4 rot;          // quaternion (w, x, y, z)
+    vec4 rest[12];     // SH bands 1-3 (45 floats + pad)
+};
+
+struct ProjectedF32 {
+    vec2 centre_px;
+    vec2 radii;
+    vec2 axis1;
+    float depth;
+    vec3 conic;
+    float opacity;
+    vec3 colour;
+    float z_ndc;
+    uint index;
+    uint culled;
+    vec2 tail;
+};
+
+// The mobile parameter block (std430, 176 bytes): the
+// fp64 block's camera/TRS fields at f32 width, built
+// on the host by splat_gpu::MobileProjectParams and
+// pinned by its layout test. No rotation/light data:
+// those layers are refused before dispatch.
+layout(std430, set = 0, binding = 0) readonly buffer Params {
+    float view[16];
+    float view_proj[16];
+    vec4 cam;      // camera pos xyz, near
+    vec4 viewp;    // tan_half_x, tan_half_y, width, height
+    vec4 trs_a;    // translation xyz, scale
+} params;
+
+layout(std430, set = 0, binding = 1) readonly buffer Records {
+    SplatRecord records[];
+};
+layout(std430, set = 0, binding = 2) buffer ProjectedOut {
+    ProjectedF32 projected[];
+};
+
+layout(push_constant) uniform Push {
+    uint splat_count;
+    uint frame_base;
+} push;
+
+const float SH_C0 = 0.28209479177387814;
+const float SH_C1 = 0.4886025119029199;
+const float SH_C2_0 = 1.0925484305920792;
+const float SH_C2_1 = -1.0925484305920792;
+const float SH_C2_2 = 0.31539156525252;
+const float SH_C2_3 = -1.0925484305920792;
+const float SH_C2_4 = 0.5462742152960396;
+const float SH_C3_0 = -0.5900435899266435;
+const float SH_C3_1 = 2.890611442640554;
+const float SH_C3_2 = -0.4570457994644658;
+const float SH_C3_3 = 0.3731763325901154;
+const float SH_C3_4 = -0.4570457994644658;
+const float SH_C3_5 = 1.445305721320277;
+const float SH_C3_6 = -0.5900435899266435;
+
+vec4 apply16(float m[16], vec3 v) {
+    precise vec4 outv;
+    outv.x = m[0] * v.x + m[4] * v.y + m[8] * v.z + m[12];
+    outv.y = m[1] * v.x + m[5] * v.y + m[9] * v.z + m[13];
+    outv.z = m[2] * v.x + m[6] * v.y + m[10] * v.z + m[14];
+    outv.w = m[3] * v.x + m[7] * v.y + m[11] * v.z + m[15];
+    return outv;
+}
+
+float rest_at(SplatRecord rec, uint idx45) {
+    return rec.rest[idx45 / 4u][idx45 % 4u];
+}
+
+void write_culled(uint i) {
+    ProjectedF32 p;
+    p.centre_px = vec2(0.0);
+    p.radii = vec2(0.0);
+    p.axis1 = vec2(0.0);
+    p.depth = 0.0;
+    p.conic = vec3(0.0);
+    p.opacity = 0.0;
+    p.colour = vec3(0.0);
+    p.z_ndc = 0.0;
+    p.index = i;
+    p.culled = 1u;
+    p.tail = vec2(0.0);
+    projected[i] = p;
+}
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= push.splat_count) {
+        return;
+    }
+    SplatRecord rec = records[push.frame_base + i];
+    float opacity_f = rec.pos_opacity.w;
+    // The pack's first cull, in f32 like the pack:
+    // opacity < 1/255.
+    if (opacity_f < float(1.0 / 255.0)) {
+        write_culled(i);
+        return;
+    }
+
+    // -- Centre under the layer TRS, view transform.
+    // (Identity rotation: the host refuses rotated
+    // layers for this path, so no rotate branch.)
+    precise vec3 centre;
+    centre.x = rec.pos_opacity.x * params.trs_a.w + params.trs_a.x;
+    centre.y = rec.pos_opacity.y * params.trs_a.w + params.trs_a.y;
+    centre.z = rec.pos_opacity.z * params.trs_a.w + params.trs_a.z;
+    precise vec4 t = apply16(params.view, centre);
+    precise float depth = -t.z;
+    if (depth < params.cam.w) {
+        write_culled(i);
+        return;
+    }
+
+    // -- Covariance: asset -> layer -> view.
+    precise float qw = rec.rot.x;
+    precise float qx = rec.rot.y;
+    precise float qy = rec.rot.z;
+    precise float qz = rec.rot.w;
+    precise float norm = sqrt(qw * qw + qx * qx + qy * qy + qz * qz);
+    if (norm > 0.0) {
+        qw /= norm;
+        qx /= norm;
+        qy /= norm;
+        qz /= norm;
+    } else {
+        qw = 1.0;
+        qx = 0.0;
+        qy = 0.0;
+        qz = 0.0;
+    }
+    precise float r[3][3];
+    r[0][0] = 1.0 - 2.0 * (qy * qy + qz * qz);
+    r[0][1] = 2.0 * (qx * qy - qw * qz);
+    r[0][2] = 2.0 * (qx * qz + qw * qy);
+    r[1][0] = 2.0 * (qx * qy + qw * qz);
+    r[1][1] = 1.0 - 2.0 * (qx * qx + qz * qz);
+    r[1][2] = 2.0 * (qy * qz - qw * qx);
+    r[2][0] = 2.0 * (qx * qz - qw * qy);
+    r[2][1] = 2.0 * (qy * qz + qw * qx);
+    r[2][2] = 1.0 - 2.0 * (qx * qx + qy * qy);
+    precise float s2c[3];
+    s2c[0] = rec.scale_pad.x * rec.scale_pad.x;
+    s2c[1] = rec.scale_pad.y * rec.scale_pad.y;
+    s2c[2] = rec.scale_pad.z * rec.scale_pad.z;
+    precise float cov_asset[3][3];
+    for (uint a = 0u; a < 3u; a++) {
+        for (uint b = 0u; b < 3u; b++) {
+            precise float acc = 0.0;
+            for (uint k = 0u; k < 3u; k++) {
+                acc += r[a][k] * s2c[k] * r[b][k];
+            }
+            cov_asset[a][b] = acc;
+        }
+    }
+    precise float w3[3][3];
+    for (uint a = 0u; a < 3u; a++) {
+        for (uint b = 0u; b < 3u; b++) {
+            w3[a][b] = params.view[b * 4u + a];
+        }
+    }
+    precise float ls2 = params.trs_a.w * params.trs_a.w;
+    precise float cov_view[3][3];
+    for (uint a = 0u; a < 3u; a++) {
+        for (uint b = 0u; b < 3u; b++) {
+            precise float acc_a = 0.0;
+            for (uint k = 0u; k < 3u; k++) {
+                precise float acc_b = 0.0;
+                for (uint l = 0u; l < 3u; l++) {
+                    acc_b += w3[a][k] * cov_asset[k][l] * w3[b][l];
+                }
+                acc_a += acc_b;
+            }
+            cov_view[a][b] = ls2 * acc_a;
+        }
+    }
+
+    // -- Perspective Jacobian at the centre (NDC).
+    precise float tx = t.x;
+    precise float ty = t.y;
+    precise float tz = t.z;
+    precise float j[2][3];
+    j[0][0] = 1.0 / (params.viewp.x * -tz);
+    j[0][1] = 0.0;
+    j[0][2] = tx / (params.viewp.x * tz * tz);
+    j[1][0] = 0.0;
+    j[1][1] = 1.0 / (params.viewp.y * tz);
+    j[1][2] = -ty / (params.viewp.y * tz * tz);
+    precise float cov_ndc[2][2];
+    for (uint a = 0u; a < 2u; a++) {
+        for (uint b = 0u; b < 2u; b++) {
+            precise float acc_a = 0.0;
+            for (uint k = 0u; k < 3u; k++) {
+                precise float acc_b = 0.0;
+                for (uint l = 0u; l < 3u; l++) {
+                    acc_b += j[a][k] * cov_view[k][l] * j[b][l];
+                }
+                acc_a += acc_b;
+            }
+            cov_ndc[a][b] = acc_a;
+        }
+    }
+    precise float d0 = params.viewp.z / 2.0;
+    precise float d1 = params.viewp.w / 2.0;
+    precise float c00 = cov_ndc[0][0] * d0 * d0 + 0.3;
+    precise float c01 = cov_ndc[0][1] * d0 * d1;
+    precise float c11 = cov_ndc[1][1] * d1 * d1 + 0.3;
+    // The pack overwrites cov_px[1][0] with [0][1].
+    precise float det = c00 * c11 - c01 * c01;
+    if (det <= 0.0) {
+        write_culled(i);
+        return;
+    }
+    vec3 conic = vec3(c11 / det, -c01 / det, c00 / det);
+
+    // -- Eigen-decomposition for the quad extent. The
+    // 1e-12 axis threshold is the pack's f64 literal,
+    // kept as written; in f32 it selects the vector
+    // branch for almost every splat, which the bench's
+    // axis metric (sign-ambiguous) measures as-is.
+    precise float mid = (c00 + c11) / 2.0;
+    precise float half_diff = (c00 - c11) / 2.0;
+    precise float disc = sqrt(half_diff * half_diff + c01 * c01);
+    precise float l1 = mid + disc;
+    precise float l2 = max(mid - disc, 0.0);
+    precise vec2 axis1;
+    if (abs(c01) > 1e-12) {
+        precise vec2 v = vec2(c01, l1 - c00);
+        precise float n = sqrt(v.x * v.x + v.y * v.y);
+        axis1 = vec2(v.x / n, v.y / n);
+    } else if (c00 >= c11) {
+        axis1 = vec2(1.0, 0.0);
+    } else {
+        axis1 = vec2(0.0, 1.0);
+    }
+    precise vec2 radii = vec2(3.0 * sqrt(l1), 3.0 * sqrt(l2));
+
+    // -- Centre pixel + NDC depth.
+    precise vec4 clip = apply16(params.view_proj, centre);
+    if (clip.w <= 0.0) {
+        write_culled(i);
+        return;
+    }
+    precise vec2 centre_px = vec2(
+        (clip.x / clip.w * 0.5 + 0.5) * params.viewp.z,
+        (clip.y / clip.w * 0.5 + 0.5) * params.viewp.w);
+
+    // -- SH colour for this camera.
+    precise vec3 to_cam = vec3(
+        params.cam.x - centre.x,
+        params.cam.y - centre.y,
+        params.cam.z - centre.z);
+    precise float len = sqrt(to_cam.x * to_cam.x + to_cam.y * to_cam.y + to_cam.z * to_cam.z);
+    if (len <= 0.0) {
+        write_culled(i);
+        return;
+    }
+    precise float dx = to_cam.x / len;
+    precise float dy = to_cam.y / len;
+    precise float dz = to_cam.z / len;
+    precise float xx = dx * dx;
+    precise float yy = dy * dy;
+    precise float zz = dz * dz;
+    precise float b1[3];
+    b1[0] = -SH_C1 * dy;
+    b1[1] = SH_C1 * dz;
+    b1[2] = -SH_C1 * dx;
+    precise float b2[5];
+    b2[0] = SH_C2_0 * dx * dy;
+    b2[1] = SH_C2_1 * dy * dz;
+    b2[2] = SH_C2_2 * (2.0 * zz - xx - yy);
+    b2[3] = SH_C2_3 * dx * dz;
+    b2[4] = SH_C2_4 * (xx - yy);
+    precise float b3[7];
+    b3[0] = SH_C3_0 * dy * (3.0 * xx - yy);
+    b3[1] = SH_C3_1 * dx * dy * dz;
+    b3[2] = SH_C3_2 * dy * (4.0 * zz - xx - yy);
+    b3[3] = SH_C3_3 * dz * (2.0 * zz - 3.0 * xx - 3.0 * yy);
+    b3[4] = SH_C3_4 * dx * (4.0 * zz - xx - yy);
+    b3[5] = SH_C3_5 * dz * (xx - yy);
+    b3[6] = SH_C3_6 * dx * (xx - 3.0 * yy);
+    precise float rest[45];
+    for (uint k = 0u; k < 45u; k++) {
+        rest[k] = rest_at(rec, k);
+    }
+    vec3 colour;
+    for (uint ch = 0u; ch < 3u; ch++) {
+        uint base = ch * 15u;
+        precise float v = 0.5 + SH_C0 * rec.dc_pad[ch];
+        for (uint k = 0u; k < 3u; k++) {
+            v += b1[k] * rest[base + k];
+        }
+        for (uint k = 0u; k < 5u; k++) {
+            v += b2[k] * rest[base + 3u + k];
+        }
+        for (uint k = 0u; k < 7u; k++) {
+            v += b3[k] * rest[base + 8u + k];
+        }
+        colour[ch] = max(v, 0.0);
+    }
+
+    // -- Survivor record. (No sort keys, no tally:
+    // see the scope note in the header.)
+    ProjectedF32 p;
+    p.centre_px = centre_px;
+    p.radii = radii;
+    p.axis1 = axis1;
+    p.depth = depth;
+    p.conic = conic;
+    p.opacity = opacity_f;
+    p.colour = colour;
+    p.z_ndc = clip.z / clip.w;
+    p.index = i;
+    p.culled = 0u;
+    p.tail = vec2(0.0);
+    projected[i] = p;
+}

@@ -53,3 +53,47 @@ flag.
 
 The harness prints `GATE: BIT-EXACT` and exits 0 only when every
 surviving record is bitwise identical and the cull state matches.
+
+## CPU kernel + the mobile question (2026-11-27, render3d-mobile-compute lane)
+
+`splat_project_cpu.mojo` is the CPU transcription of the GPU kernel:
+same input/output file contract, same CLI (`IN OUT REPS DEVICE_ID`,
+the device id is ignored), same math in the same order, single
+thread by design. It exists for the phone question — what of the
+Mojo win can a Galaxy Flip 7-class device use? Measured verdicts
+(full record: `~/workspace/render3d-mobile-compute-20261127/RECORD.md`):
+
+- x86-64 CPU: builds and gates BIT-EXACT against the Rust CPU
+  reference through the same `splat_mojo_bench` harness, on the
+  debug cut (20,000 splats) and the full witness (1,157,141):
+  kernel median 350.8 ms vs ~400 ms for the Rust pack's projection
+  share the same night. The FP invariant is the same one as the
+  GPU build, and it is load-bearing on CPU too: build with
+  `--fp-mode contract=off`. The default (contract=fast) build is
+  the same recorded REJECT — worst relative depth deviation
+  2.217e-16, the identical 1-ulp signature as the GPU reject.
+- aarch64 Linux: the compiler accepts the target and code
+  generation completes, but the link cannot complete from the
+  pip install: Mojo drives the host `/usr/bin/cc` with an aarch64
+  archive (rejected by the host linker), and the venv ships
+  x86-64-only runtime libraries. Blocked on an aarch64 Mojo
+  distribution, not on the source.
+- Android (`aarch64-linux-android`): refused by Mojo 1.2.0's own
+  standard library — `Current compilation target does not support
+  operation: get_errno`. Mojo cannot target Android in this
+  version.
+- Phone GPUs: no Mojo path exists (PTX is NVIDIA-only). The
+  phone's acceleration route is the Vulkan f32 projection in
+  `shaders/splat_project_f32.comp` + `backend::mobile_project`,
+  whose `precise` qualifiers are this flag's lesson translated
+  to GLSL. Mojo's role in the phone story is the reference
+  implementation the other ports are gated against, plus a
+  possible future ARM CPU path if a distribution appears.
+
+Build (CPU, from this directory):
+
+    $MOJO build --fp-mode contract=off splat_project_cpu.mojo \
+        -o splat_project_cpu
+
+Gate it exactly like the GPU binary: `splat_mojo_bench --mojo-bin
+./splat_project_cpu` prints `GATE: BIT-EXACT`.

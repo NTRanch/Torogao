@@ -435,6 +435,101 @@ impl SplatGpuParams {
     }
 }
 
+/// One projected record as the MOBILE projection
+/// writes it (std430, 80 bytes): the f32 twin of
+/// [`ProjectedRecord`], in the same field order, plus
+/// the view depth (the fp64 record leaves depth in
+/// the sort keys; the mobile path has no f64 key
+/// contract yet, so its record carries depth for the
+/// bench and for a future mobile sort design). The
+/// layout is shared verbatim with
+/// `shaders/splat_project_f32.comp` and pinned by the
+/// layout test below.
+#[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
+#[repr(C)]
+pub struct ProjectedRecordF32 {
+    /// Quad centre, pixels.
+    pub centre_px: [f32; 2],
+    /// Quad radii along the two axes (3σ).
+    pub radii: [f32; 2],
+    /// First eigen-axis (unit, pixel space).
+    pub axis1: [f32; 2],
+    /// View depth of the centre (positive forward).
+    pub depth: f32,
+    /// std430 vec3 alignment pad (28..32).
+    pub pad0: u32,
+    /// Inverse covariance (a, b, c).
+    pub conic: [f32; 3],
+    /// Activated opacity.
+    pub opacity: f32,
+    /// Evaluated SH colour, linear, clamped at 0.
+    pub colour: [f32; 3],
+    /// NDC depth of the centre.
+    pub z_ndc: f32,
+    /// Asset index of the splat.
+    pub index: u32,
+    /// 1 when the projection culled this splat.
+    pub culled: u32,
+    /// Tail padding to the std430 struct size.
+    pub tail: [f32; 2],
+}
+
+/// The mobile projection shader's parameter block
+/// (std430, 176 bytes): the camera + layer TRS fields
+/// of [`SplatGpuParams`] at f32 width — everything
+/// `shaders/splat_project_f32.comp` reads. Rotation
+/// and light data are absent by design: the mobile
+/// path refuses those layers (see
+/// `backend::mobile_project`), so the block does not
+/// carry what it would not evaluate.
+#[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
+#[repr(C)]
+pub struct MobileProjectParams {
+    /// View matrix, column-major (16 floats).
+    pub view: [f32; 16],
+    /// View-projection, column-major (16 floats).
+    pub view_proj: [f32; 16],
+    /// Camera position xyz + near plane.
+    pub cam: [f32; 4],
+    /// tan_half_x, tan_half_y, viewport w, h.
+    pub viewp: [f32; 4],
+    /// Layer translation xyz + uniform scale.
+    pub trs_a: [f32; 4],
+}
+
+impl MobileProjectParams {
+    /// Build the block for one frame from the same
+    /// camera/transform the fp64 block is built from:
+    /// every field is the f64 value of
+    /// [`SplatGpuParams`] rounded once to f32, here at
+    /// the boundary — the shader never sees an f64.
+    pub fn new(camera: &SplatCamera, transform: &SplatTransform) -> MobileProjectParams {
+        let cast16 = |m: [f64; 16]| m.map(|v| v as f32);
+        MobileProjectParams {
+            view: cast16(camera.view.m),
+            view_proj: cast16(camera.view_proj.m),
+            cam: [
+                camera.camera_pos[0] as f32,
+                camera.camera_pos[1] as f32,
+                camera.camera_pos[2] as f32,
+                camera.near as f32,
+            ],
+            viewp: [
+                camera.tan_half_x as f32,
+                camera.tan_half_y as f32,
+                camera.width as f32,
+                camera.height as f32,
+            ],
+            trs_a: [
+                transform.translation[0] as f32,
+                transform.translation[1] as f32,
+                transform.translation[2] as f32,
+                transform.scale as f32,
+            ],
+        }
+    }
+}
+
 /// One motion key of a layer's TRS animation: the
 /// layer transform at `frame`. Rotation is the
 /// storage order `(w, x, y, z)`.
@@ -585,6 +680,33 @@ mod tests {
         assert_eq!(std::mem::offset_of!(ProjectedRecord, conic), 48);
         assert_eq!(std::mem::offset_of!(ProjectedRecord, colour), 64);
         assert_eq!(std::mem::offset_of!(ProjectedRecord, index), 80);
+    }
+
+    #[test]
+    fn mobile_layouts_are_pinned() {
+        // The mobile shader's std430 mirrors
+        // (shaders/splat_project_f32.comp): offsets
+        // from the GLSL declaration order under std430
+        // (a vec3 aligns to 16; the struct size rounds
+        // to a multiple of 16).
+        assert_eq!(std::mem::size_of::<ProjectedRecordF32>(), 80);
+        assert_eq!(std::mem::offset_of!(ProjectedRecordF32, centre_px), 0);
+        assert_eq!(std::mem::offset_of!(ProjectedRecordF32, radii), 8);
+        assert_eq!(std::mem::offset_of!(ProjectedRecordF32, axis1), 16);
+        assert_eq!(std::mem::offset_of!(ProjectedRecordF32, depth), 24);
+        assert_eq!(std::mem::offset_of!(ProjectedRecordF32, conic), 32);
+        assert_eq!(std::mem::offset_of!(ProjectedRecordF32, opacity), 44);
+        assert_eq!(std::mem::offset_of!(ProjectedRecordF32, colour), 48);
+        assert_eq!(std::mem::offset_of!(ProjectedRecordF32, z_ndc), 60);
+        assert_eq!(std::mem::offset_of!(ProjectedRecordF32, index), 64);
+        assert_eq!(std::mem::offset_of!(ProjectedRecordF32, culled), 68);
+        assert_eq!(std::mem::offset_of!(ProjectedRecordF32, tail), 72);
+        assert_eq!(std::mem::size_of::<MobileProjectParams>(), 176);
+        assert_eq!(std::mem::offset_of!(MobileProjectParams, view), 0);
+        assert_eq!(std::mem::offset_of!(MobileProjectParams, view_proj), 64);
+        assert_eq!(std::mem::offset_of!(MobileProjectParams, cam), 128);
+        assert_eq!(std::mem::offset_of!(MobileProjectParams, viewp), 144);
+        assert_eq!(std::mem::offset_of!(MobileProjectParams, trs_a), 160);
     }
 
     #[test]

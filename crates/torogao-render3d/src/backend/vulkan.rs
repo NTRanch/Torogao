@@ -381,7 +381,7 @@ impl VulkanBackend {
         let app_info = vk::ApplicationInfo::default()
             .application_name(c"torogao-render3d")
             .api_version(vk::API_VERSION_1_2);
-        let mut layers: Vec<*const i8> = Vec::new();
+        let mut layers: Vec<*const std::ffi::c_char> = Vec::new();
         let validation = std::env::var_os("RENDER3D_VALIDATION").is_some();
         if validation {
             layers.push(c"VK_LAYER_KHRONOS_validation".as_ptr());
