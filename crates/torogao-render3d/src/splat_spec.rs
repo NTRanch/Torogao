@@ -76,7 +76,7 @@ use crate::compare::sha256_hex;
 use crate::error::RenderError;
 use crate::math::Mat4;
 use crate::setscene::ArcScene;
-use crate::splat::{PackedSplats, Splat, SplatCloud, SplatTransform, pack_splats_lit};
+use crate::splat::{PackedSplats, Splat, SplatCloud, SplatTransform};
 use crate::splat_gpu::{LayerMotion, PackedGpuSplats, SplatCamera, TrsKey};
 use crate::splat_light::{LightResponse, SplatLight, SplatShadowMap};
 
@@ -530,8 +530,21 @@ pub fn compile_splat_layer(
         rotation,
         scale: layer.transform.scale,
     };
-    Ok(pack_splats_lit(
-        &cloud, &transform, scene, width, height, &light,
+    // The pack, through the Mojo desktop route when
+    // one is configured (Owner adoption, 2026-11-27):
+    // `pack_splats_mojo` serves unlit layers from the
+    // kernel and everything else from the CPU
+    // reference — the packet is identical either way
+    // (see `crate::splat_mojo`). With no route
+    // configured this is `pack_splats_lit` exactly.
+    Ok(crate::splat_mojo::pack_splats_mojo(
+        &cloud,
+        &transform,
+        scene,
+        width,
+        height,
+        &light,
+        crate::splat_mojo::MojoRoute::from_env().as_ref(),
     ))
 }
 
@@ -682,6 +695,7 @@ mod tests {
     use super::*;
     use crate::setscene::plate_rig_scene;
     use crate::splat::pack_splats;
+    use crate::splat::pack_splats_lit;
     use crate::splat::room_corner_cloud;
 
     fn test_scene() -> ArcScene {

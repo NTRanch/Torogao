@@ -779,10 +779,21 @@ fn pack_impl(
     light: Option<SplatLight<'_>>,
 ) -> PackedSplats {
     let projected = project_splats_sorted(cloud, transform, scene, width, height, light);
+    emit_quads(&projected, width, height)
+}
+
+/// Emit the boundary quad stream from a projected
+/// list in the pack's total order. Shared by the CPU
+/// pack and the Mojo desktop route
+/// (`crate::splat_mojo`), whose projection is
+/// bit-identical to the pack's — one emission, so
+/// the two paths cannot drift apart downstream of
+/// the projection.
+pub(crate) fn emit_quads(projected: &[SplatProjection], width: u32, height: u32) -> PackedSplats {
     let (wf, hf) = (f64::from(width), f64::from(height));
     let mut vertices = Vec::with_capacity(projected.len() * 4);
     let mut indices = Vec::with_capacity(projected.len() * 6);
-    for p in &projected {
+    for p in projected {
         let base = vertices.len() as u32;
         let signs = [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]];
         for sign in signs {

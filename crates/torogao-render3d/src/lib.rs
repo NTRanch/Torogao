@@ -52,6 +52,8 @@ pub mod splat_gpu;
 #[forbid(unsafe_code)]
 pub mod splat_light;
 #[forbid(unsafe_code)]
+pub mod splat_mojo;
+#[forbid(unsafe_code)]
 pub mod splat_rotate;
 #[forbid(unsafe_code)]
 pub mod splat_spec;

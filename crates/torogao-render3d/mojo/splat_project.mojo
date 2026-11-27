@@ -1,7 +1,10 @@
-# splat_project.mojo — Mojo/PTX prototype of torogao-render3d's splat
-# projection (the projection half of the CPU splat pack), built for the
-# Mojo+PTX evaluation lane (2026-11-27). NOT production code: a measured
-# prototype gated against the CPU reference, record-for-record.
+# splat_project.mojo — torogao-render3d's splat projection kernel
+# (the projection half of the CPU splat pack). Built for the Mojo+PTX
+# evaluation lane (2026-11-27) as a measured prototype gated against
+# the CPU reference, record-for-record; ADOPTED as the desktop
+# projection route by Owner ruling (decision walk, 2026-11-27) and
+# wired into the pack through src/splat_mojo.rs. Build only via
+# mojo/build.sh (the --fp-mode contract=off pin is load-bearing).
 #
 # Contract
 # --------
