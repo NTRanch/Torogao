@@ -33,6 +33,8 @@ use torogao_mobile_core::helper::{
 };
 use torogao_mobile_core::queue::JobStatus;
 use torogao_mobile_core::{CAST, Gallery, RecipeSettings, SeatConfig, Session};
+use torogao_mobile_local::record::CharacterRecord as LocalRecord;
+use torogao_mobile_local::{LocalEngine, ParamKey, PreviewView};
 
 slint::include_modules!();
 
@@ -55,6 +57,15 @@ struct Shell {
     exports_dir: PathBuf,
     default_seat_url: String,
     default_seat_name: String,
+    // Phone-local trial state: the offline engine (records +
+    // on-device preview), why it failed to open if it did, the
+    // working copy being edited, the param-key order the UI's
+    // slider indices refer to, and the unsaved-edits flag.
+    local: Option<Arc<LocalEngine>>,
+    local_open_error: Option<String>,
+    local_current: Mutex<Option<LocalRecord>>,
+    local_param_keys: Mutex<Vec<ParamKey>>,
+    local_dirty: Mutex<bool>,
 }
 
 impl Shell {
@@ -244,6 +255,65 @@ fn refresh_helper(ui: &AppWindow, shell: &Shell) {
     });
 }
 
+/// Mirror the local engine's state into the window: record
+/// list, the working copy's name/tags, and its parameter rows.
+/// The param keys are kept shell-side in row order — the UI
+/// reports slider changes by row index.
+fn refresh_local(ui: &AppWindow, shell: &Shell) {
+    let Some(engine) = &shell.local else {
+        if let Some(e) = &shell.local_open_error {
+            ui.set_local_status(format!("Local mode unavailable: {e}").into());
+        }
+        return;
+    };
+    let records = engine.store().list();
+    ui.set_local_record_names(ModelRc::new(VecModel::from(
+        records
+            .iter()
+            .map(|r| slint::SharedString::from(format!("{} · rev {}", r.name, r.revision)))
+            .collect::<Vec<_>>(),
+    )));
+    let mut current = shell
+        .local_current
+        .lock()
+        .map(|c| c.clone())
+        .unwrap_or(None);
+    if current.is_none() {
+        current = records.first().cloned();
+        if let Ok(mut slot) = shell.local_current.lock() {
+            *slot = current.clone();
+        }
+    }
+    let Some(current) = current else {
+        ui.set_local_record_index(-1);
+        ui.set_local_status("No records yet — tap New.".into());
+        return;
+    };
+    if let Some(idx) = records.iter().position(|r| r.id == current.id) {
+        ui.set_local_record_index(idx as i32);
+    }
+    ui.set_local_name(current.name.clone().into());
+    ui.set_local_tags(current.prompt_identity.tags.clone().into());
+    let defs = engine.params(&current);
+    if let Ok(mut keys) = shell.local_param_keys.lock() {
+        *keys = defs.iter().map(|d| d.key.clone()).collect();
+    }
+    let model: Vec<LocalParam> = defs
+        .iter()
+        .map(|d| LocalParam {
+            name: d.label.clone().into(),
+            group: d.group.into(),
+            value: d.value,
+            min: d.min,
+            max: d.max,
+        })
+        .collect();
+    ui.set_local_params(ModelRc::new(VecModel::from(model)));
+    if shell.local_dirty.lock().map(|d| *d).unwrap_or(false) {
+        ui.set_local_status("Unsaved edits — Save writes the record to this phone.".into());
+    }
+}
+
 /// Run the shell. `data_dir` roots settings + gallery;
 /// `exports_dir` receives gallery exports; the default seat is
 /// the first-run seat the settings start with.
@@ -259,6 +329,10 @@ pub fn run(
         Ok(s) => (Some(Arc::new(s)), None),
         Err(e) => (None, Some(format!("Settings could not be loaded: {e}"))),
     };
+    let (local_engine, local_open_error) = match LocalEngine::open(&data_dir.join("local")) {
+        Ok(e) => (Some(Arc::new(e)), None),
+        Err(e) => (None, Some(format!("{e}"))),
+    };
     let shell = Arc::new(Shell {
         session,
         helper: Mutex::new(Helper::new()),
@@ -266,6 +340,11 @@ pub fn run(
         exports_dir,
         default_seat_url: default_seat_url.to_string(),
         default_seat_name: default_seat_name.to_string(),
+        local: local_engine,
+        local_open_error,
+        local_current: Mutex::new(None),
+        local_param_keys: Mutex::new(Vec::new()),
+        local_dirty: Mutex::new(false),
     });
 
     ui.set_cast_names(ModelRc::new(VecModel::from(
@@ -283,6 +362,7 @@ pub fn run(
         refresh_jobs(&ui, &shell);
     }
     refresh_helper(&ui, &shell);
+    refresh_local(&ui, &shell);
 
     // ---- callbacks ----
 
@@ -309,6 +389,9 @@ pub fn run(
         ui.on_nav(move |screen| {
             let Some(ui) = weak.upgrade() else { return };
             ui.set_screen(screen);
+            if screen == 4 {
+                refresh_local(&ui, &shell);
+            }
             // The area's helper takes over — unless a flow owns
             // her right now.
             let busy = matches!(
@@ -689,6 +772,224 @@ pub fn run(
                 None => {}
             }
             refresh_helper(&ui, &shell);
+        });
+    }
+
+    // ---- Local screen callbacks (phone-local trial) ----
+
+    {
+        let shell = Arc::clone(&shell);
+        let weak = ui.as_weak();
+        ui.on_local_picked(move |index| {
+            let Some(ui) = weak.upgrade() else { return };
+            let Some(engine) = &shell.local else {
+                refresh_local(&ui, &shell);
+                return;
+            };
+            let records = engine.store().list();
+            if let Some(rec) = records.get(index as usize) {
+                if let Ok(mut slot) = shell.local_current.lock() {
+                    *slot = Some(rec.clone());
+                }
+                if let Ok(mut d) = shell.local_dirty.lock() {
+                    *d = false;
+                }
+                ui.set_local_status(
+                    format!("Editing {} (revision {}).", rec.name, rec.revision).into(),
+                );
+            }
+            refresh_local(&ui, &shell);
+        });
+    }
+
+    {
+        let shell = Arc::clone(&shell);
+        let weak = ui.as_weak();
+        ui.on_local_new(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let Some(engine) = &shell.local else {
+                refresh_local(&ui, &shell);
+                return;
+            };
+            let existing = engine.store().list();
+            let mut n = existing.len() + 1;
+            let mut id = format!("character-{n}");
+            while existing.iter().any(|r| r.id == id) {
+                n += 1;
+                id = format!("character-{n}");
+            }
+            let mut rec = torogao_mobile_local::record::prima_template();
+            rec.id = id;
+            rec.name = format!("New character {n}");
+            match engine.store().save(&rec) {
+                Ok(_) => {
+                    if let Ok(mut slot) = shell.local_current.lock() {
+                        *slot = Some(rec);
+                    }
+                    if let Ok(mut d) = shell.local_dirty.lock() {
+                        *d = false;
+                    }
+                    ui.set_local_status(
+                        "Created a new record from the Prima template — make it yours: name, tags, parameters."
+                            .into(),
+                    );
+                }
+                Err(e) => ui.set_local_status(format!("Could not create: {e}").into()),
+            }
+            refresh_local(&ui, &shell);
+        });
+    }
+
+    {
+        let shell = Arc::clone(&shell);
+        let weak = ui.as_weak();
+        ui.on_local_save(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let Some(engine) = &shell.local else {
+                refresh_local(&ui, &shell);
+                return;
+            };
+            let mut rec = match shell.local_current.lock().map(|c| c.clone()) {
+                Ok(Some(r)) => r,
+                _ => {
+                    ui.set_local_status("Nothing to save yet.".into());
+                    return;
+                }
+            };
+            let name = ui.get_local_name().trim().to_string();
+            if !name.is_empty() {
+                rec.name = name;
+            }
+            rec.prompt_identity.tags = ui.get_local_tags().to_string();
+            rec.revision += 1;
+            rec.updated_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs().to_string())
+                .unwrap_or_else(|_| "unknown".to_string());
+            match engine.store().save(&rec) {
+                Ok(_) => {
+                    let revision = rec.revision;
+                    if let Ok(mut slot) = shell.local_current.lock() {
+                        *slot = Some(rec);
+                    }
+                    if let Ok(mut d) = shell.local_dirty.lock() {
+                        *d = false;
+                    }
+                    ui.set_local_status(format!("Saved revision {revision} to this phone.").into());
+                }
+                Err(e) => ui.set_local_status(format!("Save failed: {e}").into()),
+            }
+            refresh_local(&ui, &shell);
+        });
+    }
+
+    {
+        let shell = Arc::clone(&shell);
+        let weak = ui.as_weak();
+        ui.on_local_export(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let Some(engine) = &shell.local else {
+                refresh_local(&ui, &shell);
+                return;
+            };
+            let rec = match shell.local_current.lock().map(|c| c.clone()) {
+                Ok(Some(r)) => r,
+                _ => {
+                    ui.set_local_status("Pick or create a character first.".into());
+                    return;
+                }
+            };
+            match engine.store().export(&rec, &shell.exports_dir) {
+                Ok(dest) => ui.set_local_status(
+                    format!("Exported the record to {}", dest.to_string_lossy()).into(),
+                ),
+                Err(e) => ui.set_local_status(format!("Export failed: {e}").into()),
+            }
+        });
+    }
+
+    {
+        let shell = Arc::clone(&shell);
+        let weak = ui.as_weak();
+        ui.on_local_param_changed(move |index, value| {
+            let Some(ui) = weak.upgrade() else { return };
+            let key = shell
+                .local_param_keys
+                .lock()
+                .ok()
+                .and_then(|keys| keys.get(index as usize).cloned());
+            let Some(key) = key else { return };
+            if let Ok(mut slot) = shell.local_current.lock() {
+                if let Some(rec) = slot.as_mut() {
+                    LocalEngine::apply_param(rec, &key, value);
+                }
+            }
+            if let Ok(mut d) = shell.local_dirty.lock() {
+                *d = true;
+            }
+            ui.set_local_status(
+                "Unsaved edits — Preview applies them now; Save writes the record to this phone."
+                    .into(),
+            );
+        });
+    }
+
+    {
+        let shell = Arc::clone(&shell);
+        let weak = ui.as_weak();
+        ui.on_local_preview_request(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let Some(engine) = &shell.local else {
+                refresh_local(&ui, &shell);
+                return;
+            };
+            let rec = match shell.local_current.lock().map(|c| c.clone()) {
+                Ok(Some(r)) => r,
+                _ => {
+                    ui.set_local_status("Pick or create a character first.".into());
+                    return;
+                }
+            };
+            let view = if ui.get_local_face_view() {
+                PreviewView::Face
+            } else {
+                PreviewView::Body
+            };
+            ui.set_local_status("Rendering on this device…".into());
+            let engine = Arc::clone(engine);
+            let weak2 = weak.clone();
+            std::thread::spawn(move || {
+                let result = engine.preview(&rec, view, 540, 720);
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(ui) = weak2.upgrade() else { return };
+                    match result {
+                        Ok((img, stats)) => {
+                            let buffer = slint::SharedPixelBuffer::<
+                                slint::Rgba8Pixel,
+                            >::clone_from_slice(
+                                &img.rgba, img.width, img.height
+                            );
+                            ui.set_local_preview(Image::from_rgba8(buffer));
+                            ui.set_local_has_preview(true);
+                            let total =
+                                stats.morph_ms + stats.skin_ms + stats.raster_ms;
+                            ui.set_local_status(
+                                format!(
+                                    "Rendered on this device in {total:.0} ms (morph {:.1} · skin {:.1} · raster {:.1}) · {} triangles · Tier-2 f32 software preview · no seat, no network.",
+                                    stats.morph_ms,
+                                    stats.skin_ms,
+                                    stats.raster_ms,
+                                    stats.triangles
+                                )
+                                .into(),
+                            );
+                        }
+                        Err(e) => {
+                            ui.set_local_status(format!("Preview refused: {e}").into())
+                        }
+                    }
+                });
+            });
         });
     }
 

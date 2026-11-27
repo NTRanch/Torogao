@@ -1,6 +1,7 @@
 // Torogao Mobile — Slint phone shell UI.
 //
-// One window, four screens (Generate, Gallery, Seat, Settings)
+// One window, five screens (Generate, Gallery, Seat, Settings,
+// and the phone-local trial's Local screen)
 // over torogao-mobile-core's Session, an 18+ gate in front of
 // everything, and a helper card that renders the core helper
 // state machine: the area's girl (Prima — seat setup, Lana —
@@ -13,6 +14,7 @@
 // core state machine picks girl + strip; not a video.
 
 import { Button, LineEdit, ListView, ScrollView, SpinBox, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { LocalScreen, LocalParam } from "local_screen.slint";
 
 export struct GalleryItem {
     label: string,
@@ -41,7 +43,7 @@ export component AppWindow inherits Window {
 
     // Session state, mirrored from the core by the shell.
     in-out property <bool> attested: false;
-    in-out property <int> screen: 0; // 0 generate, 1 gallery, 2 seat, 3 settings
+    in-out property <int> screen: 0; // 0 generate, 1 gallery, 2 seat, 3 settings, 4 local
     in-out property <string> status: "";
     in-out property <string> seat-status: "";
     in-out property <[string]> cast-names;
@@ -68,6 +70,19 @@ export component AppWindow inherits Window {
     in-out property <int> helper-area: 0; // 0 seat setup, 1 generation, 2 gallery
     in-out property <int> helper-pose: 0; // 0 idle, 1 guiding, 2 waiting, 3 success, 4 error
     in-out property <int> helper-frame: 0; // strip frame, 0..11
+    // Local (phone-local trial) screen state, mirrored from
+    // torogao-mobile-local by the shell. The Local screen is
+    // the trial build's offline mode: records + preview live
+    // entirely on the device.
+    in-out property <[string]> local-record-names;
+    in-out property <int> local-record-index: -1;
+    in-out property <string> local-name: "";
+    in-out property <string> local-tags: "";
+    in-out property <[LocalParam]> local-params;
+    in-out property <image> local-preview;
+    in-out property <bool> local-has-preview: false;
+    in-out property <bool> local-face-view: false;
+    in-out property <string> local-status: "";
 
     callback attest();
     callback generate();
@@ -84,6 +99,12 @@ export component AppWindow inherits Window {
     callback helper-dismiss();
     callback helper-begin(int);
     callback nav(int);
+    callback local-picked(int);
+    callback local-new();
+    callback local-save();
+    callback local-export();
+    callback local-preview-request();
+    callback local-param-changed(int, float);
 
     // Strip playback: step the helper strip at its authored
     // 200 ms/frame. A plain frame advance — no flashing
@@ -547,6 +568,37 @@ export component AppWindow inherits Window {
             }
         }
 
+        // ---- Local screen (phone-local trial) ----
+        if root.attested && root.screen == 4: LocalScreen {
+            record-names <=> root.local-record-names;
+            record-index <=> root.local-record-index;
+            char-name <=> root.local-name;
+            char-tags <=> root.local-tags;
+            params <=> root.local-params;
+            preview <=> root.local-preview;
+            has-preview <=> root.local-has-preview;
+            face-view <=> root.local-face-view;
+            local-status <=> root.local-status;
+            picked(i) => {
+                root.local-picked(i);
+            }
+            new-record => {
+                root.local-new();
+            }
+            save-record => {
+                root.local-save();
+            }
+            export-record => {
+                root.local-export();
+            }
+            preview-request => {
+                root.local-preview-request();
+            }
+            param-changed(i, value) => {
+                root.local-param-changed(i, value);
+            }
+        }
+
             }
         }
     }
@@ -594,6 +646,13 @@ export component AppWindow inherits Window {
                 primary: root.screen == 3;
                 clicked => {
                     root.nav(3);
+                }
+            }
+            Button {
+                text: "Local";
+                primary: root.screen == 4;
+                clicked => {
+                    root.nav(4);
                 }
             }
         }

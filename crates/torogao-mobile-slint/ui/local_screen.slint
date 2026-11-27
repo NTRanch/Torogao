@@ -1,0 +1,187 @@
+// Torogao Mobile — the Local screen (phone-local trial).
+//
+// Everything on this screen runs on the phone: character
+// records (torogao-character/1) are created, edited, saved,
+// and exported on-device over torogao-mobile-local, and the
+// preview is rendered on-device by that crate's Tier-2 (f32
+// software) rasteriser from the bundled canonical base. No
+// seat, no network — the screen works in airplane mode, which
+// is the trial's acceptance test.
+//
+// The tier label is part of the honesty contract: this preview
+// is a working view of the record being edited, NOT the seat's
+// render and not a Tier-1 result.
+
+import { Button, LineEdit, ListView, Slider, VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+export struct LocalParam {
+    name: string,
+    group: string,
+    value: float,
+    min: float,
+    max: float,
+}
+
+export component LocalScreen inherits VerticalBox {
+    in-out property <[string]> record-names;
+    in-out property <int> record-index: -1;
+    in-out property <string> char-name: "";
+    in-out property <string> char-tags: "";
+    in-out property <[LocalParam]> params;
+    in-out property <image> preview;
+    in-out property <bool> has-preview: false;
+    in-out property <bool> face-view: false;
+    in-out property <string> local-status: "";
+
+    callback picked(int);
+    callback new-record();
+    callback save-record();
+    callback export-record();
+    callback preview-request();
+    callback param-changed(int, float);
+
+    spacing: 8px;
+    vertical-stretch: 1;
+
+    Text {
+        text: "Local mode — on this phone only";
+        color: #e8e2f2;
+        font-size: 16px;
+        font-weight: 700;
+    }
+    Text {
+        text: "Records live on this device and preview from the bundled base rig. No seat is involved and nothing leaves the phone. Preview tier: Tier-2 (f32 software render).";
+        color: #bdb2d9;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+
+    Text {
+        text: "Characters on this phone";
+        color: #9a8fb5;
+        font-size: 13px;
+    }
+    ListView {
+        height: 84px;
+        for name[i] in root.record-names: Text {
+            text: name;
+            color: root.record-index == i ? #ffffff : #cfc6e8;
+            font-size: 14px;
+            TouchArea {
+                clicked => {
+                    root.picked(i);
+                }
+            }
+        }
+    }
+
+    Text {
+        text: "Name";
+        color: #9a8fb5;
+        font-size: 13px;
+    }
+    LineEdit {
+        text <=> root.char-name;
+        placeholder-text: "Character name";
+    }
+    Text {
+        text: "Identity tags (the record's prompt identity)";
+        color: #9a8fb5;
+        font-size: 13px;
+    }
+    LineEdit {
+        text <=> root.char-tags;
+        placeholder-text: "1girl, solo, …";
+    }
+
+    HorizontalBox {
+        spacing: 8px;
+        alignment: start;
+        Button {
+            text: "New";
+            clicked => {
+                root.new-record();
+            }
+        }
+        Button {
+            text: "Save";
+            primary: true;
+            clicked => {
+                root.save-record();
+            }
+        }
+        Button {
+            text: "Export record";
+            clicked => {
+                root.export-record();
+            }
+        }
+    }
+    HorizontalBox {
+        spacing: 8px;
+        alignment: start;
+        Button {
+            text: "Preview";
+            primary: true;
+            clicked => {
+                root.preview-request();
+            }
+        }
+        Button {
+            text: root.face-view ? "View: face" : "View: body";
+            clicked => {
+                root.face-view = !root.face-view;
+                root.preview-request();
+            }
+        }
+    }
+
+    if root.has-preview: Image {
+        source: root.preview;
+        height: 360px;
+    }
+
+    Text {
+        text: "Parameters — expressions, body, pose (applied on-device)";
+        color: #9a8fb5;
+        font-size: 13px;
+    }
+    ListView {
+        height: 330px;
+        for param[i] in root.params: VerticalBox {
+            spacing: 2px;
+            padding-top: 3px;
+            padding-bottom: 3px;
+            Text {
+                text: param.group + " · " + param.name;
+                color: #cfc6e8;
+                font-size: 13px;
+            }
+            HorizontalBox {
+                spacing: 8px;
+                slider := Slider {
+                    minimum: param.min;
+                    maximum: param.max;
+                    value: param.value;
+                    horizontal-stretch: 1;
+                    changed(value) => {
+                        root.param-changed(i, value);
+                    }
+                }
+                Text {
+                    text: "\{Math.round(slider.value * 100) / 100}";
+                    color: #bdb2d9;
+                    font-size: 12px;
+                    width: 44px;
+                }
+            }
+        }
+    }
+
+    Text {
+        text: root.local-status;
+        color: #bdb2d9;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+}

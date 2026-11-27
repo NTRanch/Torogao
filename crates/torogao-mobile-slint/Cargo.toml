@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 slint = { version = "=1.19.1", features = ["backend-android-activity-06"] }
 torogao-mobile-core = { path = "../torogao-mobile-core" }
+torogao-mobile-local = { path = "../torogao-mobile-local" }
 
 [build-dependencies]
 slint-build = "=1.19.1"

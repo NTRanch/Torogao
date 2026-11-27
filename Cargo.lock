@@ -10130,12 +10130,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "torogao-mobile-local"
+version = "0.5.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "torogao-mobile-slint"
 version = "0.5.0"
 dependencies = [
  "slint",
  "slint-build",
  "torogao-mobile-core",
+ "torogao-mobile-local",
 ]
 
 [[package]]

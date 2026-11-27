@@ -1,0 +1,11 @@
+[package]
+name = "torogao-mobile-local"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Phone-local Torogao trial: on-device character records (torogao-character/1), GLB morph/pose application, and a Tier-2 software preview renderer. No network, no seat — everything in this crate runs on the handset."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
