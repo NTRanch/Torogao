@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::color::{Rgba, TRANSPARENT};
+use crate::error::{PaintError, PaintResult};
 use crate::tile::{TILE_BYTES, Tile, tile_local};
 
 /// A layer's identity. Ids are issued by the document from
@@ -60,6 +61,67 @@ impl Layer {
             lock_alpha: false,
             tiles: BTreeMap::new(),
         }
+    }
+
+    /// A layer whose pixels come from a full-canvas RGBA8
+    /// raster (row-major, `width * height * 4` bytes): the
+    /// loader seam for imported raster sources (a decoded
+    /// `.kra` layer, a PNG strip frame). Tiles are allocated
+    /// only where the raster is not fully transparent, so the
+    /// sparse-grid invariant holds for imported content too.
+    pub fn from_rgba(
+        id: LayerId,
+        name: String,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> PaintResult<Layer> {
+        let expected = (width as usize) * (height as usize) * 4;
+        if rgba.len() != expected {
+            return Err(PaintError::format(format!(
+                "layer raster has {} bytes, canvas {width}x{height} needs {expected}",
+                rgba.len()
+            )));
+        }
+        let mut layer = Layer::new(id, name);
+        let tile_px = crate::tile::TILE_PX;
+        let mut ty = 0;
+        while ty < height {
+            let mut tx = 0;
+            while tx < width {
+                let block_w = tile_px.min(width - tx);
+                let block_h = tile_px.min(height - ty);
+                // Skip fully transparent blocks: absent tiles
+                // read as transparent, identically.
+                let mut any = false;
+                'scan: for ly in 0..block_h {
+                    let row = ((ty + ly) as usize) * (width as usize) + tx as usize;
+                    for lx in 0..block_w {
+                        if rgba[(row + lx as usize) * 4 + 3] != 0 {
+                            any = true;
+                            break 'scan;
+                        }
+                    }
+                }
+                if any {
+                    let tile = layer.tile_or_allocate(crate::tile::tile_key(tx, ty));
+                    for ly in 0..block_h {
+                        let row = ((ty + ly) as usize) * (width as usize) + tx as usize;
+                        for lx in 0..block_w {
+                            let src = (row + lx as usize) * 4;
+                            tile.set_pixel(
+                                lx,
+                                ly,
+                                [rgba[src], rgba[src + 1], rgba[src + 2], rgba[src + 3]],
+                            );
+                        }
+                    }
+                }
+                tx += tile_px;
+            }
+            ty += tile_px;
+        }
+        Ok(layer)
     }
 
     /// Resident bytes: allocated tiles at the fixed tile size.

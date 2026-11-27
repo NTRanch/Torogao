@@ -62,6 +62,11 @@ fn run() -> Result<i32, AppError> {
     let mut take_export = false;
     let mut take_file: Option<PathBuf> = None;
     let mut persona_audit = false;
+    let mut drawn_import: Option<PathBuf> = None;
+    let mut drawn_play: Option<PathBuf> = None;
+    let mut drawn_name: Option<String> = None;
+    let mut freeze_compiler: Option<String> = None;
+    let mut freeze_band: Option<String> = None;
     let mut paint = false;
     let mut paint_path: Option<PathBuf> = None;
     let mut animation: Option<String> = None;
@@ -107,6 +112,41 @@ fn run() -> Result<i32, AppError> {
             "--state-hash" => options.state_hash = true,
             "--debug-physics" => options.debug_physics = true,
             "--persona-audit" => persona_audit = true,
+            "--drawn-import" => {
+                index += 1;
+                let value = args.get(index).ok_or_else(|| {
+                    AppError::Cli("--drawn-import requires a .kra path".to_string())
+                })?;
+                drawn_import = Some(PathBuf::from(value));
+            }
+            "--drawn-play" => {
+                index += 1;
+                let value = args.get(index).ok_or_else(|| {
+                    AppError::Cli("--drawn-play requires a clip directory".to_string())
+                })?;
+                drawn_play = Some(PathBuf::from(value));
+            }
+            "--drawn-name" => {
+                index += 1;
+                let value = args.get(index).ok_or_else(|| {
+                    AppError::Cli("--drawn-name requires a name argument".to_string())
+                })?;
+                drawn_name = Some(value.clone());
+            }
+            "--compiler" => {
+                index += 1;
+                let value = args.get(index).ok_or_else(|| {
+                    AppError::Cli("--compiler requires a string argument".to_string())
+                })?;
+                freeze_compiler = Some(value.clone());
+            }
+            "--band" => {
+                index += 1;
+                let value = args.get(index).ok_or_else(|| {
+                    AppError::Cli("--band requires a string argument".to_string())
+                })?;
+                freeze_band = Some(value.clone());
+            }
             "--paint" => {
                 paint = true;
                 if let Some(next) = args.get(index + 1) {
@@ -178,6 +218,33 @@ fn run() -> Result<i32, AppError> {
         let total = report["checks_total"].as_u64().unwrap_or(0);
         println!("{}", torogao_format::jsonfmt::to_d_json(&report));
         return Ok(if passed == total && total > 0 { 0 } else { 3 });
+    }
+    if let Some(kra_path) = drawn_import {
+        let Some(out_dir) = out_dir else {
+            return Err(AppError::Cli(
+                "--drawn-import requires --out <clip-dir>".to_string(),
+            ));
+        };
+        return torogao_app::drawn_play::run_drawn_import(
+            &torogao_app::drawn_play::DrawnImportOptions {
+                kra_path,
+                out_dir,
+                name: drawn_name.unwrap_or_else(|| "drawn-clip".to_string()),
+                compiler: freeze_compiler
+                    .unwrap_or_else(|| "torogao-app drawn-import (spike 2026-11-27)".to_string()),
+                band: freeze_band.unwrap_or_else(|| "drawn-spike".to_string()),
+            },
+        );
+    }
+    if let Some(clip_dir) = drawn_play {
+        let Some(out_dir) = out_dir else {
+            return Err(AppError::Cli(
+                "--drawn-play requires --out <frames-dir>".to_string(),
+            ));
+        };
+        return torogao_app::drawn_play::run_drawn_play(
+            &torogao_app::drawn_play::DrawnPlayOptions { clip_dir, out_dir },
+        );
     }
     if paint {
         return run_paint(paint_path.as_deref());

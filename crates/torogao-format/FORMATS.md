@@ -271,3 +271,83 @@ A future `torogao-motion-clip/3` is a deliberate, gated act,
 like every entry here: new entry, new goldens, and a stated
 migration for clips frozen under `/2`. The `/2` meaning
 above never changes.
+## torogao-drawn-clip/1 — the drawn (raster) clip [DRAFT — spike]
+
+Status: **draft, spike-proven 2026-11-27** (drawn-animation
+spike; scope study `~/workspace/torogao-drawn-animation-scope-20261127/SCOPE.md`,
+record `~/workspace/torogao-drawn-spike-20261127/RECORD.md`).
+This is the drawn-animation counterpart of
+`torogao-motion-clip/2`: where a motion clip keys rig
+channels, a drawn clip keys *drawings* — whole raster
+frames substituted on an exposure table, never
+interpolated. It carries the drawn grammar of the
+hand-animation determination (SS3.4-3.5): a held base
+pose, accent tracks on independent exposure, loop closure
+by construction.
+
+Owner of record: `torogao-format` (`src/drawn_clip.rs`:
+`validate_clip`, `freeze_document`; gate tool
+`src/bin/drawn-clip-check.rs`; importer source reader
+`src/kra.rs`). Checks run in specification order and stop
+at the first failure; invalid input is a typed
+`TG-DRAW-*` refusal, never a repair.
+
+### Specification
+
+A clip is a directory: one canonical JSON document
+(`clip.json`) plus its drawing payloads. The document's
+canonical form is this crate's canonical JSON writer
+(`jsonfmt::to_d_json`) over the document with the freeze
+block removed; the freeze hash is the lowercase hex
+SHA-256 of those bytes. Fields:
+
+- `format`: the string `torogao-drawn-clip/1`.
+- `name`: lowercase ASCII, digits, `-`, `_`; at most 64
+  bytes.
+- `canvas`: `{width, height}`, each 1..=8192.
+- `fps`: integer 1..=240. `range`: `{from, to}` integer
+  frames, `0 <= from <= to`, span at most 100000.
+- `loop`: boolean — the exposure wraps at the range end.
+- `matte`: `[r, g, b, a]` under the stack (the colour the
+  source renderer composited onto; an imported Krita
+  document's banked renders prove it per file).
+- `drawings`: the payload manifest, 1..=4096 entries of
+  `{id, sha256, width, height, file}`. A drawing is a
+  full-canvas RGBA raster; its identity is the SHA-256 of
+  its RGBA bytes, its `id` is `d-<sha256>`, and its `file`
+  is the derived path `drawings/<id>.png` (the PNG is a
+  container; the hash covers pixels, not PNG bytes).
+- `tracks`: the layer stack, **bottom first**, 1..=256
+  entries of `{name, blend, opacity, visible, keys}`.
+  `/1` carries `blend: "normal"` only — other blends
+  enter when their arithmetic is proven against the
+  paint core. `keys` is an exposure table of
+  `{time, drawing}`: strictly increasing integer times,
+  every time inside the range, the first key at or
+  before `range.from` (hold coverage). Playback at frame
+  *t* shows the drawing of the latest key at or before
+  *t*, composited source-over over the matte, tracks
+  bottom-to-top, through `torogao-paint`'s integer
+  composite — the same code the paint surface renders.
+- `provenance` (optional): a free-shaped object, covered
+  by the freeze hash (the importer records the source
+  file's hash and read census here).
+- `freeze`: `{band, compiler, sha256}` — as
+  motion-clip/2.
+
+### The .kra bridge (reader: `src/kra.rs`)
+
+The importer reads `.kra` directly (zip + `maindoc.xml`
++ keyframes XML + Krita's tile-stream payloads); no
+Krita process is involved. The reader maps: RGBA colour
+space, `paintlayer` nodes, `compositeop: normal`,
+zero layer/keyframe offsets, tile stream `VERSION 2`
+(64x64 tiles, 1-byte `0x01` marker + liblzf records,
+channel planes in B, G, R, A order). Anything else —
+group/filter layers, other blend modes, offsets, other
+tile versions — is a typed `TG-KRA-*` refusal naming the
+feature, never an approximation. The decode law was
+proven byte-exact against Krita 6.0.5's own rendered
+frames of the witness document (all ten frames, max
+delta 0) before the port was written.
+

@@ -160,6 +160,42 @@ impl Document {
         Ok(doc)
     }
 
+    /// A document assembled directly from a base raster and
+    /// finished layers (bottom first): the playback seam for
+    /// imported raster stacks (a drawn clip's frame, a decoded
+    /// `.kra`). The op log starts empty; the document is a
+    /// render state, not an authoring history. Layer ids must
+    /// be unique; the id counter continues past the largest.
+    pub fn from_base_and_layers(
+        width: u32,
+        height: u32,
+        base: BaseRaster,
+        layers: Vec<Layer>,
+    ) -> PaintResult<Document> {
+        let mut doc = Document::build(width, height, base, MEMORY_CAP_BYTES)?;
+        let mut seen = std::collections::BTreeSet::new();
+        let mut next: u32 = 1;
+        for layer in &layers {
+            if !seen.insert(layer.id.0) {
+                return Err(PaintError::format(format!(
+                    "duplicate layer id {} in assembled document",
+                    layer.id.0
+                )));
+            }
+            next = next.max(layer.id.0.saturating_add(1));
+        }
+        doc.layers = layers;
+        doc.next_layer_id = next;
+        if doc.resident_bytes() > doc.cap_bytes {
+            return Err(PaintError::limit(
+                "assembled document resident bytes",
+                doc.resident_bytes(),
+                doc.cap_bytes,
+            ));
+        }
+        Ok(doc)
+    }
+
     fn build(width: u32, height: u32, base: BaseRaster, cap_bytes: u64) -> PaintResult<Document> {
         if width == 0 || width > CANVAS_DIM_MAX {
             return Err(PaintError::limit(

@@ -17,6 +17,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod drawn_play;
 pub mod error;
 pub mod font;
 pub mod headless;

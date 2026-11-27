@@ -10,6 +10,7 @@ description = "The torogao-paint document core: a sparse tile-based layered rast
 png = "0.18"
 ron = "0.8"
 serde = { workspace = true }
+serde_json = { workspace = true }
 sha2 = "0.10"
 
 [[bin]]

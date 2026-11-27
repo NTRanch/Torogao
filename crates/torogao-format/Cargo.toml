@@ -11,3 +11,4 @@ ron = "0.8"
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"
+zip = "9"

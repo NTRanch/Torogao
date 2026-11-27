@@ -18,8 +18,10 @@
 #![forbid(unsafe_code)]
 
 pub mod container;
+pub mod drawn_clip;
 pub mod error;
 pub mod jsonfmt;
+pub mod kra;
 pub mod limits;
 pub mod mmd_ingest;
 pub mod model;
