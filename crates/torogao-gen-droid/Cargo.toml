@@ -1,0 +1,33 @@
+[package]
+name = "torogao-gen-droid"
+version = "0.1.0"
+edition = "2024"
+license = "BSD-2-Clause"
+rust-version = "1.85"
+description = "Torogao on-device generation engine for Android: an FFI seam over stable-diffusion.cpp (ggml/Vulkan) exposing the mobile contract's submit/poll/fetch semantics in-process."
+
+# Standalone-gated crate, following the torogao-accel precedent: it
+# keeps its own [workspace] and is named in the root workspace's
+# `exclude` list, so the main build graph is untouched until the
+# Owner promotes it.
+[workspace]
+
+[lib]
+name = "torogao_gen_droid"
+path = "src/lib.rs"
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[features]
+default = []
+# Build the real backend, linking libstable-diffusion (see build.rs:
+# SDCPP_LIB_DIR must name the directory holding the shared library).
+# Without this feature only the stub backend is available, which is
+# what the unit tests exercise.
+native = []
+
+[[example]]
+name = "droid_smoke"
+path = "examples/droid_smoke.rs"
+required-features = ["native"]
