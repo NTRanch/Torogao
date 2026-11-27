@@ -18,6 +18,7 @@ pub mod color;
 pub mod document;
 pub mod error;
 pub mod format;
+pub mod gradient;
 pub mod hash;
 pub mod layer;
 pub mod ops;
@@ -31,8 +32,10 @@ pub use document::{BaseRaster, Document, SourceRef};
 pub use error::{PaintError, PaintResult};
 pub use format::{FORMAT_MAJOR, FORMAT_MINOR, FORMAT_TAG, load_document, save_document};
 pub use layer::{BlendMode, LayerId};
-pub use ops::{LayerPropsChange, Op, Rect};
+pub use ops::{GradientShape, GradientSpec, GradientStop, LayerPropsChange, Op, Rect};
 pub use palette::Palette;
 pub use script::SessionScript;
-pub use stroke::{Stamp, StampMode, StampStyle, StrokeParams, StrokeSample, build_stamp_run};
+pub use stroke::{
+    GrainSpec, Stamp, StampMode, StampStyle, StrokeParams, StrokeSample, build_stamp_run,
+};
 pub use tile::{TILE_BYTES, TILE_PX};

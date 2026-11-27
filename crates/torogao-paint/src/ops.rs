@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::color::Rgba;
 use crate::layer::{BlendMode, LayerId};
-use crate::stroke::{Stamp, StampMode};
+use crate::stroke::{GrainSpec, Stamp, StampMode};
 
 /// An axis-aligned rectangle in canvas coordinates. `x`/`y`
 /// may be negative (a rect may hang off the canvas edge);
@@ -59,6 +59,52 @@ impl LayerPropsChange {
     }
 }
 
+/// One colour stop of a gradient: `color` placed at
+/// `at / 255` along the gradient's parameter. Stops are
+/// recorded in strictly increasing `at` order (the
+/// document validates this); the parameter clamps to the
+/// end stops outside their range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GradientStop {
+    /// Position along the gradient, 0..=255.
+    pub at: u8,
+    /// The stop's colour; alpha interpolates like the
+    /// colour channels.
+    pub color: Rgba,
+}
+
+/// The shape of a gradient's parameter field. In both
+/// shapes the parameter runs 0 at `from` to 1 at `to`:
+/// linear projects onto the from-to axis, radial measures
+/// distance from `from` against the from-to distance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GradientShape {
+    /// Projection onto the from-to axis.
+    Linear,
+    /// Distance from `from`, scaled by the from-to
+    /// distance as the radius.
+    Radial,
+}
+
+/// A multi-stop gradient field in canvas space. The
+/// field is a pure function of canvas position, so a
+/// shape built from many rect fills under one spec still
+/// shades continuously.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GradientSpec {
+    /// Linear or radial parameterisation.
+    pub shape: GradientShape,
+    /// Parameter 0 point, canvas px.
+    pub from: [i32; 2],
+    /// Parameter 1 point, canvas px (the radial rim point
+    /// in the radial shape). Must differ from `from`.
+    pub to: [i32; 2],
+    /// Colour stops, 2..=8, strictly increasing in `at`.
+    pub stops: Vec<GradientStop>,
+}
+
 /// One op-log entry.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op")]
@@ -88,6 +134,40 @@ pub enum Op {
         rect: Rect,
         /// The fill colour.
         color: Rgba,
+    },
+    /// A gradient fill of a rectangle: `FillRect`'s
+    /// per-pixel deposit rule with the flat colour
+    /// replaced by the gradient field's colour at each
+    /// pixel (Phase 2 additive extension, SPEC SS3.3).
+    GradientFill {
+        /// The layer filled on.
+        layer: LayerId,
+        /// The rectangle, canvas coordinates.
+        rect: Rect,
+        /// The gradient field.
+        gradient: GradientSpec,
+    },
+    /// A stamp run whose per-pixel deposit alpha is
+    /// modulated by a deterministic grain field in canvas
+    /// space (the textured brush: deposit density varies
+    /// coherently across stamps, as a tip texture over
+    /// paper grain does). Otherwise identical to
+    /// `StampRun` (Phase 2 additive extension, SS3.3).
+    TexturedStampRun {
+        /// The layer the stroke lands on.
+        layer: LayerId,
+        /// Paint or Erase (SS4.2).
+        mode: StampMode,
+        /// Deposit colour; alpha multiplies stamp alpha.
+        color: Rgba,
+        /// Stroke opacity ceiling.
+        opacity: u8,
+        /// Per-stamp deposit cap.
+        flow: u8,
+        /// The stamp placements, in stroke order.
+        stamps: Vec<Stamp>,
+        /// The grain field modulating deposit alpha.
+        grain: GrainSpec,
     },
     /// Add a layer. `after: None` puts it on top; otherwise
     /// it is inserted directly above the named layer.
@@ -129,6 +209,8 @@ impl Op {
         match self {
             Op::StampRun { layer, .. } => Some(*layer),
             Op::FillRect { layer, .. } => Some(*layer),
+            Op::GradientFill { layer, .. } => Some(*layer),
+            Op::TexturedStampRun { layer, .. } => Some(*layer),
             Op::LayerAdd { .. } => None,
             Op::LayerRemove { id } => Some(*id),
             Op::LayerReorder { id, .. } => Some(*id),

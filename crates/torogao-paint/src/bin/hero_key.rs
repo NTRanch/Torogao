@@ -16,11 +16,77 @@ use std::process::ExitCode;
 use serde::Deserialize;
 use torogao_paint::color::Rgba;
 use torogao_paint::layer::LayerId;
-use torogao_paint::ops::{Op, Rect};
+use torogao_paint::ops::{GradientShape, GradientSpec, GradientStop, Op, Rect};
 use torogao_paint::script::SessionScript;
 use torogao_paint::stroke::{
-    PressureMap, Stamp, StampMode, StrokeParams, StrokeSample, build_stamp_run,
+    GrainSpec, PressureMap, Stamp, StampMode, StrokeParams, StrokeSample, build_stamp_run,
 };
+
+/// The grain field of a textured op, JSON-side.
+#[derive(Deserialize)]
+struct GrainJson {
+    seed: u64,
+    cell_px: u32,
+    strength: u8,
+    octaves: u8,
+}
+
+impl From<&GrainJson> for GrainSpec {
+    fn from(json: &GrainJson) -> GrainSpec {
+        GrainSpec {
+            seed: json.seed,
+            cell_px: json.cell_px,
+            strength: json.strength,
+            octaves: json.octaves,
+        }
+    }
+}
+
+/// Stroke samples, JSON-side: `[x, y]` or
+/// `[x, y, pressure]` per sample (pressure defaults 1).
+fn parse_samples(raw: &[Vec<f64>]) -> Result<Vec<StrokeSample>, String> {
+    raw.iter()
+        .map(|sample| match sample.len() {
+            2 => Ok(StrokeSample {
+                x_px: sample[0],
+                y_px: sample[1],
+                pressure: 1.0,
+            }),
+            3 => Ok(StrokeSample {
+                x_px: sample[0],
+                y_px: sample[1],
+                pressure: sample[2],
+            }),
+            n => Err(format!("stroke sample has {n} components, want 2 or 3")),
+        })
+        .collect()
+}
+
+/// Build the stamp placements of one JSON stroke.
+fn build_stroke(
+    samples: &[Vec<f64>],
+    color: Rgba,
+    opacity: u8,
+    flow: u8,
+    diameter: u32,
+    pressure_size: bool,
+    pressure_alpha: bool,
+) -> Result<Vec<Stamp>, String> {
+    let samples = parse_samples(samples)?;
+    let params = StrokeParams {
+        color,
+        diameter_px: diameter,
+        opacity,
+        flow,
+        spacing_fraction: 0.3,
+        stabilizer_alpha: 1.0,
+        pressure_map: PressureMap {
+            size: pressure_size,
+            alpha: pressure_alpha,
+        },
+    };
+    build_stamp_run(&samples, &params).map_err(|error| format!("stroke build: {error}"))
+}
 
 #[derive(Deserialize)]
 struct OpsFile {
@@ -47,7 +113,15 @@ enum OpSpec {
         opacity: u8,
         flow: u8,
         diameter: u32,
-        samples: Vec<[f64; 2]>,
+        /// `[x, y]` or `[x, y, pressure]` per sample.
+        samples: Vec<Vec<f64>>,
+        /// Pressure drives stamp radius (default false:
+        /// the spike's pinned-pressure behaviour).
+        #[serde(default)]
+        pressure_size: bool,
+        /// Pressure drives stamp alpha (default false).
+        #[serde(default)]
+        pressure_alpha: bool,
     },
     Dabs {
         layer: String,
@@ -56,6 +130,42 @@ enum OpSpec {
         flow: u8,
         /// `[x, y, radius_px, alpha]` per stamp.
         stamps: Vec<[f64; 4]>,
+    },
+    GradientFill {
+        layer: String,
+        x: i32,
+        y: i32,
+        w: u32,
+        h: u32,
+        /// "linear" or "radial".
+        shape: String,
+        from: [f64; 2],
+        to: [f64; 2],
+        /// `[at, [r, g, b, a]]` per stop, increasing `at`.
+        stops: Vec<(u8, Rgba)>,
+    },
+    TexturedDabs {
+        layer: String,
+        color: Rgba,
+        opacity: u8,
+        flow: u8,
+        /// `[x, y, radius_px, alpha]` per stamp.
+        stamps: Vec<[f64; 4]>,
+        grain: GrainJson,
+    },
+    TexturedStroke {
+        layer: String,
+        color: Rgba,
+        opacity: u8,
+        flow: u8,
+        diameter: u32,
+        /// `[x, y]` or `[x, y, pressure]` per sample.
+        samples: Vec<Vec<f64>>,
+        #[serde(default)]
+        pressure_size: bool,
+        #[serde(default)]
+        pressure_alpha: bool,
+        grain: GrainJson,
     },
 }
 
@@ -135,32 +245,22 @@ fn main() -> ExitCode {
                 flow,
                 diameter,
                 samples,
+                pressure_size,
+                pressure_alpha,
             } => {
                 let id = match layer_of(layer) {
                     Ok(id) => id,
                     Err(message) => return fail(message),
                 };
-                let samples: Vec<StrokeSample> = samples
-                    .iter()
-                    .map(|[x, y]| StrokeSample {
-                        x_px: *x,
-                        y_px: *y,
-                        pressure: 1.0,
-                    })
-                    .collect();
-                let params = StrokeParams {
-                    color: *color,
-                    diameter_px: *diameter,
-                    opacity: *opacity,
-                    flow: *flow,
-                    spacing_fraction: 0.3,
-                    stabilizer_alpha: 1.0,
-                    pressure_map: PressureMap {
-                        size: false,
-                        alpha: false,
-                    },
-                };
-                let stamps = match build_stamp_run(&samples, &params) {
+                let stamps = match build_stroke(
+                    samples,
+                    *color,
+                    *opacity,
+                    *flow,
+                    *diameter,
+                    *pressure_size,
+                    *pressure_alpha,
+                ) {
                     Ok(stamps) => stamps,
                     Err(error) => return fail(format!("stroke on {layer}: {error}")),
                 };
@@ -203,6 +303,120 @@ fn main() -> ExitCode {
                     stamps,
                 });
                 *counts.entry("dabs").or_default() += 1;
+            }
+            OpSpec::GradientFill {
+                layer,
+                x,
+                y,
+                w,
+                h,
+                shape,
+                from,
+                to,
+                stops,
+            } => {
+                let id = match layer_of(layer) {
+                    Ok(id) => id,
+                    Err(message) => return fail(message),
+                };
+                let shape = match shape.as_str() {
+                    "linear" => GradientShape::Linear,
+                    "radial" => GradientShape::Radial,
+                    other => return fail(format!("unknown gradient shape {other:?}")),
+                };
+                let point = |p: [f64; 2]| [p[0].round() as i32, p[1].round() as i32];
+                ops.push(Op::GradientFill {
+                    layer: id,
+                    rect: Rect {
+                        x: *x,
+                        y: *y,
+                        width: *w,
+                        height: *h,
+                    },
+                    gradient: GradientSpec {
+                        shape,
+                        from: point(*from),
+                        to: point(*to),
+                        stops: stops
+                            .iter()
+                            .map(|(at, color)| GradientStop {
+                                at: *at,
+                                color: *color,
+                            })
+                            .collect(),
+                    },
+                });
+                *counts.entry("gradient_fill").or_default() += 1;
+            }
+            OpSpec::TexturedDabs {
+                layer,
+                color,
+                opacity,
+                flow,
+                stamps,
+                grain,
+            } => {
+                let id = match layer_of(layer) {
+                    Ok(id) => id,
+                    Err(message) => return fail(message),
+                };
+                let stamps: Vec<Stamp> = stamps
+                    .iter()
+                    .map(|[x, y, radius, alpha]| Stamp {
+                        x_fixed: (x * 64.0).round() as i64,
+                        y_fixed: (y * 64.0).round() as i64,
+                        radius_px: (radius.round() as u32).clamp(1, 512),
+                        alpha: alpha.round().clamp(0.0, 255.0) as u8,
+                    })
+                    .collect();
+                ops.push(Op::TexturedStampRun {
+                    layer: id,
+                    mode: StampMode::Paint,
+                    color: *color,
+                    opacity: *opacity,
+                    flow: *flow,
+                    stamps,
+                    grain: GrainSpec::from(grain),
+                });
+                *counts.entry("textured_dabs").or_default() += 1;
+            }
+            OpSpec::TexturedStroke {
+                layer,
+                color,
+                opacity,
+                flow,
+                diameter,
+                samples,
+                pressure_size,
+                pressure_alpha,
+                grain,
+            } => {
+                let id = match layer_of(layer) {
+                    Ok(id) => id,
+                    Err(message) => return fail(message),
+                };
+                let stamps = match build_stroke(
+                    samples,
+                    *color,
+                    *opacity,
+                    *flow,
+                    *diameter,
+                    *pressure_size,
+                    *pressure_alpha,
+                ) {
+                    Ok(stamps) => stamps,
+                    Err(error) => return fail(format!("textured stroke on {layer}: {error}")),
+                };
+                ops.push(Op::TexturedStampRun {
+                    layer: id,
+                    mode: StampMode::Paint,
+                    color: *color,
+                    opacity: *opacity,
+                    flow: *flow,
+                    stamps,
+                    grain: GrainSpec::from(grain),
+                });
+                *counts.entry("textured_stroke").or_default() += 1;
             }
         }
     }

@@ -16,9 +16,13 @@ use sha2::{Digest, Sha256};
 
 use crate::color::{Rgba, TRANSPARENT, composite_blend, composite_over, lerp_rgba, mul255};
 use crate::error::{PaintError, PaintResult};
+use crate::gradient::{GRADIENT_COORD_ABS_MAX, GRADIENT_STOPS_MAX};
 use crate::layer::{Layer, LayerId};
-use crate::ops::{LayerPropsChange, Op};
-use crate::stroke::{STAMPS_PER_RUN_MAX, stamp_run_additional_bytes};
+use crate::ops::{GradientSpec, LayerPropsChange, Op};
+use crate::stroke::{
+    GRAIN_CELL_PX_MAX, GRAIN_OCTAVES_MAX, GrainSpec, STAMPS_PER_RUN_MAX, Stamp,
+    stamp_run_additional_bytes,
+};
 use crate::tile::TILE_PX;
 
 /// Canvas edge ceiling in px per axis (SPEC SS3.1).
@@ -431,48 +435,30 @@ impl Document {
         match op {
             Op::StampRun { layer, stamps, .. } => {
                 self.require_layer(*layer)?;
-                if stamps.is_empty() {
-                    return Err(PaintError::invalid("stamp run carries no stamps"));
-                }
-                if stamps.len() > STAMPS_PER_RUN_MAX {
-                    return Err(PaintError::limit(
-                        "stamps per run",
-                        stamps.len() as u64,
-                        STAMPS_PER_RUN_MAX as u64,
-                    ));
-                }
-                for stamp in stamps {
-                    if stamp.radius_px == 0 || stamp.radius_px > crate::stroke::DIAMETER_PX_MAX / 2
-                    {
-                        return Err(PaintError::invalid(format!(
-                            "stamp radius {} is outside 1..={}",
-                            stamp.radius_px,
-                            crate::stroke::DIAMETER_PX_MAX / 2
-                        )));
-                    }
-                }
+                validate_stamps(stamps)?;
             }
             Op::FillRect { layer, rect, .. } => {
                 self.require_layer(*layer)?;
-                if rect.width == 0 || rect.width > CANVAS_DIM_MAX {
-                    return Err(PaintError::limit(
-                        "fill rect width",
-                        u64::from(rect.width),
-                        u64::from(CANVAS_DIM_MAX),
-                    ));
-                }
-                if rect.height == 0 || rect.height > CANVAS_DIM_MAX {
-                    return Err(PaintError::limit(
-                        "fill rect height",
-                        u64::from(rect.height),
-                        u64::from(CANVAS_DIM_MAX),
-                    ));
-                }
-                if intersect_rect(rect, self.width, self.height).is_none() {
-                    return Err(PaintError::invalid(
-                        "fill rect does not intersect the canvas",
-                    ));
-                }
+                self.validate_rect(rect)?;
+            }
+            Op::GradientFill {
+                layer,
+                rect,
+                gradient,
+            } => {
+                self.require_layer(*layer)?;
+                self.validate_rect(rect)?;
+                validate_gradient(gradient)?;
+            }
+            Op::TexturedStampRun {
+                layer,
+                stamps,
+                grain,
+                ..
+            } => {
+                self.require_layer(*layer)?;
+                validate_stamps(stamps)?;
+                validate_grain(grain)?;
             }
             Op::LayerAdd { id, after, .. } => {
                 if self.layers.len() >= LAYERS_MAX {
@@ -521,6 +507,31 @@ impl Document {
         Ok(())
     }
 
+    /// The rect checks shared by the fill ops: bounded
+    /// dimensions and a canvas intersection.
+    fn validate_rect(&self, rect: &crate::ops::Rect) -> PaintResult<()> {
+        if rect.width == 0 || rect.width > CANVAS_DIM_MAX {
+            return Err(PaintError::limit(
+                "fill rect width",
+                u64::from(rect.width),
+                u64::from(CANVAS_DIM_MAX),
+            ));
+        }
+        if rect.height == 0 || rect.height > CANVAS_DIM_MAX {
+            return Err(PaintError::limit(
+                "fill rect height",
+                u64::from(rect.height),
+                u64::from(CANVAS_DIM_MAX),
+            ));
+        }
+        if intersect_rect(rect, self.width, self.height).is_none() {
+            return Err(PaintError::invalid(
+                "fill rect does not intersect the canvas",
+            ));
+        }
+        Ok(())
+    }
+
     /// Resident bytes an op would add (pre-flight). Only
     /// pixel-allocating ops add; the rest are zero or
     /// negative (removals are conservatively zero).
@@ -537,19 +548,20 @@ impl Document {
             }
             Op::FillRect { layer, rect, .. } => {
                 let target = self.layer(*layer).expect("validated above");
-                let (x0, y0, x1, y1) =
-                    intersect_rect(rect, self.width, self.height).expect("validated above");
-                let mut additional = 0u64;
-                let tile = TILE_PX;
-                for ty in (y0 / tile)..=(y1 / tile) {
-                    for tx in (x0 / tile)..=(x1 / tile) {
-                        let key = (tx as i32, ty as i32);
-                        if !target.has_tile(key) {
-                            additional += crate::tile::TILE_BYTES as u64;
-                        }
-                    }
-                }
-                Ok(additional)
+                Ok(rect_additional_bytes(target, rect, self.width, self.height))
+            }
+            Op::GradientFill { layer, rect, .. } => {
+                let target = self.layer(*layer).expect("validated above");
+                Ok(rect_additional_bytes(target, rect, self.width, self.height))
+            }
+            Op::TexturedStampRun { layer, stamps, .. } => {
+                let target = self.layer(*layer).expect("validated above");
+                Ok(stamp_run_additional_bytes(
+                    target,
+                    stamps,
+                    self.width,
+                    self.height,
+                ))
             }
             _ => Ok(0),
         }
@@ -645,7 +657,7 @@ impl Document {
 
 /// Intersect a rect with the canvas; `None` when disjoint.
 /// Returns (x0, y0, x1, y1) inclusive canvas coordinates.
-fn intersect_rect(
+pub(crate) fn intersect_rect(
     rect: &crate::ops::Rect,
     width: u32,
     height: u32,
@@ -658,6 +670,107 @@ fn intersect_rect(
         return None;
     }
     Some((x0 as u32, y0 as u32, x1 as u32, y1 as u32))
+}
+
+/// The stamp-list checks shared by both stamp-run ops:
+/// non-empty, under the per-run ceiling, radii in range.
+fn validate_stamps(stamps: &[Stamp]) -> PaintResult<()> {
+    if stamps.is_empty() {
+        return Err(PaintError::invalid("stamp run carries no stamps"));
+    }
+    if stamps.len() > STAMPS_PER_RUN_MAX {
+        return Err(PaintError::limit(
+            "stamps per run",
+            stamps.len() as u64,
+            STAMPS_PER_RUN_MAX as u64,
+        ));
+    }
+    for stamp in stamps {
+        if stamp.radius_px == 0 || stamp.radius_px > crate::stroke::DIAMETER_PX_MAX / 2 {
+            return Err(PaintError::invalid(format!(
+                "stamp radius {} is outside 1..={}",
+                stamp.radius_px,
+                crate::stroke::DIAMETER_PX_MAX / 2
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The gradient checks: 2..=8 stops in strictly
+/// increasing position, distinct endpoints, endpoints
+/// inside the coordinate bound that keeps the parameter
+/// arithmetic in range.
+fn validate_gradient(gradient: &GradientSpec) -> PaintResult<()> {
+    if gradient.stops.len() < 2 || gradient.stops.len() > GRADIENT_STOPS_MAX {
+        return Err(PaintError::limit(
+            "gradient stops",
+            gradient.stops.len() as u64,
+            GRADIENT_STOPS_MAX as u64,
+        ));
+    }
+    for pair in gradient.stops.windows(2) {
+        if pair[1].at <= pair[0].at {
+            return Err(PaintError::invalid(
+                "gradient stops are not in strictly increasing position",
+            ));
+        }
+    }
+    if gradient.from == gradient.to {
+        return Err(PaintError::invalid(
+            "gradient endpoints coincide: the field has no direction",
+        ));
+    }
+    for point in [gradient.from, gradient.to] {
+        for coord in point {
+            if coord.abs() > GRADIENT_COORD_ABS_MAX {
+                return Err(PaintError::limit(
+                    "gradient endpoint coordinate",
+                    coord.unsigned_abs() as u64,
+                    GRADIENT_COORD_ABS_MAX as u64,
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The grain checks: cell size and octave count inside
+/// the field's defined ranges.
+fn validate_grain(grain: &GrainSpec) -> PaintResult<()> {
+    if grain.cell_px == 0 || grain.cell_px > GRAIN_CELL_PX_MAX {
+        return Err(PaintError::limit(
+            "grain cell size",
+            u64::from(grain.cell_px),
+            u64::from(GRAIN_CELL_PX_MAX),
+        ));
+    }
+    if grain.octaves == 0 || grain.octaves > GRAIN_OCTAVES_MAX {
+        return Err(PaintError::limit(
+            "grain octaves",
+            u64::from(grain.octaves),
+            u64::from(GRAIN_OCTAVES_MAX),
+        ));
+    }
+    Ok(())
+}
+
+/// Resident bytes a rect fill would add: not-yet-
+/// allocated tiles under the rect's canvas intersection,
+/// at the full tile size. Shared by both fill ops.
+fn rect_additional_bytes(target: &Layer, rect: &crate::ops::Rect, width: u32, height: u32) -> u64 {
+    let (x0, y0, x1, y1) = intersect_rect(rect, width, height).expect("validated above");
+    let mut additional = 0u64;
+    let tile = TILE_PX;
+    for ty in (y0 / tile)..=(y1 / tile) {
+        for tx in (x0 / tile)..=(x1 / tile) {
+            let key = (tx as i32, ty as i32);
+            if !target.has_tile(key) {
+                additional += crate::tile::TILE_BYTES as u64;
+            }
+        }
+    }
+    additional
 }
 
 /// Apply a validated op to a layer stack. Shared by the
@@ -701,6 +814,44 @@ fn apply_to_layers(
                 .find(|held| held.id == *layer)
                 .expect("validated op targets an existing layer");
             apply_fill_rect(target, rect, *color, width, height);
+        }
+        Op::GradientFill {
+            layer,
+            rect,
+            gradient,
+        } => {
+            let target = layers
+                .iter_mut()
+                .find(|held| held.id == *layer)
+                .expect("validated op targets an existing layer");
+            crate::gradient::apply_gradient_fill(target, rect, gradient, width, height);
+        }
+        Op::TexturedStampRun {
+            layer,
+            mode,
+            color,
+            opacity,
+            flow,
+            stamps,
+            grain,
+        } => {
+            let target = layers
+                .iter_mut()
+                .find(|held| held.id == *layer)
+                .expect("validated op targets an existing layer");
+            crate::stroke::apply_stamps_grained(
+                target,
+                stamps,
+                crate::stroke::StampStyle {
+                    mode: *mode,
+                    color: *color,
+                    opacity: *opacity,
+                    flow: *flow,
+                },
+                Some(*grain),
+                width,
+                height,
+            );
         }
         Op::LayerAdd { id, name, after } => {
             let layer = Layer::new(*id, name.clone());
@@ -873,6 +1024,139 @@ mod tests {
             ));
         }
         assert_eq!(doc.ops().len(), 0, "refused ops never enter the log");
+    }
+
+    fn gradient_op(layer: LayerId, stops: Vec<crate::ops::GradientStop>) -> Op {
+        Op::GradientFill {
+            layer,
+            rect: Rect {
+                x: 0,
+                y: 0,
+                width: 16,
+                height: 16,
+            },
+            gradient: GradientSpec {
+                shape: crate::ops::GradientShape::Linear,
+                from: [0, 0],
+                to: [15, 0],
+                stops,
+            },
+        }
+    }
+
+    #[test]
+    fn gradient_and_grain_ops_validate_and_replay_deterministically() {
+        use crate::ops::GradientStop;
+        let mut doc = Document::new_empty(16, 16).expect("doc");
+        let layer = doc.add_layer("shade".to_string()).expect("layer");
+        let stops = vec![
+            GradientStop {
+                at: 0,
+                color: [10, 20, 30, 255],
+            },
+            GradientStop {
+                at: 255,
+                color: [200, 210, 220, 255],
+            },
+        ];
+        doc.apply_op(gradient_op(layer, stops.clone()))
+            .expect("gradient fill");
+        let stamp = Stamp {
+            x_fixed: 8 * 64,
+            y_fixed: 8 * 64,
+            radius_px: 5,
+            alpha: 255,
+        };
+        let textured = Op::TexturedStampRun {
+            layer,
+            mode: StampMode::Paint,
+            color: [250, 240, 230, 255],
+            opacity: 200,
+            flow: 200,
+            stamps: vec![stamp],
+            grain: GrainSpec {
+                seed: 3,
+                cell_px: 4,
+                strength: 180,
+                octaves: 2,
+            },
+        };
+        doc.apply_op(textured).expect("textured run");
+        let hash = doc.composite_hash();
+        // Undo both and redo: the log-walk must re-derive
+        // the identical composite.
+        assert!(doc.undo());
+        assert!(doc.undo());
+        assert!(doc.redo());
+        assert!(doc.redo());
+        assert_eq!(doc.composite_hash(), hash);
+
+        // Refusals: one stop, unordered stops, coincident
+        // endpoints, a zero cell, zero octaves.
+        let one_stop = vec![GradientStop {
+            at: 0,
+            color: [0, 0, 0, 255],
+        }];
+        assert!(doc.apply_op(gradient_op(layer, one_stop)).is_err());
+        let unordered = vec![
+            GradientStop {
+                at: 200,
+                color: [0, 0, 0, 255],
+            },
+            GradientStop {
+                at: 100,
+                color: [9, 9, 9, 255],
+            },
+        ];
+        assert!(doc.apply_op(gradient_op(layer, unordered)).is_err());
+        let coincident = Op::GradientFill {
+            layer,
+            rect: Rect {
+                x: 0,
+                y: 0,
+                width: 4,
+                height: 4,
+            },
+            gradient: GradientSpec {
+                shape: crate::ops::GradientShape::Radial,
+                from: [5, 5],
+                to: [5, 5],
+                stops: stops.clone(),
+            },
+        };
+        assert!(doc.apply_op(coincident).is_err());
+        for grain in [
+            GrainSpec {
+                seed: 1,
+                cell_px: 0,
+                strength: 1,
+                octaves: 1,
+            },
+            GrainSpec {
+                seed: 1,
+                cell_px: 4,
+                strength: 1,
+                octaves: 0,
+            },
+            GrainSpec {
+                seed: 1,
+                cell_px: 4,
+                strength: 1,
+                octaves: GRAIN_OCTAVES_MAX + 1,
+            },
+        ] {
+            let bad = Op::TexturedStampRun {
+                layer,
+                mode: StampMode::Paint,
+                color: [0, 0, 0, 255],
+                opacity: 255,
+                flow: 255,
+                stamps: vec![stamp],
+                grain,
+            };
+            assert!(doc.apply_op(bad).is_err(), "grain {grain:?} must refuse");
+        }
+        assert_eq!(doc.ops().len(), 3, "only the valid ops entered the log");
     }
 
     #[test]

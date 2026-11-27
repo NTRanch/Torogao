@@ -23,7 +23,7 @@ pub const FORMAT_TAG: &str = "torogao-paint/1";
 /// The format major version this build reads and writes.
 pub const FORMAT_MAJOR: u32 = 1;
 /// The format minor version (additive extensions only).
-pub const FORMAT_MINOR: u32 = 0;
+pub const FORMAT_MINOR: u32 = 1;
 /// Ceiling on `header.ron` bytes.
 pub const HEADER_FILE_BYTES_MAX: usize = 1024 * 1024;
 /// Ceiling on `layers.ron` bytes.

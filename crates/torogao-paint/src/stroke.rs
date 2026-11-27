@@ -149,6 +149,88 @@ pub struct Stamp {
 /// Fixed-point units per pixel in stamp positions.
 pub const FIXED_PER_PX: i64 = 64;
 
+/// Grain cell-size ceiling in px (the document
+/// validates).
+pub const GRAIN_CELL_PX_MAX: u32 = 256;
+/// Grain octave ceiling (the document validates).
+pub const GRAIN_OCTAVES_MAX: u8 = 4;
+
+/// A deterministic grain field modulating stamp deposit
+/// (the textured-brush term of SS4.3): value noise in
+/// canvas space, so every stamp and run sharing a spec
+/// deposits through the same paper. The field is a pure
+/// integer function of (seed, position) — no float, no
+/// clock, no platform variance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GrainSpec {
+    /// Field seed; different seeds are different papers.
+    pub seed: u64,
+    /// Base cell size in px, 1..=256. Octaves halve it.
+    pub cell_px: u32,
+    /// Modulation depth, 0..=255: the deposit factor runs
+    /// from `255 - strength` (field value 0) to 255
+    /// (field value 255). Strength 0 is a plain stamp run.
+    pub strength: u8,
+    /// Noise octaves, 1..=4; octave 0 carries the most
+    /// weight, each later octave half the cell size and
+    /// half the weight.
+    pub octaves: u8,
+}
+
+/// One cell corner's hash: a splitmix-style finaliser
+/// over the seed and the cell coordinates. Pure integer
+/// arithmetic; identical on every machine.
+fn grain_hash(seed: u64, octave: u8, cx: i64, cy: i64) -> u32 {
+    let mut h = seed ^ u64::from(octave).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    h ^= (cx as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    h = (h ^ (h >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    h ^= (cy as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    h = (h ^ (h >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    h ^= h >> 31;
+    (h >> 56) as u32
+}
+
+/// One octave of the grain field at a canvas pixel:
+/// bilinear interpolation of the four surrounding cell
+/// hashes, in exact integer arithmetic.
+fn grain_octave(seed: u64, octave: u8, cell: u64, x: i64, y: i64) -> u32 {
+    let c = cell as i64;
+    let cx = x.div_euclid(c);
+    let cy = y.div_euclid(c);
+    let fx = x.rem_euclid(c) as u64;
+    let fy = y.rem_euclid(c) as u64;
+    let h00 = u64::from(grain_hash(seed, octave, cx, cy));
+    let h10 = u64::from(grain_hash(seed, octave, cx + 1, cy));
+    let h01 = u64::from(grain_hash(seed, octave, cx, cy + 1));
+    let h11 = u64::from(grain_hash(seed, octave, cx + 1, cy + 1));
+    let numerator = h00 * (cell - fx) * (cell - fy)
+        + h10 * fx * (cell - fy)
+        + h01 * (cell - fx) * fy
+        + h11 * fx * fy;
+    let denominator = cell * cell;
+    ((numerator + denominator / 2) / denominator) as u32
+}
+
+/// The grain field's value at a canvas pixel, 0..=255:
+/// the weighted mean of its octaves (octave 0 weighs
+/// most). An octave count of 0 — refused at the document
+/// — reads as full value here, i.e. no modulation.
+pub fn grain_value(grain: &GrainSpec, x: i64, y: i64) -> u32 {
+    if grain.octaves == 0 {
+        return 255;
+    }
+    let mut weighted = 0u64;
+    let mut weights = 0u64;
+    for octave in 0..grain.octaves {
+        let cell = (u64::from(grain.cell_px) >> octave).max(1);
+        let weight = 1u64 << (grain.octaves - 1 - octave);
+        weighted += weight * u64::from(grain_octave(grain.seed, octave, cell, x, y));
+        weights += weight;
+    }
+    ((weighted + weights / 2) / weights) as u32
+}
+
 /// Quantize a pixel-space coordinate to stamp fixed point,
 /// clamped so hostile sample values cannot overflow the
 /// placement arithmetic downstream.
@@ -376,6 +458,24 @@ pub fn apply_stamps(
     width: u32,
     height: u32,
 ) {
+    apply_stamps_grained(layer, stamps, style, None, width, height);
+}
+
+/// Apply a stamp run with an optional grain field
+/// (SS4.3): identical to `apply_stamps` except each
+/// stamp's per-pixel contribution is first scaled by the
+/// grain factor at that pixel, `(255 - strength) +
+/// strength * field / 255`. With `grain: None` — or a
+/// grain of strength 0 — the arithmetic is exactly
+/// `apply_stamps`' own, so plain runs never change.
+pub fn apply_stamps_grained(
+    layer: &mut Layer,
+    stamps: &[Stamp],
+    style: StampStyle,
+    grain: Option<GrainSpec>,
+    width: u32,
+    height: u32,
+) {
     let (opacity, flow) = (style.opacity, style.flow);
     if stamps.is_empty() || opacity == 0 || flow == 0 {
         return;
@@ -383,7 +483,7 @@ pub fn apply_stamps(
     // Pass 1: accumulate the stroke buffer.
     let mut buffer: BTreeMap<(i32, i32), Box<[u8; STROKE_TILE_BYTES]>> = BTreeMap::new();
     for stamp in stamps {
-        accumulate_stamp(&mut buffer, stamp, flow, width, height);
+        accumulate_stamp(&mut buffer, stamp, flow, grain.as_ref(), width, height);
     }
     // Pass 2: deposit the buffer onto the layer.
     for (key, tile_buf) in &buffer {
@@ -396,6 +496,7 @@ fn accumulate_stamp(
     buffer: &mut BTreeMap<(i32, i32), Box<[u8; STROKE_TILE_BYTES]>>,
     stamp: &Stamp,
     flow: u8,
+    grain: Option<&GrainSpec>,
     width: u32,
     height: u32,
 ) {
@@ -428,6 +529,14 @@ fn accumulate_stamp(
                         continue;
                     }
                     let contribution = mul255(u32::from(a), u32::from(flow)) as u8;
+                    let contribution = match grain {
+                        Some(spec) => {
+                            let factor = 255 - u32::from(spec.strength)
+                                + mul255(u32::from(spec.strength), grain_value(spec, gx, gy));
+                            mul255(u32::from(contribution), factor) as u8
+                        }
+                        None => contribution,
+                    };
                     let at = (ly * tile + lx) as usize;
                     let current = u32::from(entry[at]);
                     entry[at] = (u32::from(contribution)
@@ -752,6 +861,121 @@ mod tests {
             ..params
         };
         assert!(build_stamp_run(&[], &huge).is_err());
+    }
+
+    #[test]
+    fn grain_field_is_deterministic_bounded_and_varies() {
+        let spec = GrainSpec {
+            seed: 20261127,
+            cell_px: 7,
+            strength: 200,
+            octaves: 3,
+        };
+        let mut min = 255u32;
+        let mut max = 0u32;
+        for y in 0..140 {
+            for x in 0..140 {
+                let v = grain_value(&spec, x, y);
+                assert!(v <= 255);
+                assert_eq!(v, grain_value(&spec, x, y), "field must be a pure function");
+                min = min.min(v);
+                max = max.max(v);
+            }
+        }
+        // A field that never varies is not a texture.
+        assert!(max - min > 100, "field range {min}..={max} is too flat");
+        // A different seed is a different paper.
+        let other = GrainSpec { seed: 42, ..spec };
+        assert!((0..140).any(|x| grain_value(&spec, x, 70) != grain_value(&other, x, 70)));
+    }
+
+    #[test]
+    fn grain_at_strength_zero_is_a_plain_run() {
+        let stamps = vec![
+            Stamp {
+                x_fixed: 60 * 64,
+                y_fixed: 60 * 64,
+                radius_px: 24,
+                alpha: 200,
+            },
+            Stamp {
+                x_fixed: 84 * 64,
+                y_fixed: 60 * 64,
+                radius_px: 24,
+                alpha: 200,
+            },
+        ];
+        let style = StampStyle {
+            mode: StampMode::Paint,
+            color: [180, 90, 40, 255],
+            opacity: 230,
+            flow: 190,
+        };
+        let mut plain = Layer::new(LayerId(1), "ink".to_string());
+        apply_stamps(&mut plain, &stamps, style, 160, 160);
+        let mut grained = Layer::new(LayerId(1), "ink".to_string());
+        apply_stamps_grained(
+            &mut grained,
+            &stamps,
+            style,
+            Some(GrainSpec {
+                seed: 7,
+                cell_px: 5,
+                strength: 0,
+                octaves: 3,
+            }),
+            160,
+            160,
+        );
+        for y in 0..160 {
+            for x in 0..160 {
+                assert_eq!(plain.pixel(x, y), grained.pixel(x, y), "pixel ({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn grain_only_ever_thins_a_deposit() {
+        let stamps = vec![Stamp {
+            x_fixed: 60 * 64,
+            y_fixed: 60 * 64,
+            radius_px: 30,
+            alpha: 255,
+        }];
+        let style = StampStyle {
+            mode: StampMode::Paint,
+            color: [200, 200, 200, 255],
+            opacity: 255,
+            flow: 255,
+        };
+        let mut plain = Layer::new(LayerId(1), "ink".to_string());
+        apply_stamps(&mut plain, &stamps, style, 140, 140);
+        let mut grained = Layer::new(LayerId(1), "ink".to_string());
+        apply_stamps_grained(
+            &mut grained,
+            &stamps,
+            style,
+            Some(GrainSpec {
+                seed: 99,
+                cell_px: 6,
+                strength: 220,
+                octaves: 2,
+            }),
+            140,
+            140,
+        );
+        let mut thinned = false;
+        for y in 0..140 {
+            for x in 0..140 {
+                let p = plain.pixel(x, y);
+                let g = grained.pixel(x, y);
+                assert!(g[3] <= p[3], "grain raised alpha at ({x}, {y})");
+                if g != p {
+                    thinned = true;
+                }
+            }
+        }
+        assert!(thinned, "strength-220 grain changed nothing");
     }
 
     #[test]
