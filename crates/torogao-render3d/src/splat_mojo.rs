@@ -26,10 +26,19 @@
 //!   (Rung 4 shadow receive / light response) pack on
 //!   the CPU; the kernel transcribes the unlit
 //!   projection only.
-//! - Layer rotation is fine: the pack's own host-side
+//! - Layer rotation is fine, and has its own kernel:
+//!   when a rotation binary is configured (see
+//!   below), the Mojo rotation kernel
+//!   (`mojo/splat_rotate.mojo`, adopted by the
+//!   extension trial — bit-exact against the host
+//!   step on the full witness) rotates the cloud's
+//!   frame records on the GPU ahead of projection.
+//!   With no rotation binary configured, or on any
+//!   rotation-kernel failure, the pack's own host-side
 //!   rotation ([`crate::splat::rotate_cloud`]) runs
-//!   first, exactly as the CPU path runs it, and the
-//!   kernel projects the rotated cloud. (A rotation
+//!   instead, exactly as the CPU path runs it — the
+//!   fallback cannot change the packet, which is what
+//!   the trial's bit-exactness gate buys. (A rotation
 //!   the CPU path would reject — zero or non-finite —
 //!   makes this route decline, and the CPU path then
 //!   raises its usual panic.)
@@ -44,8 +53,12 @@
 //!
 //! Configuration is explicit, through the
 //! environment: `TOROGAO_MOJO_PROJECT_BIN` names the
-//! per-architecture kernel binary (built by
-//! `mojo/build.sh`); without it there is no route.
+//! per-architecture projection kernel binary (built
+//! by `mojo/build.sh`); without it there is no route.
+//! `TOROGAO_MOJO_ROTATE_BIN` optionally names the
+//! rotation kernel binary; without it, layer
+//! rotations run on the host exactly as before the
+//! rotation kernel was wired in.
 //! `TOROGAO_MOJO_DEVICE_ID` selects the GPU (default
 //! 0; on primo, 0 = RTX 4070 Laptop, 1 = RTX A6000 as
 //! the MAX runtime enumerates them).
@@ -75,7 +88,7 @@ use crate::splat::{
 };
 use crate::splat_gpu::frame_records;
 use crate::splat_light::SplatLight;
-use crate::splat_rotate::{Rotation, is_identity_quat};
+use crate::splat_rotate::{Rotation, ShRotation, is_identity_quat};
 
 /// The pack's alpha cull (`splat.rs`'s `ALPHA_CULL`,
 /// f32): the kernel header carries its bit pattern.
@@ -87,6 +100,11 @@ const HEADER_BYTES: usize = 368;
 const RECORD_BYTES: usize = 256;
 /// One projected output record's bytes.
 const OUT_BYTES: usize = 96;
+/// Header bytes before the record stream in the
+/// rotation kernel's file protocol (count, matrix,
+/// quaternion, SH band block — the kernel source's
+/// contract, written identically by the trial bench).
+const ROTATE_HEADER_BYTES: usize = 776;
 
 /// A configured Mojo projection route: where the
 /// kernel binary lives, which GPU it runs on, and
@@ -97,6 +115,12 @@ pub struct MojoRoute {
     /// this machine's GPU architecture (see
     /// `mojo/build.sh`).
     pub project_bin: PathBuf,
+    /// The compiled `splat_rotate` kernel binary, when
+    /// one is configured: layer rotations then run on
+    /// the GPU ahead of projection. `None` (or any
+    /// failure of the binary) leaves rotation on the
+    /// host, exactly as the CPU path performs it.
+    pub rotate_bin: Option<PathBuf>,
     /// GPU index as the MAX runtime enumerates
     /// devices.
     pub device_id: usize,
@@ -122,6 +146,7 @@ impl MojoRoute {
             .unwrap_or_else(|| std::env::temp_dir().join("torogao-mojo-route"));
         Some(MojoRoute {
             project_bin: PathBuf::from(project_bin),
+            rotate_bin: std::env::var_os("TOROGAO_MOJO_ROTATE_BIN").map(PathBuf::from),
             device_id,
             work_dir,
         })
@@ -148,18 +173,42 @@ pub fn project_splats_mojo(
     height: u32,
     route: &MojoRoute,
 ) -> Option<Vec<SplatProjection>> {
-    // Rotation first, on the host, by the pack's own
-    // function — the same rotated cloud the CPU path
-    // projects. The identity skips it untouched.
-    let rotated;
-    let cloud = if is_identity_quat(transform.rotation) {
-        cloud
+    let count = cloud.splats.len();
+
+    // Rotation first. With a rotation binary
+    // configured, the adopted Mojo rotation kernel
+    // rotates the cloud's frame records on the GPU
+    // and its output feeds the projection kernel
+    // directly. Any failure — or no rotation binary —
+    // falls back to the pack's own host rotation,
+    // exactly the CPU path's step, so the fallback
+    // cannot change the packet (the rotation kernel
+    // is bit-exact against `frame_records` of the
+    // host-rotated cloud by its trial gate). The
+    // identity skips rotation untouched.
+    let host_records;
+    let kernel_records;
+    let record_bytes: &[u8] = if is_identity_quat(transform.rotation) {
+        host_records = frame_records(cloud);
+        bytemuck::cast_slice(&host_records)
     } else {
         let rotation = Rotation::from_quaternion(transform.rotation)?;
-        rotated = rotate_cloud(cloud, &rotation);
-        &rotated
+        match route
+            .rotate_bin
+            .as_deref()
+            .and_then(|bin| rotate_records_mojo(route, bin, cloud, &rotation))
+        {
+            Some(bytes) => {
+                kernel_records = bytes;
+                &kernel_records
+            }
+            None => {
+                let rotated = rotate_cloud(cloud, &rotation);
+                host_records = frame_records(&rotated);
+                bytemuck::cast_slice(&host_records)
+            }
+        }
     };
-    let count = cloud.splats.len();
 
     // Uniforms, in the kernel contract's order (the
     // bench harness writes the identical block).
@@ -178,8 +227,6 @@ pub fn project_splats_mojo(
     uniforms[42] = f64::from(width);
     uniforms[43] = f64::from(height);
 
-    let records = frame_records(cloud);
-    let record_bytes: &[u8] = bytemuck::cast_slice(&records);
     debug_assert_eq!(record_bytes.len(), count * RECORD_BYTES);
 
     // Stage the file protocol in a per-call directory.
@@ -225,6 +272,81 @@ pub fn project_splats_mojo(
             .then_with(|| a.index.cmp(&b.index))
     });
     Some(projected)
+}
+
+/// Rotate a cloud's frame records through the Mojo
+/// rotation kernel: returns the rotated records'
+/// bytes (`count * RECORD_BYTES`), or `None` on any
+/// failure (spawn failure, non-zero exit, wrong
+/// output size) — the caller then rotates on the
+/// host, exactly the CPU path's own step. The kernel
+/// is bit-exact against `frame_records` of the
+/// host-rotated cloud (extension-trial gate), so
+/// taking this path cannot change the packet.
+fn rotate_records_mojo(
+    route: &MojoRoute,
+    rotate_bin: &std::path::Path,
+    cloud: &SplatCloud,
+    rotation: &Rotation,
+) -> Option<Vec<u8>> {
+    let count = cloud.splats.len();
+    let in_records = frame_records(cloud);
+    let in_bytes: &[u8] = bytemuck::cast_slice(&in_records);
+    debug_assert_eq!(in_bytes.len(), count * RECORD_BYTES);
+
+    // Header, in the rotation kernel's contract
+    // order (the trial bench writes the identical
+    // block): count, the rotation matrix, the
+    // quaternion, and the SH band-rotation block,
+    // all little-endian.
+    let mut input = Vec::with_capacity(ROTATE_HEADER_BYTES + in_bytes.len());
+    input.extend_from_slice(&(count as u64).to_le_bytes());
+    for row in &rotation.matrix {
+        for v in row {
+            input.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    for v in &rotation.quat {
+        input.extend_from_slice(&v.to_le_bytes());
+    }
+    let flat = ShRotation::new(&rotation.matrix).matrices_flat();
+    for v in &flat {
+        input.extend_from_slice(&v.to_le_bytes());
+    }
+    debug_assert_eq!(input.len(), ROTATE_HEADER_BYTES);
+    input.extend_from_slice(in_bytes);
+
+    // Stage the file protocol in a per-call
+    // directory, as the projection route does.
+    static ROTATE_CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let call_dir = route.work_dir.join(format!(
+        "rotate-call-{}-{}",
+        std::process::id(),
+        ROTATE_CALL_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    let staged = (|| -> Option<Vec<u8>> {
+        std::fs::create_dir_all(&call_dir).ok()?;
+        let in_path = call_dir.join("rotate-in.bin");
+        std::fs::write(&in_path, &input).ok()?;
+        let out_path = call_dir.join("rotate-out.bin");
+        let output = Command::new(rotate_bin)
+            .arg(&in_path)
+            .arg(&out_path)
+            .arg("1")
+            .arg(route.device_id.to_string())
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        std::fs::read(&out_path).ok()
+    })();
+    let _ = std::fs::remove_dir_all(&call_dir);
+    let bytes = staged?;
+    if bytes.len() != count * RECORD_BYTES {
+        return None;
+    }
+    Some(bytes)
 }
 
 /// Write the kernel's input file under `call_dir`,
@@ -374,6 +496,7 @@ mod tests {
         let scene = test_scene();
         let route = MojoRoute {
             project_bin: PathBuf::from("/nonexistent/splat_project"),
+            rotate_bin: None,
             device_id: 0,
             work_dir: std::env::temp_dir().join("torogao-mojo-route-test"),
         };
@@ -389,6 +512,91 @@ mod tests {
         );
         let cpu = pack_splats(&cloud, &SplatTransform::default(), &scene, 512, 640);
         assert_eq!(via_route, cpu);
+    }
+
+    /// A 40-degree rotation about a tilted axis, as a
+    /// storage-order quaternion (w, x, y, z) — the
+    /// route gates' rotation.
+    fn tilted_rotation() -> [f64; 4] {
+        let axis = [0.3_f64, 1.0, 0.2];
+        let l = (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
+        let half = (40.0_f64).to_radians() / 2.0;
+        let s = half.sin() / l;
+        [half.cos(), axis[0] * s, axis[1] * s, axis[2] * s]
+    }
+
+    fn rotated_transform() -> SplatTransform {
+        SplatTransform {
+            translation: [0.25, -0.1, 0.4],
+            rotation: tilted_rotation(),
+            scale: 1.35,
+        }
+    }
+
+    /// A configured rotation binary that does not
+    /// exist leaves rotation on the host: the pack is
+    /// the CPU reference's, packet-equal.
+    #[test]
+    fn missing_rotate_binary_falls_back_to_cpu() {
+        let cloud = room_corner_cloud();
+        let scene = test_scene();
+        let route = MojoRoute {
+            project_bin: PathBuf::from("/nonexistent/splat_project"),
+            rotate_bin: Some(PathBuf::from("/nonexistent/splat_rotate")),
+            device_id: 0,
+            work_dir: std::env::temp_dir().join("torogao-mojo-route-test"),
+        };
+        let light = SplatLight::default();
+        let transform = rotated_transform();
+        let via_route =
+            pack_splats_mojo(&cloud, &transform, &scene, 512, 640, &light, Some(&route));
+        let cpu = pack_splats(&cloud, &transform, &scene, 512, 640);
+        assert_eq!(via_route, cpu);
+    }
+
+    /// A rotation kernel that runs but produces no
+    /// output is attempted, then abandoned for the
+    /// host rotation: proven with a stand-in "binary"
+    /// that records its invocation in a marker file
+    /// and writes nothing. The projection binary does
+    /// not exist here, so the pack falls back whole —
+    /// the marker is what proves the rotation attempt
+    /// happened on the way.
+    #[cfg(unix)]
+    #[test]
+    fn failed_rotate_kernel_falls_back_to_cpu() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir =
+            std::env::temp_dir().join(format!("torogao-mojo-route-rotate-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let marker = dir.join("rotate-invoked");
+        let fake_rotate = dir.join("fake-rotate.sh");
+        std::fs::write(
+            &fake_rotate,
+            format!("#!/bin/sh\ntouch \"{}\"\nexit 0\n", marker.display()),
+        )
+        .expect("write fake rotate kernel");
+        std::fs::set_permissions(&fake_rotate, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod fake rotate kernel");
+        let route = MojoRoute {
+            project_bin: PathBuf::from("/nonexistent/splat_project"),
+            rotate_bin: Some(fake_rotate),
+            device_id: 0,
+            work_dir: dir.join("work"),
+        };
+        let cloud = room_corner_cloud();
+        let scene = test_scene();
+        let light = SplatLight::default();
+        let transform = rotated_transform();
+        let via_route =
+            pack_splats_mojo(&cloud, &transform, &scene, 512, 640, &light, Some(&route));
+        assert!(
+            marker.exists(),
+            "rotated pack must attempt the rotation kernel"
+        );
+        let cpu = pack_splats(&cloud, &transform, &scene, 512, 640);
+        assert_eq!(via_route, cpu);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A lit layer never invokes the kernel binary:
@@ -414,6 +622,7 @@ mod tests {
             .expect("chmod fake kernel");
         let route = MojoRoute {
             project_bin: fake_bin,
+            rotate_bin: None,
             device_id: 0,
             work_dir: dir.join("work"),
         };

@@ -7,14 +7,23 @@
 //! them explicitly:
 //!
 //!   TOROGAO_MOJO_PROJECT_BIN=.../mojo/build/splat_project_sm86 \
+//!   TOROGAO_MOJO_ROTATE_BIN=.../mojo/build/splat_rotate_sm86 \
 //!   TOROGAO_MOJO_DEVICE_ID=1 \
 //!   cargo test -p torogao-render3d --test splat_mojo_route \
 //!       -- --ignored
 //!
+//! TOROGAO_MOJO_ROTATE_BIN is optional for the
+//! identity gates; the rotated gates require it —
+//! with it set, rotated packs rotate on the GPU
+//! (the rotated full-witness gate proves the
+//! rotation kernel actually ran, via a marker
+//! wrapper, rather than silently falling back to
+//! the host rotation it must equal).
+//!
 //! The twin-render test additionally needs a Vulkan
 //! device and the toon fixture in
 //! TOROGAO_RENDER3D_TOON_FIXTURE; the full-witness
-//! test needs the bonsai ply in
+//! tests need the bonsai ply in
 //! TOROGAO_MOJO_WITNESS_PLY.
 
 use std::path::PathBuf;
@@ -32,6 +41,7 @@ fn route() -> MojoRoute {
         project_bin: PathBuf::from(
             std::env::var("TOROGAO_MOJO_PROJECT_BIN").expect("kernel binary env var"),
         ),
+        rotate_bin: std::env::var_os("TOROGAO_MOJO_ROTATE_BIN").map(PathBuf::from),
         device_id: std::env::var("TOROGAO_MOJO_DEVICE_ID")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -95,6 +105,8 @@ fn tilted_rotation() -> [f64; 4] {
 /// exact value equality; the bench gate proves the
 /// bitwise claim at full scale), identity and
 /// rotated, and the packets built on them are equal.
+/// With TOROGAO_MOJO_ROTATE_BIN set, the rotated
+/// case rotates on the GPU rotation kernel.
 #[test]
 #[ignore = "needs the Mojo kernel binary + GPU; see file docs"]
 fn route_matches_cpu_on_room_corner() {
@@ -124,20 +136,17 @@ fn route_matches_cpu_on_room_corner() {
     }
 }
 
-/// The full 1,157,141-splat bonsai witness through
-/// the integrated route: the packet equals the CPU
-/// pack's packet, byte for byte (PartialEq over the
-/// vertex/index streams).
-#[test]
-#[ignore = "needs the Mojo kernel binary + GPU + the bonsai witness ply"]
-fn route_matches_cpu_on_full_witness() {
-    let route = route();
+fn load_witness() -> SplatCloud {
     let ply = std::env::var("TOROGAO_MOJO_WITNESS_PLY").expect("witness ply env var");
     let bytes = std::fs::read(&ply).expect("read witness ply");
     let cloud = SplatCloud::load_ply(&bytes).expect("load witness ply");
     assert_eq!(cloud.splats.len(), 1_157_141, "the gated witness size");
+    cloud
+}
 
-    // The bench's plate config A scene for this cloud.
+/// The bench's plate config A scene for the witness
+/// cloud (framing derived from its bounds).
+fn witness_scene(cloud: &SplatCloud) -> ArcScene {
     let (centre, radius) = {
         let mut lo = [f64::INFINITY; 3];
         let mut hi = [f64::NEG_INFINITY; 3];
@@ -175,7 +184,19 @@ fn route_matches_cpu_on_full_witness() {
         centre[1] + dir[1] * dist,
         centre[2] + dir[2] * dist,
     ];
-    let scene = plate_rig_scene(camera_world(eye, centre, [0.0, -1.0, 0.0]));
+    plate_rig_scene(camera_world(eye, centre, [0.0, -1.0, 0.0]))
+}
+
+/// The full 1,157,141-splat bonsai witness through
+/// the integrated route: the packet equals the CPU
+/// pack's packet, byte for byte (PartialEq over the
+/// vertex/index streams).
+#[test]
+#[ignore = "needs the Mojo kernel binary + GPU + the bonsai witness ply"]
+fn route_matches_cpu_on_full_witness() {
+    let route = route();
+    let cloud = load_witness();
+    let scene = witness_scene(&cloud);
 
     let transform = SplatTransform::default();
     let light = SplatLight::default();
@@ -183,6 +204,65 @@ fn route_matches_cpu_on_full_witness() {
     let cpu = pack_splats(&cloud, &transform, &scene, 512, 640);
     assert_eq!(via_route.splat_count, 1_157_094, "witness survivor count");
     assert_eq!(via_route, cpu, "full-witness packet equality");
+}
+
+/// The full witness ROTATED, with the rotation
+/// kernel live in the route: the route's rotate
+/// binary is a wrapper that records its invocation
+/// in a marker file and delegates to the real
+/// kernel, so the gate proves the GPU rotation
+/// actually ran (a silent host fallback would pass
+/// the packet equality and fail this gate). The
+/// packet still equals the CPU pack's, byte for
+/// byte — that is the point of the wiring.
+#[cfg(unix)]
+#[test]
+#[ignore = "needs both Mojo kernel binaries + GPU + the bonsai witness ply"]
+fn route_matches_cpu_on_full_witness_rotated() {
+    use std::os::unix::fs::PermissionsExt;
+    let real_rotate = PathBuf::from(
+        std::env::var("TOROGAO_MOJO_ROTATE_BIN").expect("rotate kernel binary env var"),
+    );
+    let dir =
+        std::env::temp_dir().join(format!("torogao-mojo-route-rotated-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let marker = dir.join("rotate-invoked");
+    let wrapper = dir.join("rotate-wrapper.sh");
+    std::fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\ntouch \"{}\"\nexec \"{}\" \"$@\"\n",
+            marker.display(),
+            real_rotate.display()
+        ),
+    )
+    .expect("write rotate wrapper");
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod rotate wrapper");
+
+    let mut route = route();
+    route.rotate_bin = Some(wrapper);
+    let cloud = load_witness();
+    let scene = witness_scene(&cloud);
+
+    let transform = SplatTransform {
+        translation: [0.25, -0.1, 0.4],
+        rotation: tilted_rotation(),
+        scale: 1.35,
+    };
+    let light = SplatLight::default();
+    let via_route = pack_splats_mojo(&cloud, &transform, &scene, 512, 640, &light, Some(&route));
+    assert!(
+        marker.exists(),
+        "the rotation kernel must have run inside the route"
+    );
+    let cpu = pack_splats(&cloud, &transform, &scene, 512, 640);
+    assert_eq!(
+        via_route.splat_count, cpu.splat_count,
+        "rotated witness survivor count"
+    );
+    assert_eq!(via_route, cpu, "rotated full-witness packet equality");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Twin-render determinism on a scene packed through

@@ -33,10 +33,11 @@ pre-activated on the host by the pack's own
 functions, so the kernel needs no transcendentals;
 every operation is IEEE `+ - * / sqrt` on f64.
 Eligibility: unlit layers only (the Rung 4 light
-interaction packs on the CPU); layer rotation is
-applied host-side by the pack's own `rotate_cloud`
-before the kernel runs, exactly as the CPU path
-applies it. A configured route that fails for any
+interaction packs on the CPU); layer rotation runs
+on the GPU rotation kernel (below) when one is
+configured, and otherwise host-side by the pack's
+own `rotate_cloud`, exactly as the CPU path applies
+it. A configured route that fails for any
 reason falls back to the CPU reference — the packet
 is identical either way; that is what the
 bit-exactness gate buys.
@@ -50,6 +51,7 @@ pinned script:
 
     mojo/build.sh        # -> mojo/build/splat_project_sm86 (RTX A6000)
                          #    mojo/build/splat_project_sm89 (RTX 4070 Laptop)
+                         #    mojo/build/splat_rotate_sm86 / _sm89 likewise
 
 `--fp-mode contract=off` is LOAD-BEARING and pinned
 in `build.sh`, with a unit test standing over it
@@ -69,6 +71,9 @@ default, and an unconfigured pack is the CPU pack
 exactly):
 
     TOROGAO_MOJO_PROJECT_BIN=.../mojo/build/splat_project_sm86
+    TOROGAO_MOJO_ROTATE_BIN=.../mojo/build/splat_rotate_sm86
+                                    # optional; without it, layer
+                                    # rotations run on the host
     TOROGAO_MOJO_DEVICE_ID=1        # optional; MAX-runtime enumeration
                                     # (primo: 0 = 4070 Laptop, 1 = A6000)
     TOROGAO_MOJO_WORK_DIR=...       # optional scratch root
@@ -123,10 +128,16 @@ the extension is adopted under the same
 contention-inflated (79.3 ms; its host-to-device
 copy alone took 135.8 ms against the 4070's
 23.8 ms) and is reported as such, not averaged away.
-The kernel is not yet wired into the pack route —
-`src/splat_mojo.rs` still rotates host-side; wiring
-it in is a named follow-on step with its own route
-gates. Full trial record:
+Wired into the pack route by the follow-on lane
+(2026-11-27): `src/splat_mojo.rs` runs the rotation
+kernel over the cloud's frame records ahead of the
+projection kernel whenever `TOROGAO_MOJO_ROTATE_BIN`
+names a binary, with the host rotation as the
+packet-identical fallback. Its route gate is
+`route_matches_cpu_on_full_witness_rotated` in
+`tests/splat_mojo_route.rs` — full-witness packet
+equality with the rotation proven live by a marker
+wrapper. Full trial record:
 `~/workspace/render3d-mojo-adopt-20261127/RECORD.md`.
 
 ## Licence note (2026-11-27)

@@ -8,9 +8,11 @@
 # hottest measurable pure-f64 step after projection itself. The
 # kernel is judged exactly like the projection kernel: bit-exact
 # against the Rust reference on the full witness, or the trial
-# stands as a record and the Rust path stays. It is NOT wired
-# into the pack route; adoption, if the gate passes, is a
-# separate integration step recorded in the lane record.
+# stands as a record and the Rust path stays. Trial verdict
+# (2026-11-27): BIT-EXACT on both estate GPUs, adopted; wired
+# into the pack route by the follow-on lane the same day
+# (src/splat_mojo.rs runs it ahead of the projection kernel
+# whenever TOROGAO_MOJO_ROTATE_BIN names a binary).
 #
 # FP-MODE INVARIANT (gated): this file must be built with
 # `--fp-mode contract=off` (see build.sh). contract=fast was
