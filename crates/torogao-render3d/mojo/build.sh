@@ -32,4 +32,10 @@ MOJO="${MOJO:-$HOME/.local/share/pax/mojo-ptx-20261127/venv/bin/mojo}"
 mkdir -p build
 "$MOJO" build --fp-mode contract=off --target-accelerator sm_86 splat_project.mojo -o build/splat_project_sm86
 "$MOJO" build --fp-mode contract=off --target-accelerator sm_89 splat_project.mojo -o build/splat_project_sm89
-echo "built: build/splat_project_sm86 build/splat_project_sm89"
+# Extension trial (2026-11-27): the layer-rotation kernel
+# (splat_rotate.mojo), judged by the same witness rule and
+# pinned under the same fp-mode invariant. Trial artefact,
+# not wired into the pack route.
+"$MOJO" build --fp-mode contract=off --target-accelerator sm_86 splat_rotate.mojo -o build/splat_rotate_sm86
+"$MOJO" build --fp-mode contract=off --target-accelerator sm_89 splat_rotate.mojo -o build/splat_rotate_sm89
+echo "built: build/splat_project_sm86 build/splat_project_sm89 build/splat_rotate_sm86 build/splat_rotate_sm89"

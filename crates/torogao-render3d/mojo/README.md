@@ -97,6 +97,38 @@ Any Mojo upgrade re-runs both gates before its
 binaries are used; the flag's existence is the first
 thing to re-verify.
 
+## Extension trial (2026-11-27): layer rotation — ADOPTED
+
+`splat_rotate.mojo` trials a second kernel: the
+layer-rotation step (`splat::rotate_cloud`), chosen
+on profiling evidence from the adoption lane (full
+witness, medians: projection 563.8 ms, rotation
+401.8 ms standalone — 71% of projection's cost —
+frame-record build 160.1 ms; rotation is pure f64
+`+ - * / sqrt`, no transcendentals, the property
+that made projection bit-exact). The trial harness
+is `src/bin/splat_rotate_mojo_bench.rs`: the kernel
+over the estate's frame records against
+`frame_records(rotate_cloud(..))` on the full
+1,157,141-splat witness under a 40° rotation about
+(1, 2, 3).
+
+Verdict (2026-11-27): **BIT-EXACT on both GPUs**
+(0 field mismatches in 1,157,141 records; whole-file
+output SHA-256 identical to the CPU reference) —
+the extension is adopted under the same
+`--fp-mode contract=off` pin (its build lines are in
+`build.sh`). Kernel medians measured the same night:
+12.2 ms on the RTX 4070 Laptop; the A6000 run was
+contention-inflated (79.3 ms; its host-to-device
+copy alone took 135.8 ms against the 4070's
+23.8 ms) and is reported as such, not averaged away.
+The kernel is not yet wired into the pack route —
+`src/splat_mojo.rs` still rotates host-side; wiring
+it in is a named follow-on step with its own route
+gates. Full trial record:
+`~/workspace/render3d-mojo-adopt-20261127/RECORD.md`.
+
 ## Licence note (2026-11-27)
 
 The installed toolchain's PyPI artefact declares
