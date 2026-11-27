@@ -10,8 +10,8 @@ description = "Torogao Mobile phone shell (Slint): cast picker, scene prompt, ge
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-slint = { version = "1", features = ["backend-android-activity-06"] }
+slint = { version = "=1.19.1", features = ["backend-android-activity-06"] }
 torogao-mobile-core = { path = "../torogao-mobile-core" }
 
 [build-dependencies]
-slint-build = "1"
+slint-build = "=1.19.1"

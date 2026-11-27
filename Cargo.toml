@@ -55,3 +55,18 @@ serde_json = "1"
 # ENODATA on Linux; nothing else changed. Drop this patch when
 # gpui's http client moves to a maintained xattr.
 xattr = { path = "crates/torogao-mobile-gpui/vendor/xattr-0.2.3" }
+
+# slint 1.19.1 -> fontique 0.12.0 is built in several feature contexts;
+# the slint-build compiler context builds it without fontconfig-dlopen
+# while gpui's zed-font-kit forces yeslogic-fontconfig-sys into dlopen
+# mode workspace-wide, and that instance fails E0432 against the dlopen
+# sys build. Vendored copy with fontconfig-dlopen added to the system
+# feature; nothing else changed. Drop this patch when upstream fontique
+# or slint makes the dlopen split consistent (or exposes a passthrough).
+fontique = { path = "crates/torogao-mobile-slint/vendor/fontique-0.12.0" }
+# slint 1.19.1 -> skia-safe 0.157 -> skia-bindings pins bindgen 0.73.2,
+# whose syn requirement ">=2, <4" resolves onto syn 3 in this workspace
+# and bindgen does not compile against syn 3. Vendored copy with the syn
+# requirement narrowed to "2"; nothing else changed. Drop this patch
+# when bindgen compiles against syn 3 or skia-bindings moves its pin.
+bindgen = { path = "crates/torogao-mobile-slint/vendor/bindgen-0.73.2" }
