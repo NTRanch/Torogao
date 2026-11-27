@@ -21,9 +21,10 @@
 //! own sources and over any witness core's sources. This file
 //! is the one exclusion besides the presentation module: the
 //! scanner must name the tokens it bans, so it cannot scan
-//! itself. The presentation module is excluded from the
-//! float rules only — the ordering/time/thread/platform
-//! rules bind it too.
+//! itself. The Tier 2 modules — the presentation module
+//! (present.rs) and its measurement instrument (tier2.rs,
+//! Rung R2) — are excluded from the float rules only; the
+//! ordering/time/thread/platform rules bind them too.
 
 use std::path::{Path, PathBuf};
 
@@ -102,7 +103,11 @@ fn contains_token(line: &str, token: &str) -> bool {
 }
 
 fn is_present_module(path: &Path) -> bool {
-    path.file_name().is_some_and(|name| name == "present.rs")
+    // The Tier 2 modules: present.rs (the view) and tier2.rs
+    // (its measurement instrument, Rung R2). Both read floats;
+    // neither feeds a sim.
+    path.file_name()
+        .is_some_and(|name| name == "present.rs" || name == "tier2.rs")
 }
 
 fn is_scanner(path: &Path) -> bool {

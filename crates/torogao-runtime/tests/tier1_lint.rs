@@ -44,6 +44,10 @@ fn planted_violations_are_caught() {
         "pub fn gauge(x: f64) -> f64 { x }\n",
     )
     .expect("plant present");
+    // A float inside the Tier 2 measurement module: allowed
+    // there too (Rung R2 widened the exemption by name).
+    std::fs::write(root.join("tier2.rs"), "pub fn band(x: f64) -> f64 { x }\n")
+        .expect("plant tier2");
     // A clean file: no findings.
     std::fs::write(root.join("clean.rs"), "pub fn tick() -> u64 { 1 }\n").expect("plant clean");
 
@@ -61,6 +65,10 @@ fn planted_violations_are_caught() {
     assert!(
         violations.iter().all(|v| v.file != "present.rs"),
         "the presentation module's float is not flagged: {violations:?}"
+    );
+    assert!(
+        violations.iter().all(|v| v.file != "tier2.rs"),
+        "the Tier 2 module's float is not flagged: {violations:?}"
     );
     assert!(
         violations.iter().all(|v| v.file != "clean.rs"),

@@ -93,3 +93,32 @@ Retirement terms:
 - An artefact that names `torogao-rng/1` as its stream
   algorithm refuses at authoring time, as any unknown algorithm
   does — it is not converted.
+
+## torogao-runtime-corpus/1 — the replay corpus document
+
+Status: **adopted 2026-11-26** (runtime plan Rung R2), the
+corpus format of the cross-architecture twin gate (plan
+SS2.4/SS4.1).
+
+A corpus is one hosted core's fixed command script, carried
+as a file so the one cross-title gate harness consumes every
+title's replay corpus in the same shape (plan SS1.2). The
+document is canonical JSON, written through this crate's
+canonical JSON writer (`jsonfmt::to_d_json`), so the same
+corpus is byte-identical on every target:
+
+- `format`: the string `torogao-runtime-corpus/1`.
+- `core_id`: the `GameCore::core_id` the corpus drives; a
+  harness refuses a corpus naming a different core.
+- `save_at`: the step index at which the cross-target save
+  gate checkpoints (the save is taken after this many steps).
+- `steps`: one command list per step, in the runtime's
+  unified command vocabulary (the `Command` enum's serde
+  form). Commands are integer-only by construction (pointer
+  drags and pad axes travel in milli-unit buckets), so a
+  corpus carries no float and means the same run everywhere.
+
+Implementation: `torogao-runtime`'s `corpus` module
+(`CorpusDoc`), with the two R1 witness corpora committed in
+that form under `crates/torogao-runtime/corpus/`. A future
+`/2` is a deliberate, gated act, like every entry here.

@@ -55,6 +55,7 @@ pub mod present;
 pub mod save;
 pub mod session;
 pub mod tier1;
+pub mod tier2;
 
 pub use command::Command;
 pub use core::{GameCore, SaveBlob, StepReport, Verdict};
@@ -63,4 +64,5 @@ pub use oplog::{OpLog, OpLogEntry};
 pub use present::{GaugeView, MeterView, PresentationState};
 pub use save::SaveEnvelope;
 pub use session::{ReplayReport, Session};
+pub use tier2::{Band, BandReport, RECORDED_BAND, compare_presentations, presentation_digest};
 pub use torogao_author::{Refusal, RefusalClass};

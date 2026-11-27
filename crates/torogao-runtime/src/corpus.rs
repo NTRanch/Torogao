@@ -92,3 +92,90 @@ pub fn loop_corpus() -> Vec<Vec<Command>> {
         vec![invoke("advance_phase", &[])], // Morning, next day
     ]
 }
+
+// ---------------------------------------------------------------------------
+// The corpus file format: `torogao-runtime-corpus/1` (runtime
+// plan Rung R2). A corpus on disk is one canonical JSON
+// document, written through torogao-format's canonical JSON
+// writer, so the same corpus file is byte-identical on every
+// target and any title's replay corpus is consumable by the
+// one cross-title twin gate (plan SS1.2, SS4.1). The format is
+// registered in torogao-format's FORMATS.md.
+
+use serde::{Deserialize, Serialize};
+use torogao_author::{Refusal, RefusalClass};
+
+/// The corpus document format name and version.
+pub const CORPUS_FORMAT: &str = "torogao-runtime-corpus/1";
+
+/// One corpus document: a named core's fixed command script,
+/// one command list per step, plus the step index at which the
+/// cross-target save gate checkpoints.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CorpusDoc {
+    /// The format name; must equal [`CORPUS_FORMAT`].
+    pub format: String,
+    /// The [`crate::GameCore::core_id`] this corpus drives.
+    pub core_id: String,
+    /// The corpus step index at which the save gate takes its
+    /// checkpoint (after this many steps).
+    pub save_at: usize,
+    /// The command script: one command list per step.
+    pub steps: Vec<Vec<Command>>,
+}
+
+impl CorpusDoc {
+    /// The canonical text form of this document.
+    #[must_use]
+    pub fn to_text(&self) -> String {
+        let value = serde_json::to_value(self).unwrap_or(serde_json::Value::Null);
+        torogao_format::jsonfmt::to_d_json(&value)
+    }
+
+    /// Parses and validates a corpus document's format stamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed refusal when the text does not parse or
+    /// names a different format.
+    pub fn from_text(text: &str) -> Result<Self, Refusal> {
+        let doc: Self = serde_json::from_str(text).map_err(|error| {
+            Refusal::new(
+                RefusalClass::Malformed,
+                format!("corpus document does not parse: {error}"),
+            )
+        })?;
+        if doc.format != CORPUS_FORMAT {
+            return Err(Refusal::new(
+                RefusalClass::Malformed,
+                format!(
+                    "corpus format is '{}', this build reads '{CORPUS_FORMAT}'",
+                    doc.format
+                ),
+            ));
+        }
+        Ok(doc)
+    }
+}
+
+/// The interpreter corpus as a file-format document.
+#[must_use]
+pub fn interpreter_corpus_doc() -> CorpusDoc {
+    CorpusDoc {
+        format: CORPUS_FORMAT.to_string(),
+        core_id: "auth-g:changr_fixture".to_string(),
+        save_at: INTERPRETER_SAVE_AT,
+        steps: interpreter_corpus(),
+    }
+}
+
+/// The Loop corpus as a file-format document.
+#[must_use]
+pub fn loop_corpus_doc() -> CorpusDoc {
+    CorpusDoc {
+        format: CORPUS_FORMAT.to_string(),
+        core_id: "loop-service/own-core".to_string(),
+        save_at: LOOP_SAVE_AT,
+        steps: loop_corpus(),
+    }
+}

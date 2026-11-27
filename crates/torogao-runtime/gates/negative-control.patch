@@ -1,0 +1,30 @@
+diff --git a/crates/torogao-runtime/src/host/author_game.rs b/crates/torogao-runtime/src/host/author_game.rs
+index 12c66ef..0837759 100644
+--- a/crates/torogao-runtime/src/host/author_game.rs
++++ b/crates/torogao-runtime/src/host/author_game.rs
+@@ -310,11 +310,20 @@ impl GameCore for InterpreterCore {
+             headline: self.state.current_scene.clone().unwrap_or_default(),
+             detail: self.state.line.clone(),
+             meters,
+-            gauges: vec![GaugeView::ratio(
+-                "day_progress",
+-                i64::from(self.state.slot),
+-                self.clock_slots,
+-            )],
++            gauges: vec![{
++                // NEGATIVE CONTROL (twin gate, Rung R2): a
++                // deliberate +1.25e-3 perturbation of a Tier 2
++                // gauge. Applied only by gates/negative-control.sh
++                // from gates/negative-control.patch; never part
++                // of a gated build.
++                let mut gauge = GaugeView::ratio(
++                    "day_progress",
++                    i64::from(self.state.slot),
++                    self.clock_slots,
++                );
++                gauge.fraction += 0.00125;
++                gauge
++            }],
+         }
+     }
+ }
