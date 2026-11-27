@@ -1,0 +1,13 @@
+schema_version = "1.0.0"
+id = "torogao_bench"
+version = "0.1.0"
+name = "Torogao Bench"
+tagline = "Hand-animation bench: Action <-> torogao-motion-clip/2"
+maintainer = "NTRanch"
+type = "add-on"
+blender_version_min = "5.3.0"
+license = ["SPDX:GPL-3.0-or-later"]
+tags = ["Animation"]
+
+[permissions]
+files = "Read/write clip documents and GLBs at animator-picked paths"

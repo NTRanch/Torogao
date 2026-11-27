@@ -1,0 +1,1138 @@
+{
+  "gates": {
+    "G0": {
+      "pass": true,
+      "detail": "clipmath digests match the pinned Rust digests (loop-hold, fac, shader); loop-hold closes exactly"
+    },
+    "G1": {
+      "pass": true,
+      "detail": "Torogao bench panel + converter/NLA operators registered"
+    },
+    "G2": {
+      "pass": true,
+      "detail": "freeze ok; rig 3851eebd1050123f4e9a21b0e045f6559cfe581db04d60c3bf17b5ad75bf4bf2; frame-0 root translation [0.0, 0.9410714507102966, 0.0] vs GLB rest [0, 0.9410714507102966, 0]"
+    },
+    "G3": {
+      "pass": true,
+      "detail": "evaluated poses at every frame: original vs round-tripped max 0.000e+00; frozen clip evaluation vs round-tripped max 1.148e-07; band 1e-06"
+    },
+    "G4": {
+      "pass": true,
+      "detail": "clip -> action -> clip frozen bytes identical"
+    },
+    "G5": {
+      "pass": true,
+      "detail": "front lists 2 strips, mute writes through, track reorder ['Overlay', 'Base']; flatten validates (OK /home/phaedrus/.local/share/pax/hand-animation-h0h1-20261127/h2-gate/h2_flatten.clip.json name=lana/bench/h2_flatten channels=58 keys=2842 freeze=-), strip provenance lines 2, frame-10 head delta 9.148e-09"
+    },
+    "G6": {
+      "pass": true,
+      "detail": "one-frame clip validates (OK /home/phaedrus/.local/share/pax/hand-animation-h0h1-20261127/h2-gate/h2_pose.clip.json name=lana/bench/h2_pose_wave24 channels=11 keys=11 freeze=-), imports as a marked pose asset (True), re-exports identical (True)"
+    },
+    "G7": {
+      "pass": true,
+      "detail": "census: joints 54 (True), morphs 41 (True), animation 'Animation' samplers max 49 keys, duration 2.000s (authored 49 keys / 2.000s)"
+    }
+  },
+  "measurements": {
+    "digest_loop-hold": "30d70dbf2f6bffd8c8ddbf9d2050b4a7c782607a9b5ae76be8778ffbddce7b4b",
+    "digest_fac": "6fd17615b8d637fff89d75ade9182b122d88ef4cb2926fc74410c21731989929",
+    "digest_shader": "01fce3039c0b8c25ed30ef6e5f9ebbeb1acc9cf6aeaf73c7efe55d1af7bea67c",
+    "rig_identity": "3851eebd1050123f4e9a21b0e045f6559cfe581db04d60c3bf17b5ad75bf4bf2",
+    "root_joint": "mixamorig:Hips",
+    "handles_moved_to_thirds": 0,
+    "clip_channels": 12,
+    "loop_closure_max": 0.0,
+    "clip_digest_0_49": "cdf5db44535535ac6fd5a4b76a278a58b5a3fdbf0fcf96e3a849769150fae893",
+    "roundtrip_max_delta_blender": 0.0,
+    "roundtrip_max_delta_clip_eval": 1.147941307566569e-07,
+    "census": {
+      "path": "/home/phaedrus/.local/share/pax/hand-animation-h0h1-20261127/h2-gate/h2_witness.glb",
+      "joints": [
+        "mixamorig:Hips",
+        "mixamorig:LeftUpLeg",
+        "mixamorig:LeftLeg",
+        "mixamorig:LeftFoot",
+        "mixamorig:LeftToeBase",
+        "mixamorig:RightUpLeg",
+        "mixamorig:RightLeg",
+        "mixamorig:RightFoot",
+        "mixamorig:RightToeBase",
+        "mixamorig:Spine",
+        "mixamorig:Spine1",
+        "mixamorig:Spine2",
+        "mixamorig:LeftShoulder",
+        "mixamorig:LeftArm",
+        "mixamorig:LeftForeArm",
+        "mixamorig:LeftHand",
+        "mixamorig:LeftHandIndex1",
+        "mixamorig:LeftHandIndex2",
+        "mixamorig:LeftHandIndex3",
+        "mixamorig:LeftHandMiddle1",
+        "mixamorig:LeftHandMiddle2",
+        "mixamorig:LeftHandMiddle3",
+        "mixamorig:LeftHandPinky1",
+        "mixamorig:LeftHandPinky2",
+        "mixamorig:LeftHandPinky3",
+        "mixamorig:LeftHandRing1",
+        "mixamorig:LeftHandRing2",
+        "mixamorig:LeftHandRing3",
+        "mixamorig:LeftHandThumb1",
+        "mixamorig:LeftHandThumb2",
+        "mixamorig:LeftHandThumb3",
+        "mixamorig:Neck",
+        "mixamorig:Head",
+        "mixamorig:LeftEye",
+        "mixamorig:RightEye",
+        "mixamorig:RightShoulder",
+        "mixamorig:RightArm",
+        "mixamorig:RightForeArm",
+        "mixamorig:RightHand",
+        "mixamorig:RightHandIndex1",
+        "mixamorig:RightHandIndex2",
+        "mixamorig:RightHandIndex3",
+        "mixamorig:RightHandMiddle1",
+        "mixamorig:RightHandMiddle2",
+        "mixamorig:RightHandMiddle3",
+        "mixamorig:RightHandPinky1",
+        "mixamorig:RightHandPinky2",
+        "mixamorig:RightHandPinky3",
+        "mixamorig:RightHandRing1",
+        "mixamorig:RightHandRing2",
+        "mixamorig:RightHandRing3",
+        "mixamorig:RightHandThumb1",
+        "mixamorig:RightHandThumb2",
+        "mixamorig:RightHandThumb3"
+      ],
+      "morph_targets": [
+        "Fac_Eye_Close",
+        "Fac_Eye_L_Open",
+        "Fac_Eye_R_Open",
+        "Fac_Eye_L_Wink",
+        "Fac_Eye_R_Wink",
+        "Fac_Eye_HalfClose",
+        "Fac_Eye_Sad",
+        "Fac_Eye_Angry",
+        "Fac_Eye_MidUp",
+        "Fac_Eye_MidDown",
+        "Fac_Eye_LowlidUp",
+        "Fac_Ebr_Up",
+        "Fac_Ebr_Down",
+        "Fac_Ebr_Angry",
+        "Fac_Ebr_Sad",
+        "Fac_Ebr_Relax",
+        "Fac_Mth_Aa",
+        "Fac_Mth_Ii",
+        "Fac_Mth_Uu",
+        "Fac_Mth_Ee",
+        "Fac_Mth_Oo",
+        "Fac_Mth_Talk",
+        "Fac_Mth_Laugh",
+        "Fac_Mth_Shout",
+        "Fac_Mth_Triangle",
+        "Fac_Mth_Smile",
+        "Fac_Mth_Open",
+        "Fac_Mth_L_Up",
+        "Fac_Mth_L_Down",
+        "Fac_Mth_L_In",
+        "Fac_Mth_L_Out",
+        "Fac_Mth_R_Up",
+        "Fac_Mth_R_Down",
+        "Fac_Mth_R_In",
+        "Fac_Mth_R_Out",
+        "Fac_Pupil_Heart",
+        "Fac_Pupil_Dilate",
+        "Fac_Eye_Gloss",
+        "Fac_Tear_Sheen",
+        "Fac_Blush",
+        "Fac_Blush_Spread"
+      ],
+      "animations": [
+        {
+          "name": "Animation",
+          "channels": 163,
+          "samplers": [
+            {
+              "keys": 49,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "LINEAR"
+            },
+            {
+              "keys": 49,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "LINEAR"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 49,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "LINEAR"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 49,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "LINEAR"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 49,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "LINEAR"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 49,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "LINEAR"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 49,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "LINEAR"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 49,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "LINEAR"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 49,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "LINEAR"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 2,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "STEP"
+            },
+            {
+              "keys": 49,
+              "t_min": 0.0,
+              "t_max": 2.0,
+              "interpolation": "LINEAR"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "_workdir": "/home/phaedrus/.local/share/pax/hand-animation-h0h1-20261127/h2-gate"
+}

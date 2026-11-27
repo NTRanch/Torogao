@@ -1,0 +1,16 @@
+{
+  "raw_md5": [
+    "340432ce55583c43b3db59eda8c57abe",
+    "82726e397c425580747d19badc66bbee"
+  ],
+  "stripped_md5": [
+    "5097470d576bc13c4a79f0003b471a33",
+    "5097470d576bc13c4a79f0003b471a33"
+  ],
+  "raw_equal": false,
+  "stripped_equal": true,
+  "sizes": [
+    112258,
+    112258
+  ]
+}
