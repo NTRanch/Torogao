@@ -22,10 +22,13 @@
 //! is an optimisation, never a behaviour change.
 //!
 //! Eligibility, exactly:
-//! - The layer's light must be inactive. Lit layers
-//!   (Rung 4 shadow receive / light response) pack on
-//!   the CPU; the kernel transcribes the unlit
-//!   projection only.
+//! - The layer's light must not carry a shadow map.
+//!   The Rung 4 light RESPONSE (grade + world tint)
+//!   is transcribed by the projection kernel and a
+//!   response-only lit layer routes like an unlit
+//!   one; the shadow factor stays host-side, so a
+//!   shadow-receiving layer packs on the CPU exactly
+//!   as before the response was transcribed.
 //! - Layer rotation is fine, and has its own kernel:
 //!   when a rotation binary is configured (see
 //!   below), the Mojo rotation kernel
@@ -125,7 +128,7 @@ use crate::splat_rotate::{Rotation, ShRotation, is_identity_quat};
 const ALPHA_CULL: f32 = 1.0 / 255.0;
 /// Header bytes before the record stream (the kernel
 /// source's contract).
-const HEADER_BYTES: usize = 368;
+const HEADER_BYTES: usize = 480;
 /// One resident record's bytes (`GpuSplatRecord`).
 const RECORD_BYTES: usize = 256;
 /// One projected output record's bytes.
@@ -201,15 +204,20 @@ impl MojoRoute {
 /// the CPU reference, whose result is identical by
 /// the bit-exactness gate.
 ///
-/// The layer must be unlit; this function has no
-/// light parameter because the kernel transcribes
-/// the unlit projection only (see the module docs).
+/// The layer's light must not carry a shadow map:
+/// the kernel transcribes the projection plus the
+/// light RESPONSE (see the module docs), and the
+/// caller declines shadow-carrying lights before
+/// reaching here. A `light` with no response stages
+/// the response flag clear and the kernel skips the
+/// hook whole, exactly as the CPU pack does.
 pub fn project_splats_mojo(
     cloud: &SplatCloud,
     transform: &SplatTransform,
     scene: &ArcScene,
     width: u32,
     height: u32,
+    light: &SplatLight<'_>,
     route: &MojoRoute,
 ) -> Option<Vec<SplatProjection>> {
     let count = cloud.splats.len();
@@ -219,7 +227,7 @@ pub fn project_splats_mojo(
     let view_proj = projection(scene).multiply(scene.view);
     let camera_world = scene.view.inverse();
     let cam = camera_world.translation();
-    let mut uniforms = [0.0_f64; 44];
+    let mut uniforms = [0.0_f64; 58];
     uniforms[0..16].copy_from_slice(&scene.view.m);
     uniforms[16..32].copy_from_slice(&view_proj.m);
     uniforms[32..35].copy_from_slice(&[cam.x, cam.y, cam.z]);
@@ -230,6 +238,24 @@ pub fn project_splats_mojo(
     uniforms[41] = scene.near;
     uniforms[42] = f64::from(width);
     uniforms[43] = f64::from(height);
+    // The Rung 4 light response block (uniforms
+    // 44..58): flag, grade rows, world mix, and the
+    // scene's world colour widened from f32 — the
+    // exact values `LightResponse::apply` consumes
+    // on the CPU path. No response: the flag stays
+    // 0.0 and the rest of the block stays zeroed.
+    if let Some(response) = &light.response {
+        uniforms[44] = 1.0;
+        for i in 0..3 {
+            for j in 0..3 {
+                uniforms[45 + i * 3 + j] = response.grade[i][j];
+            }
+        }
+        uniforms[54] = response.world_mix;
+        for i in 0..3 {
+            uniforms[55 + i] = f64::from(scene.world[i]);
+        }
+    }
 
     // The persistent worker, when one is configured,
     // is offered the pack first (see the module docs):
@@ -334,18 +360,18 @@ fn parse_projected(kernel_bytes: &[u8], count: usize) -> Option<Vec<SplatProject
 }
 
 /// The projection kernel's input header (the kernel
-/// source's contract): the splat count, the 44
+/// source's contract): the splat count, the 58
 /// uniforms, and the alpha-cull bit pattern, in a
-/// zeroed 368-byte block. Written identically by the
+/// zeroed 480-byte block. Written identically by the
 /// per-invocation file protocol and the worker
 /// protocol.
-fn project_input_header(count: usize, uniforms: &[f64; 44]) -> [u8; HEADER_BYTES] {
+fn project_input_header(count: usize, uniforms: &[f64; 58]) -> [u8; HEADER_BYTES] {
     let mut header = [0u8; HEADER_BYTES];
     header[0..8].copy_from_slice(&(count as u64).to_le_bytes());
     for (k, v) in uniforms.iter().enumerate() {
         header[8 + k * 8..16 + k * 8].copy_from_slice(&v.to_le_bytes());
     }
-    header[360..364].copy_from_slice(&ALPHA_CULL.to_bits().to_le_bytes());
+    header[472..476].copy_from_slice(&ALPHA_CULL.to_bits().to_le_bytes());
     header
 }
 
@@ -387,7 +413,7 @@ fn rotate_input_header(count: usize, rotation: &Rotation) -> Vec<u8> {
 fn project_via_worker(
     cloud: &SplatCloud,
     transform: &SplatTransform,
-    uniforms: &[f64; 44],
+    uniforms: &[f64; 58],
     route: &MojoRoute,
 ) -> Option<Vec<SplatProjection>> {
     let count = cloud.splats.len();
@@ -481,7 +507,7 @@ fn stage_and_run(
     route: &MojoRoute,
     call_dir: &std::path::Path,
     count: usize,
-    uniforms: &[f64; 44],
+    uniforms: &[f64; 58],
     record_bytes: &[u8],
 ) -> Option<Vec<u8>> {
     std::fs::create_dir_all(call_dir).ok()?;
@@ -795,11 +821,13 @@ fn worker_request(
 
 /// Pack a splat layer, taking the Mojo desktop route
 /// when one is configured and the layer is eligible
-/// (unlit), and the CPU reference otherwise — the
-/// packet is identical either way, by the route's
-/// bit-exactness gate. This is the pack entry the
-/// spec compiler (`crate::splat_spec`) uses, so a
-/// configured route serves every desktop pre-pack.
+/// (its light carries no shadow map — a light
+/// response is fine, the kernel applies it), and the
+/// CPU reference otherwise — the packet is identical
+/// either way, by the route's bit-exactness gate.
+/// This is the pack entry the spec compiler
+/// (`crate::splat_spec`) uses, so a configured route
+/// serves every desktop pre-pack.
 pub fn pack_splats_mojo(
     cloud: &SplatCloud,
     transform: &SplatTransform,
@@ -810,9 +838,9 @@ pub fn pack_splats_mojo(
     route: Option<&MojoRoute>,
 ) -> PackedSplats {
     if let Some(route) = route {
-        if !light.is_active() {
+        if light.shadow.is_none() {
             if let Some(projected) =
-                project_splats_mojo(cloud, transform, scene, width, height, route)
+                project_splats_mojo(cloud, transform, scene, width, height, light, route)
             {
                 return crate::splat::emit_quads(&projected, width, height);
             }
@@ -1008,18 +1036,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A lit layer never invokes the kernel binary:
-    /// proven with a stand-in "binary" that records
-    /// its invocation in a marker file. The unlit
-    /// control case does invoke it (and then falls
-    /// back, because the stand-in writes no output).
+    /// The marker-binary route the light tests share:
+    /// a stand-in "kernel" that records its invocation
+    /// in a marker file and writes no output, so any
+    /// pack that reaches it falls back to the CPU
+    /// reference — the marker is what proves whether
+    /// the route attempted the kernel at all.
     #[cfg(unix)]
-    #[test]
-    fn lit_layer_never_invokes_the_kernel() {
+    fn marker_route(dir: &std::path::Path) -> (MojoRoute, PathBuf) {
         use std::os::unix::fs::PermissionsExt;
-        let dir =
-            std::env::temp_dir().join(format!("torogao-mojo-route-lit-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("temp dir");
+        std::fs::create_dir_all(dir).expect("temp dir");
         let marker = dir.join("invoked");
         let fake_bin = dir.join("fake-kernel.sh");
         std::fs::write(
@@ -1029,39 +1055,135 @@ mod tests {
         .expect("write fake kernel");
         std::fs::set_permissions(&fake_bin, std::fs::Permissions::from_mode(0o755))
             .expect("chmod fake kernel");
-        let route = MojoRoute {
-            project_bin: fake_bin,
-            rotate_bin: None,
-            worker_bin: None,
-            device_id: 0,
-            work_dir: dir.join("work"),
-        };
+        (
+            MojoRoute {
+                project_bin: fake_bin,
+                rotate_bin: None,
+                worker_bin: None,
+                device_id: 0,
+                work_dir: dir.join("work"),
+            },
+            marker,
+        )
+    }
+
+    /// The response the light tests grade with: an
+    /// identity grade at a quarter world mix — the
+    /// shape the pre-response test used, kept so the
+    /// eligibility change is what the tests measure.
+    fn test_response() -> LightResponse {
+        LightResponse {
+            grade: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            world_mix: 0.25,
+        }
+    }
+
+    /// A shadow-carrying layer never invokes the
+    /// kernel binary: the shadow factor stays
+    /// host-side (kernel candidate #1's scope), so a
+    /// light with a shadow map declines the route
+    /// whole — even when it also names a response.
+    /// (This replaces the adoption's
+    /// `lit_layer_never_invokes_the_kernel`, whose
+    /// response-only subject is eligible since the
+    /// response transcription; the never-invokes
+    /// invariant now belongs to the shadow.)
+    #[cfg(unix)]
+    #[test]
+    fn shadow_layer_never_invokes_the_kernel() {
+        use crate::math::Mat4;
+        use crate::splat_light::SplatShadowMap;
+        let dir =
+            std::env::temp_dir().join(format!("torogao-mojo-route-lit-{}", std::process::id()));
+        let (route, marker) = marker_route(&dir);
         let cloud = room_corner_cloud();
         let scene = test_scene();
         let transform = SplatTransform::default();
 
-        // Unlit control: the route tries the kernel.
+        // Control: the unlit pack tries the kernel.
         let unlit = SplatLight::default();
         let _ = pack_splats_mojo(&cloud, &transform, &scene, 512, 640, &unlit, Some(&route));
         assert!(marker.exists(), "unlit pack must invoke the kernel binary");
         std::fs::remove_file(&marker).expect("clear marker");
 
-        // Lit: the route must not touch the binary.
+        // Shadow-carrying (with a response named too):
+        // the route must not touch the binary.
+        let map = SplatShadowMap::rasterise(&[], Mat4::IDENTITY, 64);
         let lit = SplatLight {
-            shadow: None,
-            response: Some(LightResponse {
-                grade: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-                world_mix: 0.25,
-            }),
+            shadow: Some(&map),
+            response: Some(test_response()),
         };
         let via_route = pack_splats_mojo(&cloud, &transform, &scene, 512, 640, &lit, Some(&route));
         assert!(
             !marker.exists(),
-            "lit pack must not invoke the kernel binary"
+            "shadow-carrying pack must not invoke the kernel binary"
         );
         let cpu = pack_splats_lit(&cloud, &transform, &scene, 512, 640, &lit);
         assert_eq!(via_route, cpu);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A response-only lit layer DOES take the route
+    /// since the response transcription (kernel
+    /// candidate #1): with a stand-in binary that
+    /// writes no output, the pack attempts the kernel
+    /// (marker present) and falls back to the CPU
+    /// reference, packet-equal to the direct lit pack.
+    #[cfg(unix)]
+    #[test]
+    fn response_only_layer_invokes_and_falls_back() {
+        let dir = std::env::temp_dir().join(format!(
+            "torogao-mojo-route-response-{}",
+            std::process::id()
+        ));
+        let (route, marker) = marker_route(&dir);
+        let cloud = room_corner_cloud();
+        let scene = test_scene();
+        let transform = SplatTransform::default();
+        let lit = SplatLight {
+            shadow: None,
+            response: Some(test_response()),
+        };
+        let via_route = pack_splats_mojo(&cloud, &transform, &scene, 512, 640, &lit, Some(&route));
+        assert!(
+            marker.exists(),
+            "response-only pack must attempt the kernel binary"
+        );
+        let cpu = pack_splats_lit(&cloud, &transform, &scene, 512, 640, &lit);
+        assert_eq!(via_route, cpu);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A configured route whose binary does not exist
+    /// falls back to the CPU reference for a
+    /// response-only lit layer, packet-equal to the
+    /// direct lit pack.
+    #[test]
+    fn missing_binary_with_response_falls_back_to_cpu() {
+        let cloud = room_corner_cloud();
+        let scene = test_scene();
+        let route = MojoRoute {
+            project_bin: PathBuf::from("/nonexistent/splat_project"),
+            rotate_bin: None,
+            worker_bin: None,
+            device_id: 0,
+            work_dir: std::env::temp_dir().join("torogao-mojo-route-test"),
+        };
+        let lit = SplatLight {
+            shadow: None,
+            response: Some(test_response()),
+        };
+        let via_route = pack_splats_mojo(
+            &cloud,
+            &SplatTransform::default(),
+            &scene,
+            512,
+            640,
+            &lit,
+            Some(&route),
+        );
+        let cpu = pack_splats_lit(&cloud, &SplatTransform::default(), &scene, 512, 640, &lit);
+        assert_eq!(via_route, cpu);
     }
 
     /// Write a fake worker (a Python script speaking

@@ -30,6 +30,16 @@
 //! marker-wrapped and must never run), and that a
 //! dead worker falls back to the per-invocation path.
 //!
+//! The lit gates (kernel candidate #1) run the same
+//! shapes with a response-only light — the grade and
+//! world tint the projection kernel now applies —
+//! against `pack_splats_lit` / `project_splats`
+//! with the same light: room-corner and full-witness
+//! through the one-shot route (the witness gate
+//! marker-wraps the projection binary, proving the
+//! kernel served the lit pack), and room-corner
+//! through the worker.
+//!
 //! The twin-render test additionally needs a Vulkan
 //! device and the toon fixture in
 //! TOROGAO_RENDER3D_TOON_FIXTURE; the full-witness
@@ -41,9 +51,9 @@ use std::path::PathBuf;
 use torogao_render3d::math::Mat4;
 use torogao_render3d::setscene::{ArcScene, plate_rig_scene};
 use torogao_render3d::splat::{
-    SplatCloud, SplatTransform, pack_splats, project_splats, room_corner_cloud,
+    SplatCloud, SplatTransform, pack_splats, pack_splats_lit, project_splats, room_corner_cloud,
 };
-use torogao_render3d::splat_light::SplatLight;
+use torogao_render3d::splat_light::{LightResponse, SplatLight};
 use torogao_render3d::splat_mojo::{MojoRoute, pack_splats_mojo, project_splats_mojo};
 
 fn route() -> MojoRoute {
@@ -165,14 +175,14 @@ fn route_matches_cpu_on_room_corner() {
             scale: 1.35,
         },
     ] {
-        let via_route = project_splats_mojo(&cloud, &transform, &scene, 512, 640, &route)
+        let light = SplatLight::default();
+        let via_route = project_splats_mojo(&cloud, &transform, &scene, 512, 640, &light, &route)
             .expect("kernel route must produce a projection");
         let cpu = project_splats(&cloud, &transform, &scene, 512, 640, None);
         assert_eq!(via_route.len(), cpu.len(), "survivor count");
         for (a, b) in via_route.iter().zip(cpu.iter()) {
             assert_eq!(a, b, "record at index {}", a.index);
         }
-        let light = SplatLight::default();
         let packed_route =
             pack_splats_mojo(&cloud, &transform, &scene, 512, 640, &light, Some(&route));
         let packed_cpu = pack_splats(&cloud, &transform, &scene, 512, 640);
@@ -439,14 +449,14 @@ fn worker_route_matches_cpu_on_room_corner() {
             scale: 1.35,
         },
     ] {
-        let via_route = project_splats_mojo(&cloud, &transform, &scene, 512, 640, &route)
+        let light = SplatLight::default();
+        let via_route = project_splats_mojo(&cloud, &transform, &scene, 512, 640, &light, &route)
             .expect("worker route must produce a projection");
         let cpu = project_splats(&cloud, &transform, &scene, 512, 640, None);
         assert_eq!(via_route.len(), cpu.len(), "survivor count");
         for (a, b) in via_route.iter().zip(cpu.iter()) {
             assert_eq!(a, b, "record at index {}", a.index);
         }
-        let light = SplatLight::default();
         let packed_route =
             pack_splats_mojo(&cloud, &transform, &scene, 512, 640, &light, Some(&route));
         let packed_cpu = pack_splats(&cloud, &transform, &scene, 512, 640);
@@ -606,4 +616,123 @@ fn worker_death_falls_back_to_one_shot() {
         "the per-invocation path must have served the fallback packs"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The lit gates' response (kernel candidate #1):
+/// cross-channel terms and negative entries (the
+/// clamp path) at an interior world mix — the same
+/// response the bench harness's `--lit` gate stages.
+fn lit_light() -> SplatLight<'static> {
+    SplatLight {
+        shadow: None,
+        response: Some(LightResponse {
+            grade: [[1.08, 0.02, -0.03], [0.01, 0.94, 0.04], [-0.02, 0.05, 1.12]],
+            world_mix: 0.35,
+        }),
+    }
+}
+
+/// A response-only lit layer through the route,
+/// identity and rotated: the projection equals the
+/// CPU reference's lit projection record-for-record
+/// and the packet equals the direct lit pack's —
+/// the kernel applies the grade + world tint the
+/// CPU path applies (kernel candidate #1).
+#[test]
+#[ignore = "needs the Mojo kernel binary + GPU; see file docs"]
+fn route_matches_cpu_on_room_corner_lit() {
+    let route = route();
+    let cloud = room_corner_cloud();
+    let scene = proving_scene();
+    let light = lit_light();
+    for transform in [
+        SplatTransform::default(),
+        SplatTransform {
+            translation: [0.25, -0.1, 0.4],
+            rotation: tilted_rotation(),
+            scale: 1.35,
+        },
+    ] {
+        let via_route = project_splats_mojo(&cloud, &transform, &scene, 512, 640, &light, &route)
+            .expect("kernel route must produce a lit projection");
+        let cpu = project_splats(&cloud, &transform, &scene, 512, 640, Some(light));
+        assert_eq!(via_route.len(), cpu.len(), "lit survivor count");
+        for (a, b) in via_route.iter().zip(cpu.iter()) {
+            assert_eq!(a, b, "lit record at index {}", a.index);
+        }
+        let packed_route =
+            pack_splats_mojo(&cloud, &transform, &scene, 512, 640, &light, Some(&route));
+        let packed_cpu = pack_splats_lit(&cloud, &transform, &scene, 512, 640, &light);
+        assert_eq!(packed_route, packed_cpu, "lit packet equality");
+    }
+}
+
+/// The full witness LIT (response-only) through the
+/// one-shot route: the packet equals the direct lit
+/// pack's byte for byte, and the projection binary
+/// is marker-wrapped so the gate proves the kernel
+/// served the lit pack rather than silently falling
+/// back to the CPU path it must equal. The worker is
+/// forced off so the one-shot path is the one judged
+/// (the worker's lit service is gated separately).
+#[cfg(unix)]
+#[test]
+#[ignore = "needs the Mojo kernel binary + GPU + the bonsai witness ply"]
+fn route_matches_cpu_on_full_witness_lit() {
+    let real_project =
+        PathBuf::from(std::env::var("TOROGAO_MOJO_PROJECT_BIN").expect("kernel binary env var"));
+    let dir = std::env::temp_dir().join(format!(
+        "torogao-mojo-route-lit-witness-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let oneshot_runs = dir.join("oneshot-runs");
+    let mut route = route();
+    route.worker_bin = None;
+    route.project_bin = marker_wrapper(&dir, "project-wrapper.sh", &real_project, &oneshot_runs);
+
+    let cloud = load_witness();
+    let scene = witness_scene(&cloud);
+    let transform = SplatTransform::default();
+    let light = lit_light();
+    let via_route = pack_splats_mojo(&cloud, &transform, &scene, 512, 640, &light, Some(&route));
+    assert!(
+        marker_count(&oneshot_runs) >= 1,
+        "the projection kernel must have served the lit pack"
+    );
+    let cpu = pack_splats_lit(&cloud, &transform, &scene, 512, 640, &light);
+    assert_eq!(
+        via_route.splat_count, cpu.splat_count,
+        "lit witness survivor count"
+    );
+    assert_eq!(via_route, cpu, "lit full-witness packet equality");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A response-only lit layer through the persistent
+/// worker, identity and rotated (the fused request):
+/// the packets equal the direct lit pack's — the
+/// worker's imported projection kernel applies the
+/// same response (kernel candidate #1).
+#[test]
+#[ignore = "needs the Mojo worker binary + GPU; see file docs"]
+fn worker_route_matches_cpu_on_room_corner_lit() {
+    let route = route();
+    assert!(route.worker_bin.is_some(), "worker binary env var");
+    let cloud = room_corner_cloud();
+    let scene = proving_scene();
+    let light = lit_light();
+    for transform in [
+        SplatTransform::default(),
+        SplatTransform {
+            translation: [0.25, -0.1, 0.4],
+            rotation: tilted_rotation(),
+            scale: 1.35,
+        },
+    ] {
+        let packed_route =
+            pack_splats_mojo(&cloud, &transform, &scene, 512, 640, &light, Some(&route));
+        let packed_cpu = pack_splats_lit(&cloud, &transform, &scene, 512, 640, &light);
+        assert_eq!(packed_route, packed_cpu, "worker lit packet equality");
+    }
 }

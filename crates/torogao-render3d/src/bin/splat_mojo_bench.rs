@@ -3,9 +3,13 @@
 //! (`splat::project_splats`, the projection half of the pack) and
 //! the Mojo GPU kernel in `mojo/splat_project.mojo` over the same
 //! input — the bonsai production fixture under the bench's plate
-//! config A (512x640, identity layer transform, unlit) — and gates
+//! config A (512x640, identity layer transform) — and gates
 //! the kernel's output against the CPU reference record-for-record,
-//! bitwise, per asset index.
+//! bitwise, per asset index. Default is unlit (config A); `--lit`
+//! names the kernel-candidate-#1 light response (a non-trivial
+//! grade + interior world mix against the scene's own world
+//! colour) on both sides, so the same gate judges the response
+//! transcription at full scale.
 //!
 //! The kernel's input contract is the crate's own resident record
 //! (`splat_gpu::frame_records`): opacity and scales pre-activated
@@ -17,7 +21,7 @@
 //! Usage:
 //!   splat-mojo-bench --ply PATH --mojo-bin PATH --work DIR
 //!                    [--reps N] [--kernel-reps N] [--device-id N]
-//!                    [--limit N]
+//!                    [--limit N] [--lit]
 //!
 //! Writes `inputs.bin` / `expected.bin` / `kernel-out.bin` into
 //! the work dir and prints one fact per line (CPU median, kernel
@@ -31,13 +35,21 @@ use torogao_render3d::math::Mat4;
 use torogao_render3d::setscene::{ArcScene, plate_rig_scene, projection};
 use torogao_render3d::splat::{SplatCloud, SplatProjection, SplatTransform, project_splats};
 use torogao_render3d::splat_gpu::frame_records;
+use torogao_render3d::splat_light::{LightResponse, SplatLight};
 
 const WIDTH: u32 = 512;
 const HEIGHT: u32 = 640;
 /// The pack's alpha cull (`splat.rs` ALPHA_CULL, f32).
 const ALPHA_CULL: f32 = 1.0 / 255.0;
 /// Header bytes before the record stream (see the Mojo source).
-const HEADER_BYTES: usize = 368;
+const HEADER_BYTES: usize = 480;
+/// The `--lit` gate's response: cross-channel terms and
+/// negative entries (the clamp path) with an interior
+/// world mix, so every term of `LightResponse::apply`
+/// is exercised at full scale. The world colour is the
+/// bench scene's own, read from the scene at run time.
+const LIT_GRADE: [[f64; 3]; 3] = [[1.08, 0.02, -0.03], [0.01, 0.94, 0.04], [-0.02, 0.05, 1.12]];
+const LIT_WORLD_MIX: f64 = 0.35;
 /// Output record stride (see the Mojo source).
 const OUT_BYTES: usize = 96;
 
@@ -240,10 +252,11 @@ fn main() -> ExitCode {
     ) else {
         eprintln!(
             "usage: splat-mojo-bench --ply PATH --mojo-bin PATH --work DIR \
-             [--reps N] [--kernel-reps N] [--device-id N] [--limit N]"
+             [--reps N] [--kernel-reps N] [--device-id N] [--limit N] [--lit]"
         );
         return ExitCode::FAILURE;
     };
+    let lit = args.iter().any(|a| a == "--lit");
     let reps: usize = arg_value(&args, "--reps")
         .and_then(|v| v.parse().ok())
         .unwrap_or(5);
@@ -277,17 +290,38 @@ fn main() -> ExitCode {
         "the Mojo prototype covers identity layer rotation only"
     );
 
+    // The light both sides apply in `--lit` mode: the
+    // response against the scene's own world colour.
+    let light = if lit {
+        Some(SplatLight {
+            shadow: None,
+            response: Some(LightResponse {
+                grade: LIT_GRADE,
+                world_mix: LIT_WORLD_MIX,
+            }),
+        })
+    } else {
+        None
+    };
+    if lit {
+        println!(
+            "lit mode: grade {LIT_GRADE:?}, world_mix {LIT_WORLD_MIX}, world {:?}",
+            scene.world
+        );
+    }
+
     // CPU reference: the projection half of the pack, timed.
     let mut cpu_times = Vec::new();
     let mut projected = Vec::new();
     for _ in 0..reps {
         let t = Instant::now();
-        projected = project_splats(&cloud, &transform, &scene, WIDTH, HEIGHT, None);
+        projected = project_splats(&cloud, &transform, &scene, WIDTH, HEIGHT, light);
         cpu_times.push(t.elapsed().as_secs_f64() * 1e3);
     }
     let cpu_median = median(cpu_times.clone());
     println!(
-        "cpu project_splats: median {:.1} ms over {} reps ({} survivors)",
+        "cpu project_splats{}: median {:.1} ms over {} reps ({} survivors)",
+        if lit { " (lit)" } else { "" },
         cpu_median,
         reps,
         projected.len()
@@ -318,7 +352,7 @@ fn main() -> ExitCode {
 
     // Kernel inputs: header + the crate's resident records.
     let view_proj = projection(&scene).multiply(scene.view);
-    let mut uniforms = [0.0_f64; 44];
+    let mut uniforms = [0.0_f64; 58];
     uniforms[0..16].copy_from_slice(&scene.view.m);
     uniforms[16..32].copy_from_slice(&view_proj.m);
     uniforms[32..35].copy_from_slice(&eye);
@@ -329,6 +363,21 @@ fn main() -> ExitCode {
     uniforms[41] = scene.near;
     uniforms[42] = f64::from(WIDTH);
     uniforms[43] = f64::from(HEIGHT);
+    // The response block, staged exactly as the route
+    // stages it (splat_mojo.rs): flag, grade, mix, world.
+    if let Some(light) = &light {
+        let response = light.response.expect("lit mode names a response");
+        uniforms[44] = 1.0;
+        for i in 0..3 {
+            for j in 0..3 {
+                uniforms[45 + i * 3 + j] = response.grade[i][j];
+            }
+        }
+        uniforms[54] = response.world_mix;
+        for i in 0..3 {
+            uniforms[55 + i] = f64::from(scene.world[i]);
+        }
+    }
 
     let records = frame_records(&cloud);
     let record_bytes: &[u8] = bytemuck::cast_slice(&records);
@@ -344,7 +393,7 @@ fn main() -> ExitCode {
         for (k, v) in uniforms.iter().enumerate() {
             header[8 + k * 8..16 + k * 8].copy_from_slice(&v.to_le_bytes());
         }
-        header[360..364].copy_from_slice(&ALPHA_CULL.to_bits().to_le_bytes());
+        header[472..476].copy_from_slice(&ALPHA_CULL.to_bits().to_le_bytes());
         f.write_all(&header).expect("write header");
         f.write_all(record_bytes).expect("write records");
     }

@@ -26,10 +26,10 @@
 # src/splat_mojo.rs is the only client):
 #   Request:  [u64 payload_len][u8 kind][payload]
 #     kind 1 (PROJECT): payload is byte-identical to the
-#       input file splat_project.mojo reads (368-byte header +
+#       input file splat_project.mojo reads (480-byte header +
 #       N x 256-byte records).
 #     kind 2 (ROTATE_PROJECT): payload is the 776-byte
-#       splat_rotate header, then the 368-byte splat_project
+#       splat_rotate header, then the 480-byte splat_project
 #       header, then the N x 256-byte records (both headers'
 #       counts must agree). The rotation kernel's output feeds
 #       the projection kernel device-side.
@@ -257,7 +257,7 @@ def main() raises:
             var proj_hdr = pp.unsafe_offset(
                 records_off - PROJ_HEADER_BYTES
             )
-            var alpha_cull = read_f32(proj_hdr, 360)
+            var alpha_cull = read_f32(proj_hdr, 472)
             with dev_uni.map_to_host() as mapped:
                 for k in range(PROJ_UNIFORM_COUNT):
                     mapped[k] = read_f64(proj_hdr, 8 + k * 8)

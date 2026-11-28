@@ -11,7 +11,7 @@
 # Input file (little-endian, written by the Rust harness
 # `splat_mojo_bench` in the same crate):
 #   [0..8)     u64  splat count N (1 <= N <= 2^31)
-#   [8..360)   44 x f64 uniforms:
+#   [8..472)   58 x f64 uniforms:
 #                [0..16)  view matrix m (column-major, m[j*4+i])
 #                [16..32) view-projection matrix m (same layout)
 #                [32..35) camera position (world)
@@ -20,8 +20,13 @@
 #                [39]     tan_half_x   [40] tan_half_y
 #                [41]     near plane   [42] width px (as f64)
 #                [43]     height px (as f64)
-#   [360..364) u32  bit pattern of the f32 alpha-cull threshold
-#   [368..)    N x 256-byte GpuSplatRecord (the crate's own resident
+#                [44]     light-response flag (0.0 = no response,
+#                         hook skipped whole; 1.0 = apply [45..58))
+#                [45..54) response grade, row-major 3x3
+#                [54]     response world_mix
+#                [55..58) scene world colour (f32 widened to f64)
+#   [472..476) u32  bit pattern of the f32 alpha-cull threshold
+#   [480..)    N x 256-byte GpuSplatRecord (the crate's own resident
 #              record layout: opacity and scales PRE-ACTIVATED on the
 #              host by the pack's own functions, so this kernel needs
 #              no transcendentals and every operation is IEEE-exact
@@ -33,9 +38,12 @@
 # Culled splats carry culled=1 (their remaining fields are not
 # written and carry no meaning).
 #
-# Scope: identity layer rotation, unlit (the bench's config A — the
-# twin-witness configuration). Layer rotation and Rung-4 light are
-# host-side / separate paths in the CPU pack and are out of scope here.
+# Scope: the projection plus, when the header's response flag is
+# set, the Rung-4 light RESPONSE (grade + world tint, transcribed
+# from splat_light.rs `LightResponse::apply`). Layer rotation is
+# host-side or the rotate kernel's; the Rung-4 SHADOW factor stays
+# host-side — a light carrying a shadow map never reaches this
+# kernel (the route declines it), by the candidate-1 scope.
 #
 # Determinism: every arithmetic expression below transcribes the
 # Rust source's association order exactly (sums fold in index order,
@@ -75,10 +83,10 @@ comptime SH_C3_6 = -0.5900435899266435
 comptime COV_DILATION_PX2 = 0.3
 comptime QUAD_SIGMAS = 3.0
 
-comptime HEADER_BYTES = 368
+comptime HEADER_BYTES = 480
 comptime RECORD_BYTES = 256
 comptime OUT_BYTES = 96
-comptime UNIFORM_COUNT = 44
+comptime UNIFORM_COUNT = 58
 
 
 def parse_nonnegative_int(s: String) raises -> Int:
@@ -460,6 +468,53 @@ def project_kernel(
         else:
             col2 = Float32(v)
 
+    # Rung 4 light response, when the header names one (uniform
+    # [44] != 0): splat_light.rs `LightResponse::apply` transcribed
+    # term-for-term — the f32 SH colour widened back to f64, the
+    # grade folded left-to-right per row, the world tint
+    # (1 - mix) + mix * world[i] per channel, the product clamped
+    # below at zero like the source's `.max(0.0)` (the clamp form
+    # matches the SH clamp above; NaN cannot arise from a
+    # spec-validated grade/mix and finite colour), the result cast
+    # to f32. Skipped whole when no response is named, exactly as
+    # the CPU pack skips the hook. The shadow factor is NOT here:
+    # it stays host-side and shadow-carrying lights never route.
+    if uni.unsafe_offset(44).unsafe_load() != 0.0:
+        var mix = uni.unsafe_offset(54).unsafe_load()
+        var rc0 = Float64(col0)
+        var rc1 = Float64(col1)
+        var rc2 = Float64(col2)
+        var o0 = (
+            uni.unsafe_offset(45).unsafe_load() * rc0
+            + uni.unsafe_offset(46).unsafe_load() * rc1
+            + uni.unsafe_offset(47).unsafe_load() * rc2
+        ) * (
+            (1.0 - mix) + mix * uni.unsafe_offset(55).unsafe_load()
+        )
+        var o1 = (
+            uni.unsafe_offset(48).unsafe_load() * rc0
+            + uni.unsafe_offset(49).unsafe_load() * rc1
+            + uni.unsafe_offset(50).unsafe_load() * rc2
+        ) * (
+            (1.0 - mix) + mix * uni.unsafe_offset(56).unsafe_load()
+        )
+        var o2 = (
+            uni.unsafe_offset(51).unsafe_load() * rc0
+            + uni.unsafe_offset(52).unsafe_load() * rc1
+            + uni.unsafe_offset(53).unsafe_load() * rc2
+        ) * (
+            (1.0 - mix) + mix * uni.unsafe_offset(57).unsafe_load()
+        )
+        if o0 < 0.0:
+            o0 = 0.0
+        if o1 < 0.0:
+            o1 = 0.0
+        if o2 < 0.0:
+            o2 = 0.0
+        col0 = Float32(o0)
+        col1 = Float32(o1)
+        col2 = Float32(o2)
+
     store_f64(outb, obase + 0, centre_px0)
     store_f64(outb, obase + 8, centre_px1)
     store_f64(outb, obase + 16, radii0)
@@ -503,7 +558,7 @@ def main() raises:
     if len(bytes_in) != HEADER_BYTES + in_bytes:
         raise Error("input length does not match the header count")
 
-    var alpha_cull = read_f32(bytes_in.unsafe_ptr(), 360)
+    var alpha_cull = read_f32(bytes_in.unsafe_ptr(), 472)
 
     with DeviceContext(device_id=device_id) as ctx:
         print("device:", ctx.name())

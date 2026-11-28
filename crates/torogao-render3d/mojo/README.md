@@ -63,8 +63,11 @@ specified in the header comment of
 pre-activated on the host by the pack's own
 functions, so the kernel needs no transcendentals;
 every operation is IEEE `+ - * / sqrt` on f64.
-Eligibility: unlit layers only (the Rung 4 light
-interaction packs on the CPU); layer rotation runs
+Eligibility: layers whose light carries no shadow
+map (the Rung 4 light response is transcribed by
+the projection kernel; the shadow factor stays
+host-side, so shadow-receiving layers pack on the
+CPU); layer rotation runs
 on the GPU rotation kernel (below) when one is
 configured, and otherwise host-side by the pack's
 own `rotate_cloud`, exactly as the CPU path applies
