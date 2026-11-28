@@ -1,0 +1,189 @@
+// Torogao Mobile — the Rig screen (Commission C).
+//
+// The phone edits a character RECORD (torogao-character/1);
+// derivation is a job on primo behind the facade, never a
+// slider drag (the parametric body layer is design-only —
+// ARCHITECTURE §5). Gate order is the design: with no Step 0
+// identity lock the Derive button is disabled and the screen
+// says why; art origination on the Generate screen is not
+// gated by the lock and is not this screen's business.
+//
+// Verdict language follows Rule 9: a derivation whose gates
+// all passed (plus a deterministic twin) is labelled GATED;
+// anything else is CONSTRUCTION, in those words. Expression
+// pose tests cite the morph's mechanism from the crate's
+// mechanism table next to the measured displacement — a
+// morph's name is never the evidence (Rule 10).
+
+import { Button, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+export component RigScreen inherits VerticalBox {
+    spacing: 8px;
+
+    // Record state, mirrored from torogao-mobile-rig by the shell.
+    in-out property <[string]> rig-record-names;
+    in-out property <int> rig-record-index: 0;
+    in-out property <string> rig-lock-line: "";
+    in-out property <bool> rig-can-derive: false;
+    in-out property <bool> rig-has-gated-glb: false;
+    in-out property <bool> rig-busy: false;
+    in-out property <string> rig-status: "";
+    in-out property <string> rig-verdict: "";
+    in-out property <string> rig-pose-line: "";
+    in-out property <image> rig-still;
+    in-out property <bool> rig-has-still: false;
+
+    // The knobs, as text (the shell's recipe idiom: floats
+    // travel as strings and parse in Rust, where the bounds
+    // live in the crate).
+    in-out property <string> rig-z-scale: "1.000";
+    in-out property <string> rig-radial-scale: "1.00";
+    in-out property <string> rig-bust-amp: "0.052";
+    in-out property <string> rig-waist-scale: "1.00";
+    in-out property <string> rig-hip-scale: "1.00";
+    in-out property <string> rig-hair-style: "waves";
+    in-out property <string> rig-smile-weight: "1.0";
+    in-out property <string> rig-eye-close-weight: "0.5";
+
+    callback rig-load(int);
+    callback rig-apply-params();
+    callback rig-derive();
+    callback rig-pose-test();
+    callback rig-preview();
+    callback rig-export();
+
+    Text {
+        text: "Character records";
+        color: #9a8fb5;
+        font-size: 13px;
+    }
+    HorizontalBox {
+        spacing: 8px;
+        alignment: start;
+        for name[i] in root.rig-record-names: Button {
+            text: name;
+            primary: root.rig-record-index == i;
+            clicked => {
+                root.rig-record-index = i;
+                root.rig-load(i);
+            }
+        }
+    }
+    Text {
+        text: root.rig-lock-line;
+        color: #cfc6e8;
+        font-size: 13px;
+        wrap: word-wrap;
+    }
+
+    Text {
+        text: "Body";
+        color: #9a8fb5;
+        font-size: 13px;
+    }
+    HorizontalBox {
+        spacing: 8px;
+        Text { text: "Height (z-scale)"; color: #cfc6e8; font-size: 13px; vertical-alignment: center; }
+        LineEdit { text <=> root.rig-z-scale; width: 90px; }
+        Text { text: "Radial"; color: #cfc6e8; font-size: 13px; vertical-alignment: center; }
+        LineEdit { text <=> root.rig-radial-scale; width: 70px; }
+    }
+    HorizontalBox {
+        spacing: 8px;
+        Text { text: "Bust amp (m)"; color: #cfc6e8; font-size: 13px; vertical-alignment: center; }
+        LineEdit { text <=> root.rig-bust-amp; width: 90px; }
+        Text { text: "Waist ×"; color: #cfc6e8; font-size: 13px; vertical-alignment: center; }
+        LineEdit { text <=> root.rig-waist-scale; width: 70px; }
+    }
+    HorizontalBox {
+        spacing: 8px;
+        Text { text: "Hip ×"; color: #cfc6e8; font-size: 13px; vertical-alignment: center; }
+        LineEdit { text <=> root.rig-hip-scale; width: 70px; }
+    }
+    HorizontalBox {
+        spacing: 8px;
+        Text { text: "Hair style"; color: #cfc6e8; font-size: 13px; vertical-alignment: center; }
+        LineEdit { text <=> root.rig-hair-style; width: 140px; }
+        Button {
+            text: "Apply parameters";
+            clicked => { root.rig-apply-params(); }
+        }
+    }
+
+    Text {
+        text: "Derivation (primo)";
+        color: #9a8fb5;
+        font-size: 13px;
+    }
+    HorizontalBox {
+        spacing: 8px;
+        alignment: start;
+        Button {
+            text: "Derive + run gates";
+            primary: true;
+            enabled: root.rig-can-derive && !root.rig-busy;
+            clicked => { root.rig-derive(); }
+        }
+        Button {
+            text: "Preview";
+            enabled: root.rig-has-gated-glb && !root.rig-busy;
+            clicked => { root.rig-preview(); }
+        }
+        Button {
+            text: "Export GLB";
+            enabled: root.rig-has-gated-glb && !root.rig-busy;
+            clicked => { root.rig-export(); }
+        }
+    }
+    if !root.rig-can-derive: Text {
+        text: "Derive is disabled until the Step 0 identity lock is held and its artefacts are hashed primo-side. Art generation stays available.";
+        color: #bdb2d9;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+    Text {
+        text: root.rig-verdict;
+        color: #cfc6e8;
+        font-size: 13px;
+        wrap: word-wrap;
+    }
+    if root.rig-has-still: Image {
+        source: root.rig-still;
+        width: 270px;
+        height: 324px;
+    }
+
+    Text {
+        text: "Expression pose test (on the gated GLB)";
+        color: #9a8fb5;
+        font-size: 13px;
+    }
+    HorizontalBox {
+        spacing: 8px;
+        Text { text: "Fac_Mth_Smile"; color: #cfc6e8; font-size: 13px; vertical-alignment: center; }
+        LineEdit { text <=> root.rig-smile-weight; width: 60px; }
+        Text { text: "Fac_Eye_Close"; color: #cfc6e8; font-size: 13px; vertical-alignment: center; }
+        LineEdit { text <=> root.rig-eye-close-weight; width: 60px; }
+    }
+    HorizontalBox {
+        spacing: 8px;
+        alignment: start;
+        Button {
+            text: "Pose test";
+            enabled: root.rig-has-gated-glb && !root.rig-busy;
+            clicked => { root.rig-pose-test(); }
+        }
+    }
+    Text {
+        text: root.rig-pose-line;
+        color: #bdb2d9;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+    Text {
+        text: root.rig-status;
+        color: #bdb2d9;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+}
