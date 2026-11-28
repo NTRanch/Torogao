@@ -1,0 +1,20 @@
+[package]
+name = "torogao-mobile-rig"
+version = "0.5.0"
+edition = "2024"
+license = "BSD-2-Clause"
+rust-version = "1.85"
+description = "Torogao Mobile rig lane: the torogao-character/1 record schema (identity lock, prompt identity, body/face parameters, expressions, rig and art sections), the Step 0 derive gate, the A10.1/A10.2 verdict logic, and the hash-pinned rig job documents the facade accepts (derive, pose-test, preview-render). Derivation itself is a primo builder-service job behind the facade; this crate is the record and the rules, never the solver."
+
+# Standalone-workspace marker (the torogao-accel precedent): this
+# crate builds and gates on the rig lane's branch before the
+# merge-time integration patch (integration/0001) adds it to the
+# workspace member list, drops this section, and converts the
+# package fields above to workspace inheritance.
+[workspace]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+ureq = { version = "2", features = ["json"] }
