@@ -1,0 +1,12 @@
+[Unit]
+Description=Torogao rig engine (primo builder-service adapter for the mobile facade)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/pax/torogao-rig-engine-20261127/run.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
