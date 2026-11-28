@@ -1,0 +1,1173 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index ab990ed..42756cb 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -10118,6 +10118,7 @@ dependencies = [
+  "serde",
+  "serde_json",
+  "torogao-mobile-core",
++ "torogao-mobile-rig",
+  "ureq",
+ ]
+ 
+@@ -10129,13 +10130,25 @@ dependencies = [
+  "torogao-mobile-core",
+ ]
+ 
++[[package]]
++name = "torogao-mobile-rig"
++version = "0.5.0"
++dependencies = [
++ "serde",
++ "serde_json",
++ "sha2 0.10.9",
++ "ureq",
++]
++
+ [[package]]
+ name = "torogao-mobile-slint"
+ version = "0.5.0"
+ dependencies = [
++ "serde_json",
+  "slint",
+  "slint-build",
+  "torogao-mobile-core",
++ "torogao-mobile-rig",
+ ]
+ 
+ [[package]]
+diff --git a/Cargo.toml b/Cargo.toml
+index 546425c..14667d7 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -15,6 +15,7 @@ members = [
+     "crates/torogao-mobile-slint",
+     "crates/torogao-mobile-gpui",
+     "crates/torogao-mobile-facade",
++    "crates/torogao-mobile-rig",
+     "crates/torogao-modapp",
+     "crates/torogao-motion-clip",
+     "crates/torogao-osc",
+diff --git a/crates/torogao-mobile-facade/Cargo.toml b/crates/torogao-mobile-facade/Cargo.toml
+index 2eb5a92..a14fc8d 100644
+--- a/crates/torogao-mobile-facade/Cargo.toml
++++ b/crates/torogao-mobile-facade/Cargo.toml
+@@ -10,6 +10,7 @@ description = "The governed facade in front of Torogao Mobile's generation engin
+ serde = { workspace = true }
+ serde_json = { workspace = true }
+ torogao-mobile-core = { path = "../torogao-mobile-core" }
++torogao-mobile-rig = { path = "../torogao-mobile-rig" }
+ ureq = { version = "2", features = ["json"] }
+ 
+ [[bin]]
+diff --git a/crates/torogao-mobile-facade/src/main.rs b/crates/torogao-mobile-facade/src/main.rs
+index 59a7bc9..d12e1d5 100644
+--- a/crates/torogao-mobile-facade/src/main.rs
++++ b/crates/torogao-mobile-facade/src/main.rs
+@@ -59,6 +59,8 @@
+ 
+ #![forbid(unsafe_code)]
+ 
++mod rig;
++
+ use std::collections::HashMap;
+ use std::io::{Read, Write};
+ use std::net::TcpListener;
+@@ -107,6 +109,12 @@ struct Facade {
+     engine_url: String,
+     engine_service: String,
+     outputs_dir: PathBuf,
++    /// The rig engine's base URL (rig patch 0001).
++    rig_engine_url: String,
++    /// The rig engine's user service (rig patch 0001).
++    rig_engine_service: String,
++    /// Rig jobs by facade prompt id (rig patch 0001).
++    rig_jobs: Mutex<HashMap<String, rig::RigJob>>,
+     /// The token gate's expected `X-Facade-Token` value, from
+     /// `TOROGAO_FACADE_TOKEN`; `None` = the gate is off.
+     token: Option<String>,
+@@ -154,6 +162,12 @@ fn main() {
+         .to_string();
+     let engine_service =
+         arg("--engine-service").unwrap_or_else(|| "torogao-gen-seat.service".to_string());
++    let rig_engine_url = arg("--rig-engine-url")
++        .unwrap_or_else(|| "http://127.0.0.1:8193".to_string())
++        .trim_end_matches('/')
++        .to_string();
++    let rig_engine_service =
++        arg("--rig-engine-service").unwrap_or_else(|| "torogao-rig-engine.service".to_string());
+     let state_dir = arg("--state-dir").map(PathBuf::from).unwrap_or_else(|| {
+         PathBuf::from(std::env::var("HOME").unwrap_or_default())
+             .join(".local/share/torogao-mobile-facade")
+@@ -176,6 +190,9 @@ fn main() {
+         engine_url,
+         engine_service,
+         outputs_dir,
++        rig_engine_url,
++        rig_engine_service,
++        rig_jobs: Mutex::new(HashMap::new()),
+         token,
+     });
+     let listener = match TcpListener::bind(&bind) {
+@@ -591,7 +608,14 @@ fn route(
+                 EngineState::Starting => "starting",
+                 EngineState::Down => "down",
+             };
+-            json(200, json!({"engine": engine, "seat": seat}))
++            let rig_block = rig::rig_health_block(facade);
++            json(
++                200,
++                json!({"engine": engine, "seat": seat,
++                            "capabilities": ["generate", "rig"],
++                            "rig_engine": rig_block["rig_engine"],
++                            "rig_seat": rig_block["rig_seat"]}),
++            )
+         }
+         ("POST", "/facade/wake") => {
+             wake_engine(facade);
+@@ -667,6 +691,13 @@ fn route(
+             }
+             json(200, json!({"interrupted": prompt_id}))
+         }
++        ("POST", "/rig/prompt") => rig::rig_submit(facade, headers, body),
++        ("POST", "/rig/interrupt") => rig::rig_interrupt(facade, body),
++        ("GET", p) if p.starts_with("/rig/history/") => {
++            let id = &p["/rig/history/".len()..];
++            rig::rig_history(facade, id)
++        }
++        ("GET", p) if p.starts_with("/rig/view") => view(facade, p),
+         ("GET", p) if p.starts_with("/history/") => {
+             let id = &p["/history/".len()..];
+             json(200, history_for(facade, id))
+@@ -903,6 +934,9 @@ mod tests {
+             engine_url: "http://127.0.0.1:1".to_string(),
+             engine_service: "torogao-gen-seat.service".to_string(),
+             outputs_dir: PathBuf::from("/tmp"),
++            rig_engine_url: "http://127.0.0.1:1".to_string(),
++            rig_engine_service: "torogao-rig-engine.service".to_string(),
++            rig_jobs: Mutex::new(HashMap::new()),
+             token: Some("test-token".to_string()),
+         })
+     }
+diff --git a/crates/torogao-mobile-facade/src/rig.rs b/crates/torogao-mobile-facade/src/rig.rs
+new file mode 100644
+index 0000000..e6a0eac
+--- /dev/null
++++ b/crates/torogao-mobile-facade/src/rig.rs
+@@ -0,0 +1,393 @@
++//! Rig routes — the facade's half of the rig lane
++//! (integration patch 0001; ARCHITECTURE §2/§5).
++//!
++//! The facade is the only door for rig work too: it validates
++//! rig job documents with the `torogao-mobile-rig` crate
++//! itself (hash pinning + the derive gate, seat-side, so a
++//! tampered client cannot talk the seat into an unlocked
++//! derivation), forwards them to the primo rig engine
++//! (`torogao-rig-engine`, a builder-service wrapping the
++//! gated fleet builders), and — when a derive finishes —
++//! computes the gate verdicts with the crate's gate module
++//! over the instruments' raw output, files the GLB and
++//! stills, and returns the updated record. The phone never
++//! solves and never gates; neither does the engine.
++
++use std::collections::HashMap;
++use std::sync::Arc;
++use std::time::Duration;
++
++use serde_json::{Value, json};
++use torogao_mobile_rig::gate::{derive_eligibility, judge};
++use torogao_mobile_rig::jobs::{MeasuredMorph, RigJobDocument, RigJobKind, RigJobResult};
++use torogao_mobile_rig::morphs;
++
++use crate::{ENGINE_POLL_INTERVAL, ENGINE_WAKE_DEADLINE_SECS, Facade, Reply, unix_now};
++
++/// One rig job as the facade tracks it.
++pub struct RigJob {
++    /// The validated job document.
++    doc: RigJobDocument,
++    /// Engine-side job id, once forwarded.
++    engine_id: Option<String>,
++    /// The terminal reply JSON, once assembled.
++    done: Option<Value>,
++    /// The terminal failure, when the job errored.
++    error: Option<String>,
++    /// Cancelled by the user; wins over later state writes.
++    cancelled: bool,
++}
++
++/// The rig engine's state as the facade sees it:
++/// (ready, engine id).
++fn rig_engine_state(facade: &Facade) -> (bool, String) {
++    let url = format!("{}/health", facade.rig_engine_url);
++    match ureq::get(&url).timeout(Duration::from_secs(5)).call() {
++        Ok(r) => match r.into_json::<Value>() {
++            Ok(body) => {
++                let engine = body
++                    .get("engine")
++                    .and_then(Value::as_str)
++                    .unwrap_or("unknown")
++                    .to_string();
++                let ready = body.get("model_loaded").and_then(Value::as_bool) == Some(true);
++                (ready, engine)
++            }
++            Err(_) => (false, "unknown".to_string()),
++        },
++        Err(_) => (false, "unknown".to_string()),
++    }
++}
++
++/// Start the rig engine's user service. Fire-and-forget.
++fn wake_rig_engine(facade: &Facade) {
++    let _ = std::process::Command::new("systemctl")
++        .args(["--user", "start", &facade.rig_engine_service])
++        .stdout(std::process::Stdio::null())
++        .stderr(std::process::Stdio::null())
++        .spawn();
++}
++
++/// The rig block of the health reply: engine id + seat state,
++/// plus the capabilities listing.
++pub fn rig_health_block(facade: &Facade) -> Value {
++    let (ready, engine) = rig_engine_state(facade);
++    json!({
++        "rig_engine": engine,
++        "rig_seat": if ready { "ready" } else { "down" },
++    })
++}
++
++fn set_rig_error(facade: &Facade, prompt_id: &str, message: String) {
++    if let Some(job) = facade.rig_jobs.lock().unwrap().get_mut(prompt_id) {
++        if !job.cancelled {
++            job.error = Some(message);
++        }
++    }
++}
++
++/// Hold a rig job until the rig engine is ready, then
++/// forward the document. Mirrors the gen lane's
++/// `forward_when_ready` discipline and deadline.
++fn forward_rig_when_ready(facade: Arc<Facade>, prompt_id: String, doc: RigJobDocument) {
++    let deadline = unix_now() + ENGINE_WAKE_DEADLINE_SECS;
++    loop {
++        {
++            let jobs = facade.rig_jobs.lock().unwrap();
++            match jobs.get(&prompt_id) {
++                Some(job) if !job.cancelled => {}
++                _ => return,
++            }
++        }
++        match rig_engine_state(&facade).0 {
++            true => break,
++            false => wake_rig_engine(&facade),
++        }
++        if unix_now() >= deadline {
++            set_rig_error(
++                &facade,
++                &prompt_id,
++                format!("the rig engine did not become ready within {ENGINE_WAKE_DEADLINE_SECS}s"),
++            );
++            return;
++        }
++        std::thread::sleep(ENGINE_POLL_INTERVAL);
++    }
++    let body = serde_json::to_value(&doc).unwrap_or(Value::Null);
++    let url = format!("{}/jobs", facade.rig_engine_url);
++    match ureq::post(&url)
++        .timeout(Duration::from_secs(30))
++        .send_json(body)
++    {
++        Ok(r) => match r.into_json::<Value>() {
++            Ok(v) => match v.get("id").and_then(Value::as_str) {
++                Some(id) => {
++                    if let Some(job) = facade.rig_jobs.lock().unwrap().get_mut(&prompt_id) {
++                        job.engine_id = Some(id.to_string());
++                    }
++                }
++                None => set_rig_error(
++                    &facade,
++                    &prompt_id,
++                    "rig engine reply had no job id".to_string(),
++                ),
++            },
++            Err(e) => set_rig_error(
++                &facade,
++                &prompt_id,
++                format!("unreadable rig engine reply: {e}"),
++            ),
++        },
++        Err(e) => set_rig_error(
++            &facade,
++            &prompt_id,
++            format!("rig engine refused the job: {e}"),
++        ),
++    }
++}
++
++/// `POST /rig/prompt`: validate a rig job document and queue
++/// it. The `X-Job-Sha256` header must match the document's
++/// canonical hash, the document's embedded hashes must
++/// verify, and a derive must pass the Step 0 derive gate —
++/// refusals are 400 (hash) or 422 (gate), with reasons.
++pub fn rig_submit(facade: &Arc<Facade>, headers: &HashMap<String, String>, body: &[u8]) -> Reply {
++    let json_reply = |code: u32, v: Value| Reply::Json(code, v);
++    let doc: RigJobDocument = match serde_json::from_slice(body) {
++        Ok(d) => d,
++        Err(e) => return json_reply(400, json!({"error": format!("bad job document: {e}")})),
++    };
++    let presented = headers.get("x-job-sha256").map(String::as_str);
++    if presented != Some(doc.sha256().as_str()) {
++        return json_reply(400, json!({"error": "job hash mismatch"}));
++    }
++    if !doc.verify_hashes() {
++        return json_reply(400, json!({"error": "document hashes do not verify"}));
++    }
++    if doc.kind == RigJobKind::Derive {
++        if let Err(reasons) = derive_eligibility(&doc.record) {
++            return json_reply(
++                422,
++                json!({"error": format!("derive refused: {}", reasons.join("; "))}),
++            );
++        }
++    }
++    let prompt_id = {
++        let mut next = facade.next_id.lock().unwrap();
++        let id = format!("rig-{}", *next);
++        *next += 1;
++        id
++    };
++    facade.rig_jobs.lock().unwrap().insert(
++        prompt_id.clone(),
++        RigJob {
++            doc: doc.clone(),
++            engine_id: None,
++            done: None,
++            error: None,
++            cancelled: false,
++        },
++    );
++    let f = Arc::clone(facade);
++    let pid = prompt_id.clone();
++    std::thread::spawn(move || forward_rig_when_ready(f, pid, doc));
++    json_reply(200, json!({"prompt_id": prompt_id}))
++}
++
++/// File one base64 artefact into the outputs directory;
++/// returns its file name. Names are built facade-side from
++/// the prompt id and the engine's plain file name — no
++/// traversal survives the check.
++fn file_artefact(facade: &Facade, prompt_id: &str, engine_name: &str, b64: &str) -> Option<String> {
++    if engine_name.contains('/') || engine_name.contains('\\') || engine_name.contains("..") {
++        return None;
++    }
++    let bytes = crate::base64_decode(b64)?;
++    let filename = format!("torogao_rig_{prompt_id}_{engine_name}");
++    std::fs::write(facade.outputs_dir.join(&filename), bytes).ok()?;
++    Some(filename)
++}
++
++/// Assemble the terminal reply for a finished engine job:
++/// file the artefacts, compute the verdicts (derive), and
++/// build the RigJobResult the client parses.
++fn assemble_done(facade: &Facade, prompt_id: &str, doc: &RigJobDocument, engine: &Value) -> Value {
++    let mut stills = Vec::new();
++    if let Some(list) = engine
++        .get("artifacts")
++        .and_then(|a| a.get("stills"))
++        .and_then(Value::as_array)
++    {
++        for still in list {
++            if let (Some(name), Some(b64)) = (
++                still.get("filename").and_then(Value::as_str),
++                still.get("png_base64").and_then(Value::as_str),
++            ) {
++                if let Some(filed) = file_artefact(facade, prompt_id, name, b64) {
++                    stills.push(filed);
++                }
++            }
++        }
++    }
++    let mut result = RigJobResult {
++        state: "done".to_string(),
++        ..RigJobResult::default()
++    };
++    result.stills = stills;
++    let mut glb_filename = None;
++    if doc.kind == RigJobKind::Derive {
++        if let Some(b64) = engine
++            .get("artifacts")
++            .and_then(|a| a.get("glb_base64"))
++            .and_then(Value::as_str)
++        {
++            glb_filename = file_artefact(facade, prompt_id, "gated.glb", b64);
++        }
++        let str_of = |key: &str| {
++            engine
++                .get(key)
++                .and_then(Value::as_str)
++                .unwrap_or("")
++                .to_string()
++        };
++        let gates = judge(
++            &doc.record,
++            str_of("glb_sha256"),
++            str_of("twin_sha256"),
++            str_of("builder_sha256"),
++            str_of("derived_at"),
++            engine.get("battery").unwrap_or(&Value::Null),
++            engine.get("census").unwrap_or(&Value::Null),
++        );
++        let mut updated = doc.record.clone();
++        updated.revision += 1;
++        updated.updated_at = gates.derived_at.clone();
++        if gates.is_gated() {
++            updated.rig.gated_glb_sha256 = Some(gates.derived_glb_sha256.clone());
++        }
++        updated.rig.gates = Some(gates);
++        result.record = Some(updated);
++    }
++    if doc.kind == RigJobKind::PoseTest {
++        if let Some(list) = engine.get("measured_morphs").and_then(Value::as_array) {
++            result.measured_morphs = list
++                .iter()
++                .map(|m| {
++                    let name = m.get("name").and_then(Value::as_str).unwrap_or("");
++                    MeasuredMorph {
++                        name: name.to_string(),
++                        weight: m.get("weight").and_then(Value::as_f64).unwrap_or(0.0),
++                        max_displacement_m: m
++                            .get("max_displacement_m")
++                            .and_then(Value::as_f64)
++                            .unwrap_or(0.0),
++                        mechanism: morphs::mechanism(name)
++                            .map(|mm| mm.mechanism.to_string())
++                            .unwrap_or_else(|| "no mechanism on record".to_string()),
++                    }
++                })
++                .collect();
++        }
++    }
++    let mut reply = json!({
++        "state": "done",
++        "rig": serde_json::to_value(&result).unwrap_or(Value::Null),
++    });
++    if let Some(name) = glb_filename {
++        reply["glb_filename"] = json!(name);
++    }
++    reply
++}
++
++/// `GET /rig/history/<id>`: the client's poll. Replies
++/// `{"state": "running"}` until the engine finishes, then
++/// the assembled terminal document (cached).
++pub fn rig_history(facade: &Arc<Facade>, prompt_id: &str) -> Reply {
++    let json_reply = |v: Value| Reply::Json(200, v);
++    let (doc, engine_id, done, error, cancelled) = {
++        let jobs = facade.rig_jobs.lock().unwrap();
++        match jobs.get(prompt_id) {
++            Some(job) => (
++                job.doc.clone(),
++                job.engine_id.clone(),
++                job.done.clone(),
++                job.error.clone(),
++                job.cancelled,
++            ),
++            None => {
++                return json_reply(
++                    json!({"state": "error", "rig": {"state": "error", "error": "no such job"}}),
++                );
++            }
++        }
++    };
++    if let Some(done) = done {
++        return json_reply(done);
++    }
++    if cancelled {
++        return json_reply(json!({"state": "cancelled", "rig": {"state": "cancelled"}}));
++    }
++    if let Some(error) = error {
++        return json_reply(json!({"state": "error", "rig": {"state": "error", "error": error}}));
++    }
++    let Some(engine_id) = engine_id else {
++        return json_reply(json!({"state": "running"}));
++    };
++    let url = format!("{}/jobs/{engine_id}", facade.rig_engine_url);
++    match ureq::get(&url).timeout(Duration::from_secs(30)).call() {
++        Ok(r) => match r.into_json::<Value>() {
++            Ok(v) => match v.get("state").and_then(Value::as_str) {
++                Some("done") => {
++                    let reply = assemble_done(facade, prompt_id, &doc, &v);
++                    if let Some(job) = facade.rig_jobs.lock().unwrap().get_mut(prompt_id) {
++                        job.done = Some(reply.clone());
++                    }
++                    json_reply(reply)
++                }
++                Some("error") => {
++                    let msg = v
++                        .get("error")
++                        .and_then(Value::as_str)
++                        .unwrap_or("rig engine error")
++                        .to_string();
++                    set_rig_error(facade, prompt_id, msg.clone());
++                    json_reply(json!({"state": "error", "rig": {"state": "error", "error": msg}}))
++                }
++                Some("cancelled") => {
++                    json_reply(json!({"state": "cancelled", "rig": {"state": "cancelled"}}))
++                }
++                _ => json_reply(json!({"state": "running"})),
++            },
++            Err(e) => json_reply(
++                json!({"state": "running", "note": format!("unreadable engine reply: {e}")}),
++            ),
++        },
++        Err(_) => json_reply(json!({"state": "running"})),
++    }
++}
++
++/// `POST /rig/interrupt`: cancel a rig job facade-side and
++/// forward the interrupt to the engine.
++pub fn rig_interrupt(facade: &Arc<Facade>, body: &[u8]) -> Reply {
++    let parsed: Value = serde_json::from_slice(body).unwrap_or(json!({}));
++    let Some(prompt_id) = parsed.get("prompt_id").and_then(Value::as_str) else {
++        return Reply::Json(400, json!({"error": "no prompt_id"}));
++    };
++    let engine_id = {
++        let mut jobs = facade.rig_jobs.lock().unwrap();
++        match jobs.get_mut(prompt_id) {
++            Some(job) => {
++                job.cancelled = true;
++                job.engine_id.clone()
++            }
++            None => None,
++        }
++    };
++    if let Some(engine_id) = engine_id {
++        let url = format!("{}/jobs/{engine_id}/interrupt", facade.rig_engine_url);
++        let _ = ureq::post(&url)
++            .timeout(Duration::from_secs(5))
++            .send_json(json!({}));
++    }
++    Reply::Json(200, json!({"interrupted": prompt_id}))
++}
+diff --git a/crates/torogao-mobile-rig/Cargo.toml b/crates/torogao-mobile-rig/Cargo.toml
+index 60b3935..ae07e53 100644
+--- a/crates/torogao-mobile-rig/Cargo.toml
++++ b/crates/torogao-mobile-rig/Cargo.toml
+@@ -1,20 +1,13 @@
+ [package]
+ name = "torogao-mobile-rig"
+-version = "0.5.0"
+-edition = "2024"
+-license = "BSD-2-Clause"
+-rust-version = "1.85"
++version.workspace = true
++edition.workspace = true
++license.workspace = true
++rust-version.workspace = true
+ description = "Torogao Mobile rig lane: the torogao-character/1 record schema (identity lock, prompt identity, body/face parameters, expressions, rig and art sections), the Step 0 derive gate, the A10.1/A10.2 verdict logic, and the hash-pinned rig job documents the facade accepts (derive, pose-test, preview-render). Derivation itself is a primo builder-service job behind the facade; this crate is the record and the rules, never the solver."
+ 
+-# Standalone-workspace marker (the torogao-accel precedent): this
+-# crate builds and gates on the rig lane's branch before the
+-# merge-time integration patch (integration/0001) adds it to the
+-# workspace member list, drops this section, and converts the
+-# package fields above to workspace inheritance.
+-[workspace]
+-
+ [dependencies]
+-serde = { version = "1", features = ["derive"] }
+-serde_json = "1"
++serde = { workspace = true }
++serde_json = { workspace = true }
+ sha2 = "0.10"
+ ureq = { version = "2", features = ["json"] }
+diff --git a/crates/torogao-mobile-slint/Cargo.toml b/crates/torogao-mobile-slint/Cargo.toml
+index 2b1488c..1b25a13 100644
+--- a/crates/torogao-mobile-slint/Cargo.toml
++++ b/crates/torogao-mobile-slint/Cargo.toml
+@@ -12,6 +12,8 @@ crate-type = ["cdylib", "rlib"]
+ [dependencies]
+ slint = { version = "=1.19.1", features = ["backend-android-activity-06"] }
+ torogao-mobile-core = { path = "../torogao-mobile-core" }
++torogao-mobile-rig = { path = "../torogao-mobile-rig" }
++serde_json = { workspace = true }
+ 
+ [build-dependencies]
+ slint-build = "=1.19.1"
+diff --git a/crates/torogao-mobile-slint/src/lib.rs b/crates/torogao-mobile-slint/src/lib.rs
+index 1069b27..0a72268 100644
+--- a/crates/torogao-mobile-slint/src/lib.rs
++++ b/crates/torogao-mobile-slint/src/lib.rs
+@@ -36,6 +36,8 @@ use torogao_mobile_core::{CAST, Gallery, RecipeSettings, SeatConfig, Session};
+ 
+ slint::include_modules!();
+ 
++mod rig_ui;
++
+ /// Default seat on the phone: primo's facade over the tailnet.
+ pub const SEAT_URL_ANDROID: &str = "http://100.107.128.71:8190";
+ /// Default seat name on the phone.
+@@ -327,6 +329,8 @@ pub fn run(
+         });
+     }
+ 
++    rig_ui::wire(&ui, &shell);
++
+     {
+         let shell = Arc::clone(&shell);
+         let weak = ui.as_weak();
+diff --git a/crates/torogao-mobile-slint/src/rig_ui.rs b/crates/torogao-mobile-slint/src/rig_ui.rs
+new file mode 100644
+index 0000000..e51fce1
+--- /dev/null
++++ b/crates/torogao-mobile-slint/src/rig_ui.rs
+@@ -0,0 +1,445 @@
++//! Rig screen wiring (integration patch 0001): the shell's
++//! half of the rig lane.
++//!
++//! Records live as JSON files in `<session dir>/rig-records/`
++//! — one `torogao-character/1` document per character,
++//! seeded from the crate's migrated cast on first run. The
++//! screen edits the record (parameters are applied and the
++//! revision bumped here, in the open), and derivation /
++//! pose tests / previews run as facade jobs through
++//! `torogao_mobile_rig::RigClient` on a worker thread; the
++//! updated record the facade returns is adopted whole and
++//! re-filed. Nothing is solved or gated on-device.
++
++use std::path::{Path, PathBuf};
++use std::sync::{Arc, Mutex};
++
++use slint::{ComponentHandle, Image, ModelRc, VecModel};
++use torogao_mobile_rig::cast_records::migrated_cast;
++use torogao_mobile_rig::client::RigClient;
++use torogao_mobile_rig::gate::{Verdict, derive_eligibility};
++use torogao_mobile_rig::jobs::RigJobDocument;
++use torogao_mobile_rig::schema::{CharacterRecord, ExpressionSetting};
++
++use crate::{AppWindow, Shell};
++
++/// The rig screen's working state.
++struct RigState {
++    records: Vec<CharacterRecord>,
++    current: usize,
++    dir: PathBuf,
++    /// The facade file name of the last derive's gated GLB
++    /// (for Export).
++    last_glb_filename: Option<String>,
++}
++
++fn iso_now() -> String {
++    let secs = std::time::SystemTime::now()
++        .duration_since(std::time::UNIX_EPOCH)
++        .map(|d| d.as_secs())
++        .unwrap_or(0);
++    let days = (secs / 86_400) as i64;
++    let tod = secs % 86_400;
++    // Civil-from-days (Howard Hinnant's algorithm).
++    let z = days + 719_468;
++    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
++    let doe = z - era * 146_097;
++    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
++    let y = yoe + era * 400;
++    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
++    let mp = (5 * doy + 2) / 153;
++    let d = doy - (153 * mp + 2) / 5 + 1;
++    let m = if mp < 10 { mp + 3 } else { mp - 9 };
++    let y = if m <= 2 { y + 1 } else { y };
++    format!(
++        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
++        tod / 3600,
++        (tod % 3600) / 60,
++        tod % 60
++    )
++}
++
++fn records_dir(shell: &Shell) -> Option<PathBuf> {
++    let session = shell.session.as_ref()?;
++    let dir = session.dir().join("rig-records");
++    let _ = std::fs::create_dir_all(&dir);
++    Some(dir)
++}
++
++fn load_records(dir: &Path) -> Vec<CharacterRecord> {
++    let mut records = Vec::new();
++    if let Ok(entries) = std::fs::read_dir(dir) {
++        let mut paths: Vec<PathBuf> = entries
++            .flatten()
++            .map(|e| e.path())
++            .filter(|p| p.extension().is_some_and(|x| x == "json"))
++            .collect();
++        paths.sort();
++        for path in paths {
++            if let Ok(text) = std::fs::read_to_string(&path) {
++                if let Ok(record) = serde_json::from_str::<CharacterRecord>(&text) {
++                    records.push(record);
++                }
++            }
++        }
++    }
++    if records.is_empty() {
++        // First run: seed the migrated cast of record.
++        for record in migrated_cast(&iso_now()) {
++            save_record(dir, &record);
++            records.push(record);
++        }
++    }
++    records
++}
++
++fn save_record(dir: &Path, record: &CharacterRecord) {
++    let path = dir.join(format!("{}.json", record.id));
++    if let Ok(text) = serde_json::to_string_pretty(record) {
++        let _ = std::fs::write(path, text);
++    }
++}
++
++fn verdict_word(v: Verdict) -> &'static str {
++    match v {
++        Verdict::Pass => "PASS",
++        Verdict::Fail => "FAIL",
++        Verdict::NotRun => "not run",
++    }
++}
++
++fn refresh(ui: &AppWindow, state: &RigState) {
++    let names: Vec<slint::SharedString> = state
++        .records
++        .iter()
++        .map(|r| slint::SharedString::from(r.name.as_str()))
++        .collect();
++    ui.set_rig_record_names(ModelRc::new(VecModel::from(names)));
++    ui.set_rig_record_index(state.current as i32);
++    let Some(record) = state.records.get(state.current) else {
++        return;
++    };
++    let lock = &record.identity_lock;
++    let lock_line = match lock.status {
++        torogao_mobile_rig::schema::LockStatus::Locked => format!(
++            "Step 0 identity lock: HELD (by {}, {})",
++            lock.locked_by.as_deref().unwrap_or("?"),
++            lock.locked_at.as_deref().unwrap_or("?")
++        ),
++        torogao_mobile_rig::schema::LockStatus::Unlocked => {
++            "Step 0 identity lock: NOT HELD — derivation is refused; art generation stays available."
++                .to_string()
++        }
++    };
++    match derive_eligibility(record) {
++        Ok(()) => {
++            ui.set_rig_can_derive(true);
++            ui.set_rig_lock_line(lock_line.into());
++        }
++        Err(reasons) => {
++            ui.set_rig_can_derive(false);
++            ui.set_rig_lock_line(
++                format!("{}\nDerive blocked: {}", lock_line, reasons.join("; ")).into(),
++            );
++        }
++    }
++    ui.set_rig_has_gated_glb(record.rig.gated_glb_sha256.is_some());
++    let bp = &record.body_params;
++    ui.set_rig_z_scale(format!("{:.4}", bp.z_scale).into());
++    ui.set_rig_radial_scale(format!("{:.3}", bp.radial_scale).into());
++    ui.set_rig_bust_amp(format!("{:.3}", bp.bust_amp).into());
++    ui.set_rig_waist_scale(format!("{:.3}", bp.waist_scale).into());
++    ui.set_rig_hip_scale(format!("{:.3}", bp.hip_scale).into());
++    ui.set_rig_hair_style(bp.hair_style.clone().into());
++    match &record.rig.gates {
++        Some(g) => {
++            let label = if g.is_gated() {
++                "GATED"
++            } else {
++                "CONSTRUCTION"
++            };
++            ui.set_rig_verdict(
++                format!(
++                    "{label} — A10.1 {} · A10.2 {} · lock check {} · twin {} · GLB {}…",
++                    verdict_word(g.a10_1.verdict),
++                    verdict_word(g.a10_2.verdict),
++                    verdict_word(g.lock_check.verdict),
++                    if g.determinism {
++                        "identical"
++                    } else {
++                        "DIFFERS"
++                    },
++                    &g.derived_glb_sha256[..12.min(g.derived_glb_sha256.len())]
++                )
++                .into(),
++            );
++        }
++        None => ui.set_rig_verdict("No derivation on record yet.".into()),
++    }
++}
++
++fn seat_client(shell: &Shell) -> Result<RigClient, String> {
++    let session = shell.session.as_ref().ok_or("no session")?;
++    let settings = session.settings();
++    let seat = settings.active_seat().ok_or("no active seat configured")?;
++    Ok(RigClient::new(seat.base_url.clone()).with_token(seat.token.clone()))
++}
++
++/// Wire the rig screen's callbacks. Called once from
++/// `run()`; additive — no existing callback is touched.
++pub fn wire(ui: &AppWindow, shell: &Arc<Shell>) {
++    let Some(dir) = records_dir(shell) else {
++        ui.set_rig_status("Rig records unavailable (no session).".into());
++        return;
++    };
++    let state = Arc::new(Mutex::new(RigState {
++        records: load_records(&dir),
++        current: 0,
++        dir,
++        last_glb_filename: None,
++    }));
++    refresh(ui, &state.lock().unwrap());
++
++    // ---- record picker ----
++    {
++        let state = Arc::clone(&state);
++        let weak = ui.as_weak();
++        ui.on_rig_load(move |index| {
++            let Some(ui) = weak.upgrade() else { return };
++            let mut st = state.lock().unwrap();
++            if (index as usize) < st.records.len() {
++                st.current = index as usize;
++            }
++            refresh(&ui, &st);
++        });
++    }
++
++    // ---- parameter edits ----
++    {
++        let state = Arc::clone(&state);
++        let weak = ui.as_weak();
++        ui.on_rig_apply_params(move || {
++            let Some(ui) = weak.upgrade() else { return };
++            let mut st = state.lock().unwrap();
++            let current = st.current;
++            let dir = st.dir.clone();
++            let Some(record) = st.records.get_mut(current) else {
++                return;
++            };
++            let parse = |s: slint::SharedString| s.parse::<f64>();
++            let fields = [
++                parse(ui.get_rig_z_scale()),
++                parse(ui.get_rig_radial_scale()),
++                parse(ui.get_rig_bust_amp()),
++                parse(ui.get_rig_waist_scale()),
++                parse(ui.get_rig_hip_scale()),
++            ];
++            if fields.iter().any(|f| f.is_err()) {
++                ui.set_rig_status("A parameter is not a number — nothing applied.".into());
++                return;
++            }
++            let mut vals = fields.into_iter().map(|f| f.unwrap_or(0.0));
++            record.body_params.z_scale = vals.next().unwrap_or(1.0);
++            record.body_params.radial_scale = vals.next().unwrap_or(1.0);
++            record.body_params.bust_amp = vals.next().unwrap_or(0.0);
++            record.body_params.waist_scale = vals.next().unwrap_or(1.0);
++            record.body_params.hip_scale = vals.next().unwrap_or(1.0);
++            record.body_params.hair_style = ui.get_rig_hair_style().to_string();
++            let problems = record.validate();
++            if !problems.is_empty() {
++                ui.set_rig_status(format!("Refused: {}", problems.join("; ")).into());
++                return;
++            }
++            record.revision += 1;
++            record.updated_at = iso_now();
++            save_record(&dir, record);
++            ui.set_rig_status(
++                format!("Parameters applied — record revision {}.", record.revision).into(),
++            );
++            refresh(&ui, &st);
++        });
++    }
++
++    // ---- job runners (derive / pose / preview) ----
++    {
++        let shell = Arc::clone(shell);
++        let state = Arc::clone(&state);
++        let weak = ui.as_weak();
++        ui.on_rig_derive(move || run_job(&weak, &shell, &state, JobKindUi::Derive));
++    }
++    {
++        let shell = Arc::clone(shell);
++        let state = Arc::clone(&state);
++        let weak = ui.as_weak();
++        ui.on_rig_pose_test(move || run_job(&weak, &shell, &state, JobKindUi::PoseTest));
++    }
++    {
++        let shell = Arc::clone(shell);
++        let state = Arc::clone(&state);
++        let weak = ui.as_weak();
++        ui.on_rig_preview(move || run_job(&weak, &shell, &state, JobKindUi::Preview));
++    }
++
++    // ---- export ----
++    {
++        let shell = Arc::clone(shell);
++        let state = Arc::clone(&state);
++        let weak = ui.as_weak();
++        ui.on_rig_export(move || {
++            let Some(ui) = weak.upgrade() else { return };
++            let (client, filename, id) = {
++                let st = state.lock().unwrap();
++                let Some(record) = st.records.get(st.current) else {
++                    return;
++                };
++                match (seat_client(&shell), st.last_glb_filename.clone()) {
++                    (Ok(c), Some(f)) => (c, f, record.id.clone()),
++                    _ => {
++                        ui.set_rig_status("Nothing to export yet — run a derivation first.".into());
++                        return;
++                    }
++                }
++            };
++            let exports = shell.exports_dir.clone();
++            let weak2 = weak.clone();
++            std::thread::spawn(move || {
++                let outcome = client.fetch_view(&filename).and_then(|bytes| {
++                    let path = exports.join(format!("{id}.glb"));
++                    std::fs::write(&path, &bytes).map_err(|e| {
++                        torogao_mobile_rig::client::RigError::Unreachable(e.to_string())
++                    })?;
++                    Ok(path)
++                });
++                let _ = weak2.upgrade_in_event_loop(move |ui| match outcome {
++                    Ok(path) => ui.set_rig_status(
++                        format!("Exported the gated GLB to {}.", path.display()).into(),
++                    ),
++                    Err(e) => ui.set_rig_status(e.message().into()),
++                });
++            });
++        });
++    }
++}
++
++#[derive(Clone, Copy)]
++enum JobKindUi {
++    Derive,
++    PoseTest,
++    Preview,
++}
++
++/// Run one rig job for the current record on a worker
++/// thread; the terminal state lands back on the event loop.
++fn run_job(
++    weak: &slint::Weak<AppWindow>,
++    shell: &Arc<Shell>,
++    state: &Arc<Mutex<RigState>>,
++    kind: JobKindUi,
++) {
++    let Some(ui) = weak.upgrade() else { return };
++    let (record, smile, close) = {
++        let st = state.lock().unwrap();
++        let Some(record) = st.records.get(st.current) else {
++            return;
++        };
++        (
++            record.clone(),
++            ui.get_rig_smile_weight().parse::<f64>().unwrap_or(1.0),
++            ui.get_rig_eye_close_weight().parse::<f64>().unwrap_or(0.5),
++        )
++    };
++    let doc = match kind {
++        JobKindUi::Derive => RigJobDocument::derive(&record),
++        JobKindUi::PoseTest => RigJobDocument::pose_test(
++            &record,
++            vec![
++                ExpressionSetting {
++                    name: "Fac_Mth_Smile".to_string(),
++                    weight: smile,
++                },
++                ExpressionSetting {
++                    name: "Fac_Eye_Close".to_string(),
++                    weight: close,
++                },
++            ],
++        ),
++        JobKindUi::Preview => RigJobDocument::preview_render(&record),
++    };
++    let doc = match doc {
++        Ok(d) => d,
++        Err(problems) => {
++            ui.set_rig_status(format!("Refused: {}", problems.join("; ")).into());
++            return;
++        }
++    };
++    let client = match seat_client(shell) {
++        Ok(c) => c,
++        Err(e) => {
++            ui.set_rig_status(format!("No seat: {e}").into());
++            return;
++        }
++    };
++    ui.set_rig_busy(true);
++    ui.set_rig_status("Working on the computer…".into());
++    let weak2 = weak.clone();
++    let state2 = Arc::clone(state);
++    std::thread::spawn(move || {
++        let outcome = client.run(&doc).map(|out| {
++            // Fetch the first still back for the preview slot.
++            let still = out
++                .result
++                .stills
++                .first()
++                .and_then(|name| client.fetch_view(name).ok().map(|b| (name.clone(), b)));
++            (out, still)
++        });
++        let _ = weak2.upgrade_in_event_loop(move |ui| {
++            ui.set_rig_busy(false);
++            match outcome {
++                Ok((out, still)) => {
++                    let mut st = state2.lock().unwrap();
++                    if let Some(updated) = &out.result.record {
++                        if let Some(slot) = st.records.iter_mut().find(|r| r.id == updated.id) {
++                            *slot = updated.clone();
++                        }
++                        save_record(&st.dir, updated);
++                    }
++                    if out.glb_filename.is_some() {
++                        st.last_glb_filename = out.glb_filename.clone();
++                    }
++                    if let Some((name, bytes)) = still {
++                        let dir = st.dir.join("stills");
++                        let _ = std::fs::create_dir_all(&dir);
++                        let path = dir.join(&name);
++                        if std::fs::write(&path, &bytes).is_ok() {
++                            if let Ok(img) = Image::load_from_path(&path) {
++                                ui.set_rig_still(img);
++                                ui.set_rig_has_still(true);
++                            }
++                        }
++                    }
++                    if !out.result.measured_morphs.is_empty() {
++                        let lines: Vec<String> = out
++                            .result
++                            .measured_morphs
++                            .iter()
++                            .map(|m| {
++                                format!(
++                                    "{} @ {:.2}: max displacement {:.1} mm — {}",
++                                    m.name,
++                                    m.weight,
++                                    m.max_displacement_m * 1000.0,
++                                    m.mechanism
++                                )
++                            })
++                            .collect();
++                        ui.set_rig_pose_line(lines.join("\n").into());
++                    }
++                    ui.set_rig_status("Done.".into());
++                    refresh(&ui, &st);
++                }
++                Err(e) => ui.set_rig_status(e.message().into()),
++            }
++        });
++    });
++}
+diff --git a/crates/torogao-mobile-slint/ui/app.slint b/crates/torogao-mobile-slint/ui/app.slint
+index 3ff25da..91a7e16 100644
+--- a/crates/torogao-mobile-slint/ui/app.slint
++++ b/crates/torogao-mobile-slint/ui/app.slint
+@@ -13,6 +13,7 @@
+ // core state machine picks girl + strip; not a video.
+ 
+ import { Button, LineEdit, ListView, ScrollView, SpinBox, VerticalBox, HorizontalBox } from "std-widgets.slint";
++import { RigScreen } from "rig_screen.slint";
+ 
+ export struct GalleryItem {
+     label: string,
+@@ -41,7 +42,7 @@ export component AppWindow inherits Window {
+ 
+     // Session state, mirrored from the core by the shell.
+     in-out property <bool> attested: false;
+-    in-out property <int> screen: 0; // 0 generate, 1 gallery, 2 seat, 3 settings
++    in-out property <int> screen: 0; // 0 generate, 1 gallery, 2 seat, 3 settings, 4 rig
+     in-out property <string> status: "";
+     in-out property <string> seat-status: "";
+     in-out property <[string]> cast-names;
+@@ -85,6 +86,34 @@ export component AppWindow inherits Window {
+     callback helper-begin(int);
+     callback nav(int);
+ 
++    // Rig screen state (rig patch 0001), mirrored from
++    // torogao-mobile-rig by the shell's rig_ui module.
++    in-out property <[string]> rig-record-names;
++    in-out property <int> rig-record-index: 0;
++    in-out property <string> rig-lock-line: "";
++    in-out property <bool> rig-can-derive: false;
++    in-out property <bool> rig-has-gated-glb: false;
++    in-out property <bool> rig-busy: false;
++    in-out property <string> rig-status: "";
++    in-out property <string> rig-verdict: "";
++    in-out property <string> rig-pose-line: "";
++    in-out property <image> rig-still;
++    in-out property <bool> rig-has-still: false;
++    in-out property <string> rig-z-scale: "1.000";
++    in-out property <string> rig-radial-scale: "1.00";
++    in-out property <string> rig-bust-amp: "0.052";
++    in-out property <string> rig-waist-scale: "1.00";
++    in-out property <string> rig-hip-scale: "1.00";
++    in-out property <string> rig-hair-style: "waves";
++    in-out property <string> rig-smile-weight: "1.0";
++    in-out property <string> rig-eye-close-weight: "0.5";
++    callback rig-load(int);
++    callback rig-apply-params();
++    callback rig-derive();
++    callback rig-pose-test();
++    callback rig-preview();
++    callback rig-export();
++
+     // Strip playback: step the helper strip at its authored
+     // 200 ms/frame. A plain frame advance — no flashing
+     // transitions (OE-1b discipline).
+@@ -547,6 +576,35 @@ export component AppWindow inherits Window {
+             }
+         }
+ 
++        // ---- Rig screen ----
++        if root.attested && root.screen == 4: RigScreen {
++            rig-record-names <=> root.rig-record-names;
++            rig-record-index <=> root.rig-record-index;
++            rig-lock-line <=> root.rig-lock-line;
++            rig-can-derive <=> root.rig-can-derive;
++            rig-has-gated-glb <=> root.rig-has-gated-glb;
++            rig-busy <=> root.rig-busy;
++            rig-status <=> root.rig-status;
++            rig-verdict <=> root.rig-verdict;
++            rig-pose-line <=> root.rig-pose-line;
++            rig-still <=> root.rig-still;
++            rig-has-still <=> root.rig-has-still;
++            rig-z-scale <=> root.rig-z-scale;
++            rig-radial-scale <=> root.rig-radial-scale;
++            rig-bust-amp <=> root.rig-bust-amp;
++            rig-waist-scale <=> root.rig-waist-scale;
++            rig-hip-scale <=> root.rig-hip-scale;
++            rig-hair-style <=> root.rig-hair-style;
++            rig-smile-weight <=> root.rig-smile-weight;
++            rig-eye-close-weight <=> root.rig-eye-close-weight;
++            rig-load(i) => { root.rig-load(i); }
++            rig-apply-params => { root.rig-apply-params(); }
++            rig-derive => { root.rig-derive(); }
++            rig-pose-test => { root.rig-pose-test(); }
++            rig-preview => { root.rig-preview(); }
++            rig-export => { root.rig-export(); }
++        }
++
+             }
+         }
+     }
+@@ -596,6 +654,13 @@ export component AppWindow inherits Window {
+                     root.nav(3);
+                 }
+             }
++            Button {
++                text: "Rig";
++                primary: root.screen == 4;
++                clicked => {
++                    root.nav(4);
++                }
++            }
+         }
+     }
+ }
