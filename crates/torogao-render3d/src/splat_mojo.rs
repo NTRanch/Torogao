@@ -22,13 +22,19 @@
 //! is an optimisation, never a behaviour change.
 //!
 //! Eligibility, exactly:
-//! - The layer's light must not carry a shadow map.
-//!   The Rung 4 light RESPONSE (grade + world tint)
-//!   is transcribed by the projection kernel and a
-//!   response-only lit layer routes like an unlit
-//!   one; the shadow factor stays host-side, so a
-//!   shadow-receiving layer packs on the CPU exactly
-//!   as before the response was transcribed.
+//! - The layer's light may carry a shadow map whose
+//!   edge is at most [`SHADOW_MAX_EDGE`] texels: the
+//!   rasterised map travels as a device input (a
+//!   trailer after the records) and the projection
+//!   kernel applies the centre visibility test, as it
+//!   already applies the Rung 4 light RESPONSE
+//!   (grade + world tint). A map with a larger edge
+//!   declines the route by name — the trailer at the
+//!   cap is already 64 MiB — and the layer packs on
+//!   the CPU exactly as before the shadow was
+//!   transcribed. The triangle rasteriser itself
+//!   stays host-side: it runs once per scene at
+//!   spec-compile time, caller-owned, not per layer.
 //! - Layer rotation is fine, and has its own kernel:
 //!   when a rotation binary is configured (see
 //!   below), the Mojo rotation kernel
@@ -128,7 +134,15 @@ use crate::splat_rotate::{Rotation, ShRotation, is_identity_quat};
 const ALPHA_CULL: f32 = 1.0 / 255.0;
 /// Header bytes before the record stream (the kernel
 /// source's contract).
-const HEADER_BYTES: usize = 480;
+const HEADER_BYTES: usize = 640;
+/// The largest shadow map edge (texels) the route
+/// carries as a device input: the production map is
+/// 2048 (`crate::splat_light::SHADOW_MAP_SIZE`), so
+/// the cap leaves 2x headroom and the trailer at the
+/// cap is 64 MiB of f32 depths. A larger map declines
+/// the route by name (see the module docs) and the
+/// kernel rejects it too — the two checks must agree.
+pub const SHADOW_MAX_EDGE: u32 = 4096;
 /// One resident record's bytes (`GpuSplatRecord`).
 const RECORD_BYTES: usize = 256;
 /// One projected output record's bytes.
@@ -204,13 +218,14 @@ impl MojoRoute {
 /// the CPU reference, whose result is identical by
 /// the bit-exactness gate.
 ///
-/// The layer's light must not carry a shadow map:
-/// the kernel transcribes the projection plus the
-/// light RESPONSE (see the module docs), and the
-/// caller declines shadow-carrying lights before
-/// reaching here. A `light` with no response stages
-/// the response flag clear and the kernel skips the
-/// hook whole, exactly as the CPU pack does.
+/// The layer's light may carry a shadow map within
+/// the route's edge cap: the kernel transcribes the
+/// projection plus both light interactions (see the
+/// module docs), and the caller declines only
+/// over-cap maps before reaching here. A `light`
+/// with no response and no shadow stages both flags
+/// clear and the kernel skips the hooks whole,
+/// exactly as the CPU pack does.
 pub fn project_splats_mojo(
     cloud: &SplatCloud,
     transform: &SplatTransform,
@@ -227,7 +242,7 @@ pub fn project_splats_mojo(
     let view_proj = projection(scene).multiply(scene.view);
     let camera_world = scene.view.inverse();
     let cam = camera_world.translation();
-    let mut uniforms = [0.0_f64; 58];
+    let mut uniforms = [0.0_f64; 78];
     uniforms[0..16].copy_from_slice(&scene.view.m);
     uniforms[16..32].copy_from_slice(&view_proj.m);
     uniforms[32..35].copy_from_slice(&[cam.x, cam.y, cam.z]);
@@ -256,6 +271,23 @@ pub fn project_splats_mojo(
             uniforms[55 + i] = f64::from(scene.world[i]);
         }
     }
+    // The Rung 4 shadow block (uniforms 58..76): flag,
+    // map edge, and the map's own light view-projection
+    // — the exact values `SplatShadowMap::visibility`
+    // consumes on the CPU path. The rasterised depths
+    // themselves travel as a trailer after the records
+    // (the kernel source's contract). No shadow: the
+    // flag stays 0.0 and the trailer is empty.
+    let shadow_depths: &[f32] = match light.shadow {
+        Some(map) => {
+            uniforms[58] = 1.0;
+            uniforms[59] = f64::from(map.size());
+            uniforms[60..76].copy_from_slice(&map.light_view_proj().m);
+            map.depths()
+        }
+        None => &[],
+    };
+    let shadow_bytes: &[u8] = bytemuck::cast_slice(shadow_depths);
 
     // The persistent worker, when one is configured,
     // is offered the pack first (see the module docs):
@@ -263,7 +295,9 @@ pub fn project_splats_mojo(
     // process cost. Any failure falls through to the
     // per-invocation path below, unchanged.
     if route.worker_bin.is_some() {
-        if let Some(projected) = project_via_worker(cloud, transform, &uniforms, route) {
+        if let Some(projected) =
+            project_via_worker(cloud, transform, &uniforms, shadow_bytes, route)
+        {
             return Some(projected);
         }
     }
@@ -312,7 +346,14 @@ pub fn project_splats_mojo(
         std::process::id(),
         CALL_COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
-    let staged = stage_and_run(route, &call_dir, count, &uniforms, record_bytes);
+    let staged = stage_and_run(
+        route,
+        &call_dir,
+        count,
+        &uniforms,
+        record_bytes,
+        shadow_bytes,
+    );
     let _ = std::fs::remove_dir_all(&call_dir);
     let kernel_bytes = staged?;
 
@@ -360,18 +401,18 @@ fn parse_projected(kernel_bytes: &[u8], count: usize) -> Option<Vec<SplatProject
 }
 
 /// The projection kernel's input header (the kernel
-/// source's contract): the splat count, the 58
+/// source's contract): the splat count, the 78
 /// uniforms, and the alpha-cull bit pattern, in a
-/// zeroed 480-byte block. Written identically by the
+/// zeroed 640-byte block. Written identically by the
 /// per-invocation file protocol and the worker
 /// protocol.
-fn project_input_header(count: usize, uniforms: &[f64; 58]) -> [u8; HEADER_BYTES] {
+fn project_input_header(count: usize, uniforms: &[f64; 78]) -> [u8; HEADER_BYTES] {
     let mut header = [0u8; HEADER_BYTES];
     header[0..8].copy_from_slice(&(count as u64).to_le_bytes());
     for (k, v) in uniforms.iter().enumerate() {
         header[8 + k * 8..16 + k * 8].copy_from_slice(&v.to_le_bytes());
     }
-    header[472..476].copy_from_slice(&ALPHA_CULL.to_bits().to_le_bytes());
+    header[632..636].copy_from_slice(&ALPHA_CULL.to_bits().to_le_bytes());
     header
 }
 
@@ -413,7 +454,8 @@ fn rotate_input_header(count: usize, rotation: &Rotation) -> Vec<u8> {
 fn project_via_worker(
     cloud: &SplatCloud,
     transform: &SplatTransform,
-    uniforms: &[f64; 58],
+    uniforms: &[f64; 78],
+    shadow_bytes: &[u8],
     route: &MojoRoute,
 ) -> Option<Vec<SplatProjection>> {
     let count = cloud.splats.len();
@@ -422,17 +464,21 @@ fn project_via_worker(
     debug_assert_eq!(record_bytes.len(), count * RECORD_BYTES);
     let header = project_input_header(count, uniforms);
     let (kind, payload) = if is_identity_quat(transform.rotation) {
-        let mut payload = Vec::with_capacity(HEADER_BYTES + record_bytes.len());
+        let mut payload =
+            Vec::with_capacity(HEADER_BYTES + record_bytes.len() + shadow_bytes.len());
         payload.extend_from_slice(&header);
         payload.extend_from_slice(record_bytes);
+        payload.extend_from_slice(shadow_bytes);
         (WORKER_KIND_PROJECT, payload)
     } else {
         let rotation = Rotation::from_quaternion(transform.rotation)?;
-        let mut payload =
-            Vec::with_capacity(ROTATE_HEADER_BYTES + HEADER_BYTES + record_bytes.len());
+        let mut payload = Vec::with_capacity(
+            ROTATE_HEADER_BYTES + HEADER_BYTES + record_bytes.len() + shadow_bytes.len(),
+        );
         payload.extend_from_slice(&rotate_input_header(count, &rotation));
         payload.extend_from_slice(&header);
         payload.extend_from_slice(record_bytes);
+        payload.extend_from_slice(shadow_bytes);
         (WORKER_KIND_ROTATE_PROJECT, payload)
     };
     let bytes = worker_request(route, kind, payload, count * OUT_BYTES)?;
@@ -499,16 +545,19 @@ fn rotate_records_mojo(
     Some(bytes)
 }
 
-/// Write the kernel's input file under `call_dir`,
-/// run the kernel program once, and return its output
+/// Write the kernel's input file under `call_dir`
+/// (header + records + the shadow-depth trailer,
+/// empty when the layer's light carries no map), run
+/// the kernel program once, and return its output
 /// file's bytes. Any failure is `None` (the caller
 /// falls back to the CPU reference).
 fn stage_and_run(
     route: &MojoRoute,
     call_dir: &std::path::Path,
     count: usize,
-    uniforms: &[f64; 58],
+    uniforms: &[f64; 78],
     record_bytes: &[u8],
+    shadow_bytes: &[u8],
 ) -> Option<Vec<u8>> {
     std::fs::create_dir_all(call_dir).ok()?;
     let inputs_path = call_dir.join("inputs.bin");
@@ -516,6 +565,7 @@ fn stage_and_run(
         let mut f = std::fs::File::create(&inputs_path).ok()?;
         f.write_all(&project_input_header(count, uniforms)).ok()?;
         f.write_all(record_bytes).ok()?;
+        f.write_all(shadow_bytes).ok()?;
     }
     let out_path = call_dir.join("kernel-out.bin");
     let output = Command::new(&route.project_bin)
@@ -838,7 +888,15 @@ pub fn pack_splats_mojo(
     route: Option<&MojoRoute>,
 ) -> PackedSplats {
     if let Some(route) = route {
-        if light.shadow.is_none() {
+        // Eligibility, exactly: every light routes
+        // except one whose shadow map edge exceeds the
+        // cap (see the module docs) — the only input
+        // this route declines by name.
+        let shadow_within_cap = match light.shadow {
+            Some(map) => map.size() >= 1 && map.size() <= SHADOW_MAX_EDGE,
+            None => true,
+        };
+        if shadow_within_cap {
             if let Some(projected) =
                 project_splats_mojo(cloud, transform, scene, width, height, light, route)
             {
@@ -1078,19 +1136,34 @@ mod tests {
         }
     }
 
-    /// A shadow-carrying layer never invokes the
-    /// kernel binary: the shadow factor stays
-    /// host-side (kernel candidate #1's scope), so a
-    /// light with a shadow map declines the route
-    /// whole — even when it also names a response.
-    /// (This replaces the adoption's
-    /// `lit_layer_never_invokes_the_kernel`, whose
-    /// response-only subject is eligible since the
-    /// response transcription; the never-invokes
-    /// invariant now belongs to the shadow.)
+    /// The shadow light the route tests share: an
+    /// empty 64-edge map (every centre lit — the
+    /// eligibility plumbing is what these tests
+    /// measure; the visibility maths itself is gated
+    /// by the witness benches and the route tests)
+    /// plus the shared response.
+    fn shadow_light(map: &crate::splat_light::SplatShadowMap) -> SplatLight<'_> {
+        SplatLight {
+            shadow: Some(map),
+            response: Some(test_response()),
+        }
+    }
+
+    /// A shadow-carrying layer DOES take the route
+    /// since the shadow transcription (kernel
+    /// candidate #2): with a stand-in binary that
+    /// writes no output, the pack attempts the kernel
+    /// (marker present) and falls back to the CPU
+    /// reference, packet-equal to the direct lit pack.
+    /// (This replaces candidate #1's
+    /// `shadow_layer_never_invokes_the_kernel`, whose
+    /// premise — the shadow factor stays host-side —
+    /// is exactly what this candidate moved on-device;
+    /// the never-invokes invariant now belongs to the
+    /// over-cap map below.)
     #[cfg(unix)]
     #[test]
-    fn shadow_layer_never_invokes_the_kernel() {
+    fn shadow_layer_invokes_and_falls_back() {
         use crate::math::Mat4;
         use crate::splat_light::SplatShadowMap;
         let dir =
@@ -1107,17 +1180,74 @@ mod tests {
         std::fs::remove_file(&marker).expect("clear marker");
 
         // Shadow-carrying (with a response named too):
-        // the route must not touch the binary.
+        // the route attempts the kernel and falls back.
         let map = SplatShadowMap::rasterise(&[], Mat4::IDENTITY, 64);
-        let lit = SplatLight {
-            shadow: Some(&map),
-            response: Some(test_response()),
-        };
+        let lit = shadow_light(&map);
+        let via_route = pack_splats_mojo(&cloud, &transform, &scene, 512, 640, &lit, Some(&route));
+        assert!(
+            marker.exists(),
+            "shadow-carrying pack must attempt the kernel binary"
+        );
+        let cpu = pack_splats_lit(&cloud, &transform, &scene, 512, 640, &lit);
+        assert_eq!(via_route, cpu);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A shadow map whose edge exceeds the route's cap
+    /// never invokes the kernel binary: the trailer at
+    /// the cap is already 64 MiB, so the over-cap map
+    /// declines the route by name and the layer packs
+    /// on the CPU, packet-equal to the direct lit pack.
+    #[cfg(unix)]
+    #[test]
+    fn oversize_shadow_map_never_invokes_the_kernel() {
+        use crate::math::Mat4;
+        use crate::splat_light::SplatShadowMap;
+        let dir = std::env::temp_dir().join(format!(
+            "torogao-mojo-route-oversize-{}",
+            std::process::id()
+        ));
+        let (route, marker) = marker_route(&dir);
+        let cloud = room_corner_cloud();
+        let scene = test_scene();
+        let transform = SplatTransform::default();
+        let map = SplatShadowMap::rasterise(&[], Mat4::IDENTITY, SHADOW_MAX_EDGE + 1);
+        let lit = shadow_light(&map);
         let via_route = pack_splats_mojo(&cloud, &transform, &scene, 512, 640, &lit, Some(&route));
         assert!(
             !marker.exists(),
-            "shadow-carrying pack must not invoke the kernel binary"
+            "over-cap shadow pack must not invoke the kernel binary"
         );
+        let cpu = pack_splats_lit(&cloud, &transform, &scene, 512, 640, &lit);
+        assert_eq!(via_route, cpu);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A configured route whose binary does not exist
+    /// falls back to the CPU reference for a
+    /// shadow-carrying lit layer, packet-equal to the
+    /// direct lit pack.
+    #[test]
+    fn missing_binary_with_shadow_falls_back_to_cpu() {
+        use crate::math::Mat4;
+        use crate::splat_light::SplatShadowMap;
+        let cloud = room_corner_cloud();
+        let scene = test_scene();
+        let transform = SplatTransform::default();
+        let map = SplatShadowMap::rasterise(&[], Mat4::IDENTITY, 64);
+        let lit = shadow_light(&map);
+        let dir = std::env::temp_dir().join(format!(
+            "torogao-mojo-route-missing-shadow-{}",
+            std::process::id()
+        ));
+        let route = MojoRoute {
+            project_bin: dir.join("no-such-kernel"),
+            rotate_bin: None,
+            worker_bin: None,
+            device_id: 0,
+            work_dir: dir.join("work"),
+        };
+        let via_route = pack_splats_mojo(&cloud, &transform, &scene, 512, 640, &lit, Some(&route));
         let cpu = pack_splats_lit(&cloud, &transform, &scene, 512, 640, &lit);
         assert_eq!(via_route, cpu);
         let _ = std::fs::remove_dir_all(&dir);

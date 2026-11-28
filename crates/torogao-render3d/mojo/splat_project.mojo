@@ -11,7 +11,7 @@
 # Input file (little-endian, written by the Rust harness
 # `splat_mojo_bench` in the same crate):
 #   [0..8)     u64  splat count N (1 <= N <= 2^31)
-#   [8..472)   58 x f64 uniforms:
+#   [8..632)   78 x f64 uniforms:
 #                [0..16)  view matrix m (column-major, m[j*4+i])
 #                [16..32) view-projection matrix m (same layout)
 #                [32..35) camera position (world)
@@ -25,25 +25,46 @@
 #                [45..54) response grade, row-major 3x3
 #                [54]     response world_mix
 #                [55..58) scene world colour (f32 widened to f64)
-#   [472..476) u32  bit pattern of the f32 alpha-cull threshold
-#   [480..)    N x 256-byte GpuSplatRecord (the crate's own resident
+#                [58]     shadow flag (0.0 = no shadow map, hook
+#                         skipped whole; 1.0 = apply the centre
+#                         visibility test against the trailer map)
+#                [59]     shadow map edge length in texels (f64;
+#                         integral, 1..MAX_SHADOW_SIZE when the
+#                         shadow flag is set)
+#                [60..76) shadow light view-projection m (same
+#                         column-major layout as [0..16))
+#                [76..78) reserved, zero
+#   [632..636) u32  bit pattern of the f32 alpha-cull threshold
+#   [640..)    N x 256-byte GpuSplatRecord (the crate's own resident
 #              record layout: opacity and scales PRE-ACTIVATED on the
 #              host by the pack's own functions, so this kernel needs
 #              no transcendentals and every operation is IEEE-exact
 #              +, -, *, /, sqrt on f64 — the same property the Vulkan
 #              projection relies on for its bit-exact gate).
+#   Trailer, present only when the shadow flag is set, directly
+#   after the records: size x size f32 shadow depths, row-major —
+#   the host CPU rasteriser's map (splat_light.rs
+#   `SplatShadowMap::depths`) carried verbatim as a device input.
+#   The triangle rasteriser itself stays host-side (it runs once
+#   per scene at spec-compile time, caller-owned, not per layer);
+#   what moved on-device is the map plus the per-centre
+#   visibility test the pack applies.
 # Output file: N x 96-byte projected records in asset order:
 #   f64 centre_px[2], radii[2], axis1[2], depth;
 #   f32 conic[3], opacity, colour[3], z_ndc; u32 culled; u32 pad.
 # Culled splats carry culled=1 (their remaining fields are not
 # written and carry no meaning).
 #
-# Scope: the projection plus, when the header's response flag is
-# set, the Rung-4 light RESPONSE (grade + world tint, transcribed
-# from splat_light.rs `LightResponse::apply`). Layer rotation is
-# host-side or the rotate kernel's; the Rung-4 SHADOW factor stays
-# host-side — a light carrying a shadow map never reaches this
-# kernel (the route declines it), by the candidate-1 scope.
+# Scope: the projection plus, when the header's flags name them,
+# the Rung-4 light interactions — the RESPONSE (grade + world
+# tint, transcribed from splat_light.rs `LightResponse::apply`,
+# kernel candidate #1) and the SHADOW centre test (the map's
+# 3x3 PCF visibility at each splat centre, transcribed from
+# `SplatShadowMap::visibility`, kernel candidate #2). Layer
+# rotation is host-side or the rotate kernel's. A shadow map
+# whose edge exceeds MAX_SHADOW_SIZE never reaches this kernel
+# (the route declines it by name and the layer packs on the
+# CPU exactly as before).
 #
 # Determinism: every arithmetic expression below transcribes the
 # Rust source's association order exactly (sums fold in index order,
@@ -83,10 +104,19 @@ comptime SH_C3_6 = -0.5900435899266435
 comptime COV_DILATION_PX2 = 0.3
 comptime QUAD_SIGMAS = 3.0
 
-comptime HEADER_BYTES = 480
+comptime HEADER_BYTES = 640
 comptime RECORD_BYTES = 256
 comptime OUT_BYTES = 96
-comptime UNIFORM_COUNT = 58
+comptime UNIFORM_COUNT = 78
+
+# The shaders' PCF depth bias, transcribed from splat_light.rs
+# `SHADOW_DEPTH_BIAS` (the compare is `proj.z - bias <= depth`).
+comptime SHADOW_DEPTH_BIAS = 0.0008
+# The largest shadow map edge the route carries as a device
+# input (the production map is 2048; the trailer at this cap is
+# 64 MiB of f32). Larger maps decline the route by name on the
+# Rust side and are rejected here — the layer packs on the CPU.
+comptime MAX_SHADOW_SIZE = 4096
 
 
 def parse_nonnegative_int(s: String) raises -> Int:
@@ -125,6 +155,17 @@ def read_f32[O: Origin](p: Pointer[UInt8, O], off: Int) -> Float32:
 
 def load_f32[O: Origin](p: Pointer[UInt8, O], off: Int) -> Float32:
     return p.unsafe_offset(off).unsafe_bitcast[Float32]().unsafe_load()
+
+
+def floor_to_int(x: Float64) -> Int:
+    # f64 floor to Int, exact for the bounded texel-space values
+    # the shadow test produces (|x| <= size + 1): Int() truncates
+    # toward zero, so a negative non-integral value steps down
+    # one — the Rust reference's `.floor() as i64`.
+    var i = Int(x)
+    if Float64(i) > x:
+        i -= 1
+    return i
 
 
 def store_f64(p: Pointer[UInt8, MutAnyOrigin], off: Int, v: Float64):
@@ -172,6 +213,7 @@ def apply_mat[O: Origin](
 def project_kernel(
     recs: Pointer[UInt8, MutAnyOrigin],
     uni: Pointer[Float64, MutAnyOrigin],
+    shadow: Pointer[UInt8, MutAnyOrigin],
     outb: Pointer[UInt8, MutAnyOrigin],
     count: Int64,
     alpha_cull: Float32,
@@ -515,6 +557,58 @@ def project_kernel(
         col1 = Float32(o1)
         col2 = Float32(o2)
 
+    # Rung 4 shadow centre test, when the header names a map
+    # (uniform [58] != 0): splat_light.rs
+    # `SplatShadowMap::visibility` transcribed term-for-term at
+    # this splat's world centre, then the f32 multiply
+    # `SplatLight::apply` performs (`colour[i] * v`, both f32).
+    # The centre is the same f64 centre the projection used
+    # (record pos widened, scaled, translated — bit-identical to
+    # the CPU pack's centre). The clip/w rule is the source's
+    # exactly: w == 0 is lit; u or v outside [0, 1] or proj.z > 1
+    # is lit (no z < 0 test, no w sign test — the source has
+    # none). The 3x3 taps sample uv + (ox, oy) * texel with the
+    # NEAREST/CLAMP_TO_EDGE rule (floor(sample * size), clamped)
+    # and the compare folds `lit` in oy-then-ox order, exactly
+    # as the source's nested loops do. Skipped whole when no map
+    # is named, exactly as the CPU pack skips the hook.
+    if uni.unsafe_offset(58).unsafe_load() != 0.0:
+        var ssize = Int(uni.unsafe_offset(59).unsafe_load())
+        var sf = Float64(ssize)
+        var sclip = apply_mat(uni, 60, centre0, centre1, centre2, 1.0)
+        var vis = Float32(1.0)
+        if sclip[3] != 0.0:
+            var spz = sclip[2] / sclip[3]
+            var su0 = sclip[0] / sclip[3] * 0.5 + 0.5
+            var sv0 = sclip[1] / sclip[3] * 0.5 + 0.5
+            if not (
+                su0 < 0.0 or su0 > 1.0 or sv0 < 0.0 or sv0 > 1.0 or spz > 1.0
+            ):
+                var lit = 0.0
+                for oy in range(-1, 2):
+                    for ox in range(-1, 2):
+                        var su = su0 + Float64(ox) / sf
+                        var sv = sv0 + Float64(oy) / sf
+                        var col = floor_to_int(su * sf)
+                        var row = floor_to_int(sv * sf)
+                        if col < 0:
+                            col = 0
+                        if col > ssize - 1:
+                            col = ssize - 1
+                        if row < 0:
+                            row = 0
+                        if row > ssize - 1:
+                            row = ssize - 1
+                        var dep = Float64(
+                            load_f32(shadow, (row * ssize + col) * 4)
+                        )
+                        if spz - SHADOW_DEPTH_BIAS <= dep:
+                            lit += 1.0
+                vis = Float32(lit / 9.0)
+        col0 = col0 * vis
+        col1 = col1 * vis
+        col2 = col2 * vis
+
     store_f64(outb, obase + 0, centre_px0)
     store_f64(outb, obase + 8, centre_px1)
     store_f64(outb, obase + 16, radii0)
@@ -555,10 +649,25 @@ def main() raises:
         raise Error("splat count out of bounds")
     var in_bytes = count * RECORD_BYTES
     var out_bytes = count * OUT_BYTES
-    if len(bytes_in) != HEADER_BYTES + in_bytes:
+    # The shadow trailer (kernel candidate #2): present only
+    # when uniform [58] names a map; its length is the map's
+    # texel count x 4 bytes, the edge validated integral and
+    # in bounds before any allocation.
+    var shadow_bytes = 0
+    if read_f64(bytes_in.unsafe_ptr(), 8 + 58 * 8) != 0.0:
+        var sf = read_f64(bytes_in.unsafe_ptr(), 8 + 59 * 8)
+        var ssize = Int(sf)
+        if (
+            Float64(ssize) != sf
+            or ssize < 1
+            or ssize > MAX_SHADOW_SIZE
+        ):
+            raise Error("shadow map size out of bounds")
+        shadow_bytes = ssize * ssize * 4
+    if len(bytes_in) != HEADER_BYTES + in_bytes + shadow_bytes:
         raise Error("input length does not match the header count")
 
-    var alpha_cull = read_f32(bytes_in.unsafe_ptr(), 472)
+    var alpha_cull = read_f32(bytes_in.unsafe_ptr(), 632)
 
     with DeviceContext(device_id=device_id) as ctx:
         print("device:", ctx.name())
@@ -587,11 +696,38 @@ def main() raises:
                 mapped[k] = read_f64(bytes_in.unsafe_ptr(), 8 + k * 8)
         var dev_out = ctx.enqueue_create_buffer[DType.uint8](out_bytes)
 
+        # The shadow depths device input: the trailer bytes
+        # after the records, or a one-byte dummy when no map is
+        # named (the kernel never reads it with the flag clear).
+        var dev_shadow = ctx.enqueue_create_buffer[DType.uint8](
+            shadow_bytes if shadow_bytes > 0 else 1
+        )
+        if shadow_bytes > 0:
+            var host_shadow = ctx.enqueue_create_host_buffer[DType.uint8](
+                shadow_bytes
+            )
+            var hs_p = host_shadow.unsafe_ptr()
+            var bs_p = bytes_in.unsafe_ptr().unsafe_offset(
+                HEADER_BYTES + in_bytes
+            )
+            var n8_sh = shadow_bytes // 8
+            for k in range(n8_sh):
+                hs_p.unsafe_offset(k * 8).unsafe_bitcast[UInt64]().unsafe_store(
+                    val=bs_p.unsafe_offset(k * 8).unsafe_bitcast[UInt64]().unsafe_load()
+                )
+            for k in range(n8_sh * 8, shadow_bytes):
+                hs_p.unsafe_offset(k).unsafe_store(
+                    val=bs_p.unsafe_offset(k).unsafe_load()
+                )
+            ctx.enqueue_copy(dev_shadow, host_shadow)
+            ctx.synchronize()
+
         var grid = (count + 255) // 256
         # Warmup (also the correctness run whose output is written).
         ctx.enqueue_function[project_kernel](
             dev_in,
             dev_uni,
+            dev_shadow,
             dev_out,
             Int64(count),
             alpha_cull,
@@ -606,6 +742,7 @@ def main() raises:
             ctx.enqueue_function[project_kernel](
                 dev_in,
                 dev_uni,
+                dev_shadow,
                 dev_out,
                 Int64(count),
                 alpha_cull,

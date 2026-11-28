@@ -9,7 +9,12 @@
 //! names the kernel-candidate-#1 light response (a non-trivial
 //! grade + interior world mix against the scene's own world
 //! colour) on both sides, so the same gate judges the response
-//! transcription at full scale.
+//! transcription at full scale. `--shadow` names the
+//! kernel-candidate-#2 shadow: the same response plus a shadow
+//! map rasterised over the witness from overhead caster quads,
+//! carried to the kernel as a device-input trailer; the bench
+//! prints a visibility census of the CPU map so the caster
+//! rig's coverage is on the record, not assumed.
 //!
 //! The kernel's input contract is the crate's own resident record
 //! (`splat_gpu::frame_records`): opacity and scales pre-activated
@@ -21,7 +26,7 @@
 //! Usage:
 //!   splat-mojo-bench --ply PATH --mojo-bin PATH --work DIR
 //!                    [--reps N] [--kernel-reps N] [--device-id N]
-//!                    [--limit N] [--lit]
+//!                    [--limit N] [--lit] [--shadow]
 //!
 //! Writes `inputs.bin` / `expected.bin` / `kernel-out.bin` into
 //! the work dir and prints one fact per line (CPU median, kernel
@@ -35,14 +40,18 @@ use torogao_render3d::math::Mat4;
 use torogao_render3d::setscene::{ArcScene, plate_rig_scene, projection};
 use torogao_render3d::splat::{SplatCloud, SplatProjection, SplatTransform, project_splats};
 use torogao_render3d::splat_gpu::frame_records;
-use torogao_render3d::splat_light::{LightResponse, SplatLight};
+use torogao_render3d::splat_light::{LightResponse, SplatLight, SplatShadowMap};
 
 const WIDTH: u32 = 512;
 const HEIGHT: u32 = 640;
 /// The pack's alpha cull (`splat.rs` ALPHA_CULL, f32).
 const ALPHA_CULL: f32 = 1.0 / 255.0;
 /// Header bytes before the record stream (see the Mojo source).
-const HEADER_BYTES: usize = 480;
+const HEADER_BYTES: usize = 640;
+/// The `--shadow` gate's map edge: the production map size
+/// (`splat_light::SHADOW_MAP_SIZE`), so the witness exercises
+/// the route at the size production packs carry.
+const SHADOW_SIZE: u32 = 2048;
 /// The `--lit` gate's response: cross-channel terms and
 /// negative entries (the clamp path) with an interior
 /// world mix, so every term of `LightResponse::apply`
@@ -88,6 +97,51 @@ fn camera_world(eye: [f64; 3], target: [f64; 3], up_hint: [f64; 3]) -> Mat4 {
         [right[2], up[2], back[2], eye[2]],
         [0.0, 0.0, 0.0, 1.0],
     ])
+}
+
+/// A light view-projection fitted to the witness
+/// cloud, following `backend::light_view_proj`'s
+/// construction line for line (same look-at, same
+/// ortho shape) with the fit constants replaced by
+/// the cloud's own centre and radius: the production
+/// frustum is fitted to the arc set (half-extent
+/// 2.6 m around (0, 0.85, 0)) and the bonsai witness
+/// lives in raw PLY units spanning tens of units, so
+/// under the production fit every centre falls
+/// outside the map and the shadow gate would judge an
+/// all-lit map. The route and the kernel consume
+/// whatever view-projection the map carries, exactly
+/// as production consumes the backend's — the gate's
+/// subject is the transcription, not the fit.
+fn witness_light_view_proj(sun_to_light: [f64; 3], centre: [f64; 3], radius: f64) -> Mat4 {
+    let eye = [
+        centre[0] + sun_to_light[0] * (2.0 * radius + 6.0),
+        centre[1] + sun_to_light[1] * (2.0 * radius + 6.0),
+        centre[2] + sun_to_light[2] * (2.0 * radius + 6.0),
+    ];
+    let up = if sun_to_light[1].abs() > 0.9 {
+        [1.0, 0.0, 0.0]
+    } else {
+        [0.0, 1.0, 0.0]
+    };
+    let forward = norm(sub(centre, eye));
+    let right = norm(cross(forward, up));
+    let true_up = cross(right, forward);
+    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let view = Mat4::from_rows([
+        [right[0], right[1], right[2], -dot(right, eye)],
+        [true_up[0], true_up[1], true_up[2], -dot(true_up, eye)],
+        [-forward[0], -forward[1], -forward[2], dot(forward, eye)],
+        [0.0, 0.0, 0.0, 1.0],
+    ]);
+    let (extent, near, far) = (radius * 1.05, 1.0, 4.0 * radius + 13.0);
+    let mut ortho = [0.0_f64; 16];
+    ortho[0] = 1.0 / extent;
+    ortho[5] = 1.0 / extent;
+    ortho[10] = 1.0 / (near - far);
+    ortho[14] = near / (near - far);
+    ortho[15] = 1.0;
+    Mat4 { m: ortho }.multiply(view)
 }
 
 /// Bounds of a cloud: centre (bounds midpoint) and the
@@ -252,11 +306,12 @@ fn main() -> ExitCode {
     ) else {
         eprintln!(
             "usage: splat-mojo-bench --ply PATH --mojo-bin PATH --work DIR \
-             [--reps N] [--kernel-reps N] [--device-id N] [--limit N] [--lit]"
+             [--reps N] [--kernel-reps N] [--device-id N] [--limit N] [--lit] [--shadow]"
         );
         return ExitCode::FAILURE;
     };
     let lit = args.iter().any(|a| a == "--lit");
+    let shadow = args.iter().any(|a| a == "--shadow");
     let reps: usize = arg_value(&args, "--reps")
         .and_then(|v| v.parse().ok())
         .unwrap_or(5);
@@ -290,11 +345,83 @@ fn main() -> ExitCode {
         "the Mojo prototype covers identity layer rotation only"
     );
 
-    // The light both sides apply in `--lit` mode: the
-    // response against the scene's own world colour.
-    let light = if lit {
+    // The `--shadow` gate's map: two overhead caster
+    // quads in the XZ plane above the cloud — a broad
+    // plate covering the cloud's XZ bounds plus margin,
+    // and a smaller plate offset to one side so PCF edge
+    // texels land inside the cloud too — rasterised by
+    // the crate's own CPU rasteriser under a light
+    // view-projection fitted to the witness cloud
+    // (`witness_light_view_proj`). The census below
+    // reports what the rig actually covers.
+    let shadow_map = if shadow {
+        let mut lo = [f64::INFINITY; 3];
+        let mut hi = [f64::NEG_INFINITY; 3];
+        for s in &cloud.splats {
+            for i in 0..3 {
+                lo[i] = lo[i].min(f64::from(s.pos[i]));
+                hi[i] = hi[i].max(f64::from(s.pos[i]));
+            }
+        }
+        let y = hi[1] + 0.5;
+        let quad = |cx: f64, cz: f64, h: f64| -> [[f64; 3]; 6] {
+            let a = [cx - h, y, cz - h];
+            let b = [cx + h, y, cz - h];
+            let c = [cx + h, y, cz + h];
+            let d = [cx - h, y, cz + h];
+            [a, b, c, a, c, d]
+        };
+        let cx = (lo[0] + hi[0]) / 2.0;
+        let cz = (lo[2] + hi[2]) / 2.0;
+        let half = (hi[0] - lo[0]).max(hi[2] - lo[2]) / 2.0 + 1.0;
+        let mut casters: Vec<[f64; 3]> = Vec::new();
+        casters.extend_from_slice(&quad(cx, cz, half));
+        casters.extend_from_slice(&quad(cx + 0.4, cz - 0.3, half * 0.45));
+        let tris: Vec<[[f64; 3]; 3]> = casters
+            .chunks_exact(3)
+            .map(|t| [t[0], t[1], t[2]])
+            .collect();
+        let (centre, radius) = cloud_bounds(&cloud);
+        let sun = scene.sun.to_light;
+        let map = SplatShadowMap::rasterise(
+            &tris,
+            witness_light_view_proj([sun.x, sun.y, sun.z], centre, radius),
+            SHADOW_SIZE,
+        );
+        // Visibility census over every splat centre
+        // (identity layer transform: centre = pos).
+        let (mut full, mut dark, mut partial) = (0usize, 0usize, 0usize);
+        for s in &cloud.splats {
+            let v = map.visibility([
+                f64::from(s.pos[0]),
+                f64::from(s.pos[1]),
+                f64::from(s.pos[2]),
+            ]);
+            if v >= 1.0 {
+                full += 1;
+            } else if v <= 0.0 {
+                dark += 1;
+            } else {
+                partial += 1;
+            }
+        }
+        println!(
+            "shadow mode: map {SHADOW_SIZE}x{SHADOW_SIZE} from {} caster triangles; \
+             visibility census over {} centres: lit {full}, dark {dark}, partial {partial}",
+            tris.len(),
+            cloud.splats.len()
+        );
+        Some(map)
+    } else {
+        None
+    };
+
+    // The light both sides apply in `--lit` / `--shadow`
+    // mode: the response against the scene's own world
+    // colour, plus the map in shadow mode.
+    let light = if lit || shadow {
         Some(SplatLight {
-            shadow: None,
+            shadow: shadow_map.as_ref(),
             response: Some(LightResponse {
                 grade: LIT_GRADE,
                 world_mix: LIT_WORLD_MIX,
@@ -303,7 +430,7 @@ fn main() -> ExitCode {
     } else {
         None
     };
-    if lit {
+    if lit || shadow {
         println!(
             "lit mode: grade {LIT_GRADE:?}, world_mix {LIT_WORLD_MIX}, world {:?}",
             scene.world
@@ -321,7 +448,13 @@ fn main() -> ExitCode {
     let cpu_median = median(cpu_times.clone());
     println!(
         "cpu project_splats{}: median {:.1} ms over {} reps ({} survivors)",
-        if lit { " (lit)" } else { "" },
+        if shadow {
+            " (shadow)"
+        } else if lit {
+            " (lit)"
+        } else {
+            ""
+        },
         cpu_median,
         reps,
         projected.len()
@@ -352,7 +485,7 @@ fn main() -> ExitCode {
 
     // Kernel inputs: header + the crate's resident records.
     let view_proj = projection(&scene).multiply(scene.view);
-    let mut uniforms = [0.0_f64; 58];
+    let mut uniforms = [0.0_f64; 78];
     uniforms[0..16].copy_from_slice(&scene.view.m);
     uniforms[16..32].copy_from_slice(&view_proj.m);
     uniforms[32..35].copy_from_slice(&eye);
@@ -378,6 +511,18 @@ fn main() -> ExitCode {
             uniforms[55 + i] = f64::from(scene.world[i]);
         }
     }
+    // The shadow block, staged exactly as the route
+    // stages it: flag, map edge, the map's own light
+    // view-projection; the depths ride as a trailer
+    // after the records (below).
+    let shadow_trailer: &[u8] = if let Some(map) = &shadow_map {
+        uniforms[58] = 1.0;
+        uniforms[59] = f64::from(map.size());
+        uniforms[60..76].copy_from_slice(&map.light_view_proj().m);
+        bytemuck::cast_slice(map.depths())
+    } else {
+        &[]
+    };
 
     let records = frame_records(&cloud);
     let record_bytes: &[u8] = bytemuck::cast_slice(&records);
@@ -393,9 +538,10 @@ fn main() -> ExitCode {
         for (k, v) in uniforms.iter().enumerate() {
             header[8 + k * 8..16 + k * 8].copy_from_slice(&v.to_le_bytes());
         }
-        header[472..476].copy_from_slice(&ALPHA_CULL.to_bits().to_le_bytes());
+        header[632..636].copy_from_slice(&ALPHA_CULL.to_bits().to_le_bytes());
         f.write_all(&header).expect("write header");
         f.write_all(record_bytes).expect("write records");
+        f.write_all(shadow_trailer).expect("write shadow trailer");
     }
     let expected_path = workdir.join("expected.bin");
     {
@@ -405,9 +551,10 @@ fn main() -> ExitCode {
         }
     }
     println!(
-        "inputs: {} bytes ({} records), expected written",
-        HEADER_BYTES + record_bytes.len(),
-        count
+        "inputs: {} bytes ({} records, {} shadow trailer bytes), expected written",
+        HEADER_BYTES + record_bytes.len() + shadow_trailer.len(),
+        count,
+        shadow_trailer.len()
     );
 
     // Run the Mojo kernel program.

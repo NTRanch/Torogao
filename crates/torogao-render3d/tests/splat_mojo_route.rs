@@ -40,6 +40,16 @@
 //! kernel served the lit pack), and room-corner
 //! through the worker.
 //!
+//! The shadow gates (kernel candidate #2) run the
+//! same shapes with a shadow-carrying light — the
+//! lit response plus a map rasterised from overhead
+//! caster quads over each cloud — against the same
+//! CPU references. Each shadow gate first asserts
+//! the witness actually exercises the shadow (at
+//! least one surviving record's colour differs from
+//! the response-only pack's), so a caster rig that
+//! silently covers nothing cannot pass vacuously.
+//!
 //! The twin-render test additionally needs a Vulkan
 //! device and the toon fixture in
 //! TOROGAO_RENDER3D_TOON_FIXTURE; the full-witness
@@ -53,7 +63,7 @@ use torogao_render3d::setscene::{ArcScene, plate_rig_scene};
 use torogao_render3d::splat::{
     SplatCloud, SplatTransform, pack_splats, pack_splats_lit, project_splats, room_corner_cloud,
 };
-use torogao_render3d::splat_light::{LightResponse, SplatLight};
+use torogao_render3d::splat_light::{LightResponse, SplatLight, SplatShadowMap};
 use torogao_render3d::splat_mojo::{MojoRoute, pack_splats_mojo, project_splats_mojo};
 
 fn route() -> MojoRoute {
@@ -735,4 +745,293 @@ fn worker_route_matches_cpu_on_room_corner_lit() {
         let packed_cpu = pack_splats_lit(&cloud, &transform, &scene, 512, 640, &light);
         assert_eq!(packed_route, packed_cpu, "worker lit packet equality");
     }
+}
+
+/// The shadow gates' caster rig (kernel candidate
+/// #2): two overhead quads in the XZ plane above the
+/// cloud — a broad plate over the cloud's XZ bounds
+/// plus margin, and a smaller offset plate so PCF
+/// edge texels land inside the cloud too — the same
+/// rig the bench harness's `--shadow` gate builds.
+fn shadow_casters(cloud: &SplatCloud) -> Vec<[[f64; 3]; 3]> {
+    let mut lo = [f64::INFINITY; 3];
+    let mut hi = [f64::NEG_INFINITY; 3];
+    for s in &cloud.splats {
+        for i in 0..3 {
+            lo[i] = lo[i].min(f64::from(s.pos[i]));
+            hi[i] = hi[i].max(f64::from(s.pos[i]));
+        }
+    }
+    let y = hi[1] + 0.5;
+    let quad = |cx: f64, cz: f64, h: f64| -> [[f64; 3]; 6] {
+        let a = [cx - h, y, cz - h];
+        let b = [cx + h, y, cz - h];
+        let c = [cx + h, y, cz + h];
+        let d = [cx - h, y, cz + h];
+        [a, b, c, a, c, d]
+    };
+    let cx = (lo[0] + hi[0]) / 2.0;
+    let cz = (lo[2] + hi[2]) / 2.0;
+    let half = (hi[0] - lo[0]).max(hi[2] - lo[2]) / 2.0 + 1.0;
+    let mut verts: Vec<[f64; 3]> = Vec::new();
+    verts.extend_from_slice(&quad(cx, cz, half));
+    verts.extend_from_slice(&quad(cx + 0.4, cz - 0.3, half * 0.45));
+    verts.chunks_exact(3).map(|t| [t[0], t[1], t[2]]).collect()
+}
+
+/// A light view-projection fitted to the cloud,
+/// following `backend::light_view_proj`'s
+/// construction line for line (same look-at, same
+/// ortho shape) with the fit constants replaced by
+/// the cloud's bounds centre and bounding radius:
+/// the production frustum is fitted to the arc set,
+/// and a gate cloud outside it would read an all-lit
+/// map. The route and the kernel consume whatever
+/// view-projection the map carries, exactly as
+/// production consumes the backend's. (The bench
+/// harness's `--shadow` gate builds the same fit.)
+fn fitted_light_view_proj(cloud: &SplatCloud, scene: &ArcScene) -> Mat4 {
+    let mut lo = [f64::INFINITY; 3];
+    let mut hi = [f64::NEG_INFINITY; 3];
+    for s in &cloud.splats {
+        for i in 0..3 {
+            lo[i] = lo[i].min(f64::from(s.pos[i]));
+            hi[i] = hi[i].max(f64::from(s.pos[i]));
+        }
+    }
+    let centre = [
+        (lo[0] + hi[0]) / 2.0,
+        (lo[1] + hi[1]) / 2.0,
+        (lo[2] + hi[2]) / 2.0,
+    ];
+    let mut radius = 0.0_f64;
+    for s in &cloud.splats {
+        let d = sub(
+            [
+                f64::from(s.pos[0]),
+                f64::from(s.pos[1]),
+                f64::from(s.pos[2]),
+            ],
+            centre,
+        );
+        radius = radius.max((d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt());
+    }
+    let sun = scene.sun.to_light;
+    let s = [sun.x, sun.y, sun.z];
+    let eye = [
+        centre[0] + s[0] * (2.0 * radius + 6.0),
+        centre[1] + s[1] * (2.0 * radius + 6.0),
+        centre[2] + s[2] * (2.0 * radius + 6.0),
+    ];
+    let up = if s[1].abs() > 0.9 {
+        [1.0, 0.0, 0.0]
+    } else {
+        [0.0, 1.0, 0.0]
+    };
+    let forward = norm(sub(centre, eye));
+    let right = norm(cross(forward, up));
+    let true_up = cross(right, forward);
+    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let view = Mat4::from_rows([
+        [right[0], right[1], right[2], -dot(right, eye)],
+        [true_up[0], true_up[1], true_up[2], -dot(true_up, eye)],
+        [-forward[0], -forward[1], -forward[2], dot(forward, eye)],
+        [0.0, 0.0, 0.0, 1.0],
+    ]);
+    let (extent, near, far) = (radius * 1.05, 1.0, 4.0 * radius + 13.0);
+    let mut ortho = [0.0_f64; 16];
+    ortho[0] = 1.0 / extent;
+    ortho[5] = 1.0 / extent;
+    ortho[10] = 1.0 / (near - far);
+    ortho[14] = near / (near - far);
+    ortho[15] = 1.0;
+    Mat4 { m: ortho }.multiply(view)
+}
+
+/// The shadow gates' light: the lit response plus a
+/// map of the given edge rasterised from the caster
+/// rig under the cloud-fitted light view-projection.
+fn shadow_map_for(cloud: &SplatCloud, scene: &ArcScene, size: u32) -> SplatShadowMap {
+    SplatShadowMap::rasterise(
+        &shadow_casters(cloud),
+        fitted_light_view_proj(cloud, scene),
+        size,
+    )
+}
+
+fn shadow_light(map: &SplatShadowMap) -> SplatLight<'_> {
+    SplatLight {
+        shadow: Some(map),
+        response: Some(LightResponse {
+            grade: [[1.08, 0.02, -0.03], [0.01, 0.94, 0.04], [-0.02, 0.05, 1.12]],
+            world_mix: 0.35,
+        }),
+    }
+}
+
+/// The shadow gates' positive control: the map must
+/// actually darken at least one surviving record
+/// against the response-only projection — otherwise
+/// the gate would judge an all-lit map and prove
+/// nothing about the visibility transcription.
+fn assert_shadow_darkens(
+    cloud: &SplatCloud,
+    transform: &SplatTransform,
+    scene: &ArcScene,
+    map: &SplatShadowMap,
+) {
+    let with = project_splats(cloud, transform, scene, 512, 640, Some(shadow_light(map)));
+    let without = project_splats(cloud, transform, scene, 512, 640, Some(lit_light()));
+    assert_eq!(with.len(), without.len(), "shadow survivor count");
+    let darkened = with
+        .iter()
+        .zip(without.iter())
+        .filter(|(a, b)| a.index == b.index && a.colour != b.colour)
+        .count();
+    assert!(
+        darkened > 0,
+        "the caster rig must darken at least one record (got {darkened})"
+    );
+}
+
+/// A shadow-carrying lit layer through the route,
+/// identity and rotated: the projection equals the
+/// CPU reference's shadowed projection
+/// record-for-record and the packet equals the
+/// direct lit pack's — the kernel applies the centre
+/// visibility test the CPU path applies (kernel
+/// candidate #2).
+#[test]
+#[ignore = "needs the Mojo kernel binary + GPU; see file docs"]
+fn route_matches_cpu_on_room_corner_shadow() {
+    let route = route();
+    let cloud = room_corner_cloud();
+    let scene = proving_scene();
+    let map = shadow_map_for(&cloud, &scene, 256);
+    let light = shadow_light(&map);
+    assert_shadow_darkens(&cloud, &SplatTransform::default(), &scene, &map);
+    for transform in [
+        SplatTransform::default(),
+        SplatTransform {
+            translation: [0.25, -0.1, 0.4],
+            rotation: tilted_rotation(),
+            scale: 1.35,
+        },
+    ] {
+        let via_route = project_splats_mojo(&cloud, &transform, &scene, 512, 640, &light, &route)
+            .expect("kernel route must produce a shadowed projection");
+        let cpu = project_splats(&cloud, &transform, &scene, 512, 640, Some(light));
+        assert_eq!(via_route.len(), cpu.len(), "shadow survivor count");
+        for (a, b) in via_route.iter().zip(cpu.iter()) {
+            assert_eq!(a, b, "shadow record at index {}", a.index);
+        }
+        let packed_route =
+            pack_splats_mojo(&cloud, &transform, &scene, 512, 640, &light, Some(&route));
+        let packed_cpu = pack_splats_lit(&cloud, &transform, &scene, 512, 640, &light);
+        assert_eq!(packed_route, packed_cpu, "shadow packet equality");
+    }
+}
+
+/// The full witness SHADOWED (response + map)
+/// through the one-shot route: the packet equals the
+/// direct lit pack's byte for byte, and the
+/// projection binary is marker-wrapped so the gate
+/// proves the kernel served the shadowed pack rather
+/// than silently falling back. The worker is forced
+/// off so the one-shot path is the one judged (the
+/// worker's shadow service is gated separately).
+#[cfg(unix)]
+#[test]
+#[ignore = "needs the Mojo kernel binary + GPU + the bonsai witness ply"]
+fn route_matches_cpu_on_full_witness_shadow() {
+    let real_project =
+        PathBuf::from(std::env::var("TOROGAO_MOJO_PROJECT_BIN").expect("kernel binary env var"));
+    let dir = std::env::temp_dir().join(format!(
+        "torogao-mojo-route-shadow-witness-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let oneshot_runs = dir.join("oneshot-runs");
+    let mut route = route();
+    route.worker_bin = None;
+    route.project_bin = marker_wrapper(&dir, "project-wrapper.sh", &real_project, &oneshot_runs);
+
+    let cloud = load_witness();
+    let scene = witness_scene(&cloud);
+    let transform = SplatTransform::default();
+    let map = shadow_map_for(&cloud, &scene, 1024);
+    let light = shadow_light(&map);
+    assert_shadow_darkens(&cloud, &transform, &scene, &map);
+    let via_route = pack_splats_mojo(&cloud, &transform, &scene, 512, 640, &light, Some(&route));
+    assert!(
+        marker_count(&oneshot_runs) >= 1,
+        "the projection kernel must have served the shadowed pack"
+    );
+    let cpu = pack_splats_lit(&cloud, &transform, &scene, 512, 640, &light);
+    assert_eq!(
+        via_route.splat_count, cpu.splat_count,
+        "shadow witness survivor count"
+    );
+    assert_eq!(via_route, cpu, "shadow full-witness packet equality");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A shadow-carrying lit layer through the persistent
+/// worker, identity and rotated (the fused request):
+/// the packets equal the direct lit pack's — the
+/// worker uploads the map trailer and its imported
+/// projection kernel applies the same visibility
+/// test (kernel candidate #2). The worker and the
+/// one-shot binary are both marker-wrapped: the
+/// worker must serve, the one-shot must never run.
+#[cfg(unix)]
+#[test]
+#[ignore = "needs the Mojo worker binary + GPU; see file docs"]
+fn worker_route_matches_cpu_on_room_corner_shadow() {
+    let real_worker =
+        PathBuf::from(std::env::var("TOROGAO_MOJO_WORKER_BIN").expect("worker binary env var"));
+    let real_project =
+        PathBuf::from(std::env::var("TOROGAO_MOJO_PROJECT_BIN").expect("kernel binary env var"));
+    let dir =
+        std::env::temp_dir().join(format!("torogao-mojo-worker-shadow-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let worker_spawns = dir.join("worker-spawns");
+    let oneshot_runs = dir.join("oneshot-runs");
+    let mut route = route();
+    route.worker_bin = Some(marker_wrapper(
+        &dir,
+        "worker-wrapper.sh",
+        &real_worker,
+        &worker_spawns,
+    ));
+    route.project_bin = marker_wrapper(&dir, "project-wrapper.sh", &real_project, &oneshot_runs);
+
+    let cloud = room_corner_cloud();
+    let scene = proving_scene();
+    let map = shadow_map_for(&cloud, &scene, 256);
+    let light = shadow_light(&map);
+    assert_shadow_darkens(&cloud, &SplatTransform::default(), &scene, &map);
+    for transform in [
+        SplatTransform::default(),
+        SplatTransform {
+            translation: [0.25, -0.1, 0.4],
+            rotation: tilted_rotation(),
+            scale: 1.35,
+        },
+    ] {
+        let packed_route =
+            pack_splats_mojo(&cloud, &transform, &scene, 512, 640, &light, Some(&route));
+        let packed_cpu = pack_splats_lit(&cloud, &transform, &scene, 512, 640, &light);
+        assert_eq!(packed_route, packed_cpu, "worker shadow packet equality");
+    }
+    assert!(
+        marker_count(&worker_spawns) >= 1,
+        "the worker must have served the shadowed packs"
+    );
+    assert_eq!(
+        marker_count(&oneshot_runs),
+        0,
+        "the worker request, not the per-invocation path, served the shadowed packs"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }

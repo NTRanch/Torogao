@@ -63,11 +63,20 @@ specified in the header comment of
 pre-activated on the host by the pack's own
 functions, so the kernel needs no transcendentals;
 every operation is IEEE `+ - * / sqrt` on f64.
-Eligibility: layers whose light carries no shadow
-map (the Rung 4 light response is transcribed by
-the projection kernel; the shadow factor stays
-host-side, so shadow-receiving layers pack on the
-CPU); layer rotation runs
+Eligibility: every layer routes except one whose
+light carries a shadow map with an edge over 4096
+texels. The Rung 4 light response (candidate #1)
+and the shadow centre test (candidate #2) are both
+transcribed by the projection kernel: a
+shadow-carrying light's rasterised map travels as
+a device input (a trailer after the records in the
+input format the kernel source specifies) and the
+kernel applies the map's 3x3 PCF visibility at each
+splat centre. The triangle rasteriser itself stays
+host-side — it runs once per scene at spec-compile
+time, caller-owned, not per layer. An over-cap map
+declines the route by name and the layer packs on
+the CPU. Layer rotation runs
 on the GPU rotation kernel (below) when one is
 configured, and otherwise host-side by the pack's
 own `rotate_cloud`, exactly as the CPU path applies
@@ -125,7 +134,11 @@ exactly):
   witness, record-for-record, bitwise. It prints
   `GATE: BIT-EXACT` and exits 0 only when every
   surviving record is bitwise identical and the cull
-  state matches.
+  state matches. Modes: default unlit, `--lit` the
+  response-carrying pack, `--shadow` the
+  shadow-carrying pack (response plus a 2048-edge
+  map rasterised over the witness; the bench prints
+  the map's visibility census).
 
       cargo run --release -p torogao-render3d --bin splat_mojo_bench -- \
           --ply <bonsai point_cloud.ply> --mojo-bin <splat_project_smXX> \
@@ -145,6 +158,12 @@ exactly):
   spawn/reuse/rejection/disable/timeout behaviour
   is covered by unit tests in `src/splat_mojo.rs`
   against scripted fake workers (no GPU needed).
+  The lit gates (candidate #1) and shadow gates
+  (candidate #2) run the same shapes with
+  response-only and shadow-carrying lights; each
+  shadow gate first asserts its caster rig actually
+  darkens a record, so the gate cannot pass on an
+  all-lit map.
 
 Any Mojo upgrade re-runs both gates before its
 binaries are used; the flag's existence is the first

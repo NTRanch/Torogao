@@ -26,13 +26,19 @@
 # src/splat_mojo.rs is the only client):
 #   Request:  [u64 payload_len][u8 kind][payload]
 #     kind 1 (PROJECT): payload is byte-identical to the
-#       input file splat_project.mojo reads (480-byte header +
-#       N x 256-byte records).
+#       input file splat_project.mojo reads (640-byte header +
+#       N x 256-byte records + the shadow trailer below).
 #     kind 2 (ROTATE_PROJECT): payload is the 776-byte
-#       splat_rotate header, then the 480-byte splat_project
+#       splat_rotate header, then the 640-byte splat_project
 #       header, then the N x 256-byte records (both headers'
 #       counts must agree). The rotation kernel's output feeds
 #       the projection kernel device-side.
+#     Shadow trailer: when the projection header's shadow
+#       flag (uniform [58]) names a map, size x size f32
+#       depths follow the records — the same trailer the
+#       one-shot input file carries (kernel candidate #2);
+#       the worker uploads it as the projection kernel's
+#       shadow device input.
 #   Response: [u64 payload_len][u8 status][payload]
 #     status 0: payload is byte-identical to the output file
 #       the one-shot projection program writes (N x 96 bytes).
@@ -58,6 +64,7 @@ from std.sys import argv
 
 from splat_project import (
     HEADER_BYTES as PROJ_HEADER_BYTES,
+    MAX_SHADOW_SIZE,
     OUT_BYTES,
     RECORD_BYTES,
     UNIFORM_COUNT as PROJ_UNIFORM_COUNT,
@@ -141,13 +148,20 @@ def main() raises:
         # Grow-to-fit buffers, reused across requests.
         var rec_cap = 1
         var out_cap = 1
+        var shadow_cap = 1
         var dev_in = ctx.enqueue_create_buffer[DType.uint8](rec_cap)
         var dev_rot = ctx.enqueue_create_buffer[DType.uint8](rec_cap)
         var dev_out = ctx.enqueue_create_buffer[DType.uint8](out_cap)
+        var dev_shadow = ctx.enqueue_create_buffer[DType.uint8](shadow_cap)
+        # Sized for either kernel's uniform block, whichever is
+        # larger (rotation 96, projection 78 today).
         var dev_uni = ctx.enqueue_create_buffer[DType.float64](
-            ROTATE_UNIFORM_COUNT
+            ROTATE_UNIFORM_COUNT + PROJ_UNIFORM_COUNT
         )
         var host_in = ctx.enqueue_create_host_buffer[DType.uint8](rec_cap)
+        var host_shadow = ctx.enqueue_create_host_buffer[DType.uint8](
+            shadow_cap
+        )
         var host_out = ctx.enqueue_create_host_buffer[DType.uint8](out_cap)
         var payload = List[UInt8]()
         var out_list = List[UInt8]()
@@ -210,10 +224,29 @@ def main() raises:
                         ok = False
             else:
                 ok = False
+            # The shadow trailer length, from the projection
+            # header (which sits at records_off - header for
+            # both kinds): flag clear means no trailer; flag
+            # set means the edge must be integral and in
+            # bounds and the trailer must be exactly present.
+            var shadow_bytes = 0
+            if ok:
+                var phdr = pp.unsafe_offset(records_off - PROJ_HEADER_BYTES)
+                if read_f64(phdr, 8 + 58 * 8) != 0.0:
+                    var sf = read_f64(phdr, 8 + 59 * 8)
+                    var ssize = Int(sf)
+                    if (
+                        Float64(ssize) != sf
+                        or ssize < 1
+                        or ssize > MAX_SHADOW_SIZE
+                    ):
+                        ok = False
+                    else:
+                        shadow_bytes = ssize * ssize * 4
             if ok:
                 if count < 1 or count > 2147483647:
                     ok = False
-                elif payload_len != records_off + count * RECORD_BYTES:
+                elif payload_len != records_off + count * RECORD_BYTES + shadow_bytes:
                     ok = False
             if not ok:
                 if not respond(UInt8(1), payload.unsafe_ptr(), 0):
@@ -231,6 +264,12 @@ def main() raises:
                 out_cap = out_bytes
                 dev_out = ctx.enqueue_create_buffer[DType.uint8](out_cap)
                 host_out = ctx.enqueue_create_host_buffer[DType.uint8](out_cap)
+            if shadow_bytes > shadow_cap:
+                shadow_cap = shadow_bytes
+                dev_shadow = ctx.enqueue_create_buffer[DType.uint8](shadow_cap)
+                host_shadow = ctx.enqueue_create_host_buffer[DType.uint8](
+                    shadow_cap
+                )
 
             bulk_copy(
                 host_in.unsafe_ptr(),
@@ -238,6 +277,13 @@ def main() raises:
                 in_bytes,
             )
             ctx.enqueue_copy(dev_in, host_in)
+            if shadow_bytes > 0:
+                bulk_copy(
+                    host_shadow.unsafe_ptr(),
+                    pp.unsafe_offset(records_off + in_bytes),
+                    shadow_bytes,
+                )
+                ctx.enqueue_copy(dev_shadow, host_shadow)
 
             var grid = (count + 255) // 256
             if kind == KIND_ROTATE_PROJECT:
@@ -257,7 +303,7 @@ def main() raises:
             var proj_hdr = pp.unsafe_offset(
                 records_off - PROJ_HEADER_BYTES
             )
-            var alpha_cull = read_f32(proj_hdr, 472)
+            var alpha_cull = read_f32(proj_hdr, 632)
             with dev_uni.map_to_host() as mapped:
                 for k in range(PROJ_UNIFORM_COUNT):
                     mapped[k] = read_f64(proj_hdr, 8 + k * 8)
@@ -265,6 +311,7 @@ def main() raises:
                 ctx.enqueue_function[project_kernel](
                     dev_rot,
                     dev_uni,
+                    dev_shadow,
                     dev_out,
                     Int64(count),
                     alpha_cull,
@@ -275,6 +322,7 @@ def main() raises:
                 ctx.enqueue_function[project_kernel](
                     dev_in,
                     dev_uni,
+                    dev_shadow,
                     dev_out,
                     Int64(count),
                     alpha_cull,
