@@ -19,6 +19,7 @@ members = [
     "crates/torogao-pen",
     "crates/torogao-rig",
     "crates/torogao-session",
+    "crates/torogao-spring",
     "crates/torogao-tui",
     "crates/torogao-tui-bakeoff-core",
     "crates/torogao-viseme",

@@ -1,0 +1,9 @@
+[package]
+name = "torogao-spring"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Deterministic spring/gesture physics for torogao's Slint surfaces: damping-ratio/response springs integrated at a fixed timestep, velocity handoff, momentum projection, and rubber-banding. Parameters and formulas adapted from Apple's fluid-interface model (via emilkowalski/skills, MIT)."
+
+[dependencies]
